@@ -7,7 +7,8 @@ not tie to a call target, even when the target is known:
   * a conditional branch back to the entry of the function it is in (a loop whose head is the function's first
     instruction): the label loc_B is right there, but the branch is classified as a call to a function;
   * a branch (b, bc) to the entry of another function that names.toml declares: a tail call the discover phase did not
-    record.
+    record;
+  * a jump table case (REX_FATAL("Jump target 0xB unresolved at bctr 0xA")) whose label is in the same function.
 
 Within the function that holds loc_B the trap becomes `goto loc_B;` (exact). Otherwise, when a function starts at B,
 it becomes a tail call: `B(ctx, base); return;` (as the codegen writes the tail calls it resolved). `bl` (a call that
@@ -81,6 +82,34 @@ def main(paths):
         new_text = declare(''.join(out), called)
         if new_text != t:
             open(path, 'w', encoding='utf-8').write(new_text)
+    # Jump table cases the codegen left as traps (REX_FATAL("Jump target 0xB unresolved at bctr 0xA")) although the
+    # case's label is in the same function (Max Payne 3's CRT _output, 56 cases at 0x83010E20): goto, or a tail call
+    # to a function that starts there.
+    fixed['case'] = 0
+    case = re.compile(r'REX_FATAL\("Jump target 0x([0-9A-F]{8}) unresolved at bctr 0x[0-9A-F]{8}"\);')
+    for path in paths:
+        t = open(path, encoding='utf-8').read()
+        if 'REX_FATAL("Jump target' not in t:
+            continue
+        heads = [m.start() for m in re.finditer(r'^\S[^\n]*\) \{$', t, re.M)] + [len(t)]
+        out, called = [t[:heads[0]]], set()
+        for lo, hi in zip(heads, heads[1:]):
+            body = t[lo:hi]
+            labels = set(re.findall(r'^loc_([0-9A-F]{8}):', body, re.M))
+
+            def fix_case(m):
+                dst = m.group(1)
+                if dst in labels:
+                    fixed['case'] += 1
+                    return f'goto loc_{dst};'
+                if dst in starts:
+                    fixed['case'] += 1
+                    called.add(starts[dst])
+                    return f'{{ {starts[dst]}(ctx, base); return; }}'
+                left.append(f'{path}: jump table case 0x{dst} (no label here, no function there)')
+                return m.group(0)
+            out.append(case.sub(fix_case, body))
+        open(path, 'w', encoding='utf-8').write(declare(''.join(out), called))
     # Gotos to a label the function does not have.
     fixed['foreign goto'] = 0
     for path in paths:
@@ -107,7 +136,8 @@ def main(paths):
         if changed:
             open(path, 'w', encoding='utf-8').write(declare(''.join(out), called))
     print(f"patch_branch_traps: {fixed['goto']} gotos, {fixed['tail call']} tail calls, {fixed['call']} calls; "
-          f"{fixed['foreign goto']} gotos into another function made tail calls; {len(left)} left")
+          f"{fixed['foreign goto']} gotos into another function made tail calls; {fixed['case']} jump table cases; "
+          f"{len(left)} left")
     for line in left:
         print('  left:', line)
     return 1 if left else 0

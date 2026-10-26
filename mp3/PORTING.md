@@ -60,3 +60,17 @@ applied (0.0.0.6 -> 0.0.9.6), `update/` is mounted (57 entries), the deko3d pres
 shader library yet (expected). The main thread (start 0x821F1220) died at once on a trap: "Unresolved call from
 0x821F42E4 to 0x821F43E0", a branch to the `__finally`-like tail of its own function (`sub_821F3B78`). That is what
 the pass above fixes.
+
+## Run 2 (2026-10-26, handheld)
+
+Past the start: the main thread starts the game's threads (two at 0x8311C128, six at 0x82CB3200, two at 0x83092E10),
+opens `common.rpf` from the package, registers the GPU interrupt callback (0x83080AD8) and its ring (8192 words), and
+begins loading its shaders (`update:\common\shaders\fxl_final\im.fxc` first, not in TU6, so from the disc). Files it
+asks for and does not find, as on the console without them: `game:\mega\global.rpf`, `game:\mega\disc1.rpf`,
+`update:\audioup.rpf`, `update:\common\disc1.txt`. Then two stops:
+
+- "Call to invalid or unregistered function at guest address 0x82CE4E90 (lr 0x82CF04C0)": a function reached only
+  through a pointer, after a b; now a function entry in `codegen/mp3_config.toml`.
+- "Jump target 0x83011130 unresolved at bctr 0x83010E20" (fatal): a 56-case jump table (r8 - 'A', the CRT's format
+  parser in `sub_830109E8`, emitted twice) whose cases the codegen left as traps although their labels are in the
+  function. `patch_branch_traps.py` now makes such a case a goto (112 of them).

@@ -45,3 +45,6 @@ large_function_threshold = 1048576
 "0x83030BBC" = {}
 "0x830390B8" = {}
 "0x830391FC" = {}
+
+# Functions reached only through a pointer that discovery missed (run 2: "Call to invalid or unregistered function").
+"0x82CE4E90" = {}   # called from 0x82CF04BC during the shader setup; follows a b
