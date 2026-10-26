@@ -1,6 +1,9 @@
-# mp3-nx 1.0
+# mp3-nx settings (beside mp3-nx.nro)
 # Face buttons by position, as on an Xbox pad (the bottom button acts as A). false = by letter.
 input_xbox_layout = true
+# Disc 1's Games on Demand package where it already is on the card (its header file, beside its .data folder); empty =
+# god/ beside the NRO.
+mp3_god = ""
 # No automatic texture dumps or frame traces.
 mp3_auto_volcados_max = 0
 mp3_trazas_max = 0

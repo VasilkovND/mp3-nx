@@ -10,3 +10,15 @@
 max_jump_extension = 65536
 data_region_threshold = 16
 large_function_threshold = 1048576
+
+[functions]
+# Branch targets the first codegen of Title Update 6 left unresolved ("target not in any function"): each is reached
+# by a tail branch (b) from another function and follows a blr, b or bctr, so it is a function of its own that
+# discovery missed.
+"0x82204C98" = {}   # from 0x8276DDA8
+"0x8269CE00" = {}   # from 0x827569B8
+"0x8292BDD8" = {}   # from 0x824C4428
+"0x82A91F40" = {}   # from 0x828BFB84
+"0x82E51820" = {}   # from 0x83102FE8, 0x83102FF8, 0x83103008, 0x83103028
+"0x82E934F0" = {}   # from 0x82E8FE90
+"0x82E93500" = {}   # from 0x82E90E18
