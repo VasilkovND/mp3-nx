@@ -8,3 +8,13 @@
 #   mp3_D3DDevice_CreateVertexShader   the shader dump (src/mp3_shader_dump.cpp)
 #   mp3_D3DDevice_CreatePixelShader
 #   mp3_SpinLockAcquire, mp3_D3D_WaitStep, mp3_D3D_QueryFramesInFlight   spin waits that take cores (src/mp3_perf_hooks.cpp)
+
+# XDK Direct3D: every shader the game creates (src/mp3_shader_dump.cpp, the shader dump and the library's object
+# addresses; CMake compiles those hooks when both names are here). Found with tools/fuzzy_find.py against ds3-nx's named
+# tree (Dead Space 3, a 2012-2013 XDK too): both instruction for instruction ds3's (60 instructions, ratio 1.0; each
+# other's neighbour at 0.917).
+[functions."0x83080390"]
+name = "mp3_D3DDevice_CreateVertexShader"
+
+[functions."0x830801A8"]
+name = "mp3_D3DDevice_CreatePixelShader"

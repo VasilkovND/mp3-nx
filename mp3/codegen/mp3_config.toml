@@ -48,3 +48,48 @@ large_function_threshold = 1048576
 
 # Functions reached only through a pointer that discovery missed (run 2: "Call to invalid or unregistered function").
 "0x82CE4E90" = {}   # called from 0x82CF04BC during the shader setup; follows a b
+
+# Run 3: called through pointers the codegen did not find ("Call to invalid or unregistered function", the second one
+# followed by a fault on the same thread). Both follow a bctr.
+"0x824C3528" = {}   # lr 0x824C3BF4
+"0x8260EFF0" = {}   # lr 0x824C3BF4
+
+# Code addresses another function builds with lis + addi/ori (a callback or vtable it registers), that follow a blr, bctr
+# or b and that no function starts at: function entries (a scan of the image after run 3).
+"0x82286228" = {}
+"0x82306460" = {}
+"0x826C4B20" = {}
+"0x8276D9E8" = {}
+"0x82782EC0" = {}
+"0x8279A088" = {}
+"0x8279A4B0" = {}
+"0x827B8AD0" = {}
+"0x827EFC10" = {}
+"0x827FBA38" = {}
+"0x827FC5A8" = {}
+"0x828099A8" = {}
+"0x8280AA60" = {}
+"0x8280AA98" = {}
+"0x8280AAB8" = {}
+"0x8280AAE8" = {}
+"0x8280AB40" = {}
+"0x8280AB80" = {}
+"0x828192F0" = {}
+"0x82819308" = {}
+"0x8281F2B8" = {}
+"0x82BAC910" = {}
+"0x82BAC920" = {}
+"0x82BAC930" = {}
+"0x82BF4EB0" = {}
+"0x82C2A548" = {}
+"0x82E8FDE8" = {}
+"0x82EA4720" = {}
+"0x82ED9568" = {}
+"0x82ED9578" = {}
+"0x82FBAFD8" = {}
+"0x82FBAFF8" = {}
+"0x82FBB008" = {}
+"0x82FD76E0" = {}
+"0x82FD7700" = {}
+"0x83000790" = {}
+"0x830F9B60" = {}

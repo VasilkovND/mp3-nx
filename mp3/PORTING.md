@@ -74,3 +74,19 @@ asks for and does not find, as on the console without them: `game:\mega\global.r
 - "Jump target 0x83011130 unresolved at bctr 0x83010E20" (fatal): a 56-case jump table (r8 - 'A', the CRT's format
   parser in `sub_830109E8`, emitted twice) whose cases the codegen left as traps although their labels are in the
   function. `patch_branch_traps.py` now makes such a case a goto (112 of them).
+
+## Run 3 (2026-10-26, handheld): the game runs, nothing is drawn
+
+The game runs on its own (sound plays, 30 swaps/s, ~80 ring draws a second), loads its textures, UI and loading
+screens (from the disc: TU6 overrides few of the `update:\platform\textures\*.xtd` it asks for first). Every draw is
+skipped: no shader is known (`shaders: 0 loads ... objects 0`), as there is no library and no hook told the renderer
+where the game's shader objects are. One thread faulted after two calls to functions discovery missed.
+
+- Shaders: XDK Direct3D's `CreateVertexShader` (0x83080390) and `CreatePixelShader` (0x830801A8) found with
+  `tools/fuzzy_find.py` against ds3-nx's named tree (ratio 1.0 each); `codegen/names.toml` names them, which turns on
+  `src/mp3_shader_dump.cpp`: every container the game creates goes to `shaders_dump/` beside the NRO (none is in a
+  library yet), the input of `tools/shaders.sh`. ds3's `D3D_GpuWaitStep` matches `sub_83076C70` exactly too
+  (GTA IV's `D3D_WaitStep` hook, not named yet).
+- Functions reached only through pointers: 0x824C3528 and 0x8260EFF0 (the run), and 38 more from a scan of the image
+  for code addresses built with lis + addi/ori in another function, after a blr/bctr/b, where no function started.
+  The 361 such addresses built inside their own function were left alone (labels: exception handlers, jump targets).
