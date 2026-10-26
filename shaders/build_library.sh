@@ -2,7 +2,7 @@
 # Builds the deko3d shader library from the containers the game dumped on the console (shaders_dump/):
 #   1. ds_hlsl         containers -> HLSL (XenosRecomp's translator, --saltos-lineales)
 #   2. dxc, spirv-val  HLSL -> SPIR-V for deko3d, validated (Vulkan SDK)
-#   3. ds_empaquetar   containers + SPIR-V -> gta4_shaders.dslib
+#   3. ds_empaquetar   containers + SPIR-V -> mp3_shaders.dslib
 #   4. ds_dksh         (optional, DKSH=1) the library -> shadercache_dksh.bin, so the console never runs uam
 #
 # Usage: shaders/build_library.sh <shaders_dump> <output folder>
@@ -10,7 +10,7 @@
 #   DKSH=1       also build dksh/ (needs the SDK's thirdparty submodules) and the DKSH cache
 #   JOBS         parallel DXC processes (default: every core)
 #   VARIANTES    a list of extra DKSH variants the console asked for (ds_dksh --variantes)
-# Writes <output>/gta4_shaders.dslib (and shadercache_dksh.bin), the HLSL and SPIR-V of each shader, and the
+# Writes <output>/mp3_shaders.dslib (and shadercache_dksh.bin), the HLSL and SPIR-V of each shader, and the
 # errors of the ones that did not compile in <output>/err/. Copy the .dslib and the cache next to the NRO.
 set -euo pipefail
 
@@ -76,14 +76,14 @@ rm -rf "$contenedores" && mkdir -p "$contenedores"
 for spv in "$salida"/spirv/*.spv; do
   ln -s "$entrada/$(basename "$spv" .spv).bin" "$contenedores/"
 done
-rm -f "$salida/gta4_shaders.dslib"
-"$bin/ds_empaquetar" "$contenedores" "$salida/spirv" "$salida/gta4_shaders.dslib"
+rm -f "$salida/mp3_shaders.dslib"
+"$bin/ds_empaquetar" "$contenedores" "$salida/spirv" "$salida/mp3_shaders.dslib"
 
 if [ "${DKSH:-0}" = 1 ]; then
   echo "== DKSH"
   cmake -S "$shaders/dksh" -B "$salida/build_dksh" -G Ninja -DCMAKE_BUILD_TYPE=Release > "$salida/dksh_cmake.log"
   cmake --build "$salida/build_dksh" > "$salida/dksh_build.log"
-  "$salida/build_dksh/ds_dksh" "$salida/gta4_shaders.dslib" "$salida/shadercache_dksh.bin" \
+  "$salida/build_dksh/ds_dksh" "$salida/mp3_shaders.dslib" "$salida/shadercache_dksh.bin" \
     --contenedores "$contenedores" --informe "$salida/dksh.tsv" ${VARIANTES:+--variantes "$VARIANTES"} \
     > "$salida/dksh.log" 2>&1 ||
     echo "some variants failed: $salida/dksh.tsv"

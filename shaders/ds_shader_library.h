@@ -1,7 +1,7 @@
 #pragma once
 
-// The deko3d shader library (gta4_shaders.dslib): each original Xenos container with its SPIR-V. Built on the PC
-// by ds_empaquetar, read by gta4/src/gta4_shaders.cpp on the console and by dksh/ds_dksh.
+// The deko3d shader library (mp3_shaders.dslib): each original Xenos container with its SPIR-V. Built on the PC
+// by ds_empaquetar, read by mp3/src/mp3_shaders.cpp on the console and by dksh/ds_dksh.
 
 #include <cstdint>
 #include <filesystem>

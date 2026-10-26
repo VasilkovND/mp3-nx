@@ -5,7 +5,7 @@
  * XenosRecomp's translator only: DXC (from the Vulkan SDK) compiles the HLSL to SPIR-V, ds_empaquetar packs
  * it into the library and dksh/ds_dksh compiles it to DKSH. build_library.sh runs the whole chain.
  *
- * Input: the containers dumped on the console (shaders_dump/, gta4_shader_dump.cpp), one .bin each.
+ * Input: the containers dumped on the console (shaders_dump/, mp3_shader_dump.cpp), one .bin each.
  *
  * Usage
  *   ds_hlsl <input folder> <output folder> <shader_common.h> [--saltos-lineales]

@@ -143,9 +143,22 @@ float4 tfetch2D(Texture2D<float4> texture, SamplerState samplerState, float2 tex
     return texture.Sample(samplerState, texCoord + desplazamiento);
 }
 
-float2 getWeights2D(Texture2D<float4> texture, SamplerState samplerState, float2 texCoord, float2 offset)
+// The translator passes the slot's 1/size as for tfetch2D (Max Payne 3's shadow filters were the first to use it).
+float2 getWeights2D(Texture2D<float4> texture, SamplerState samplerState, float2 texCoord, float2 offset, float2 invSize)
 {
-    return select(isnan(texCoord), 0.0, frac(texCoord * getTexture2DDimensions(texture) + offset - 0.5));
+    float2 tamano;
+    [branch] if (g_SpecConstants() & SPEC_CONSTANT_INV_TAMANO_TEX)
+        tamano = 1.0 / invSize;
+    else
+        tamano = getTexture2DDimensions(texture);
+    return select(isnan(texCoord), 0.0, frac(texCoord * tamano + offset - 0.5));
+}
+
+// A 1D fetch from a sampler the constant table declares 2D (Max Payne 3's materialIdSampler): the Xenos reads the
+// texture's first row.
+float4 tfetch1D(Texture2D<float4> texture, SamplerState samplerState, float texCoord)
+{
+    return texture.Sample(samplerState, float2(texCoord, 0.5 / getTexture2DDimensions(texture).y));
 }
 
 float w0(float a)

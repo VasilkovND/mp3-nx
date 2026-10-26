@@ -90,3 +90,17 @@ where the game's shader objects are. One thread faulted after two calls to funct
 - Functions reached only through pointers: 0x824C3528 and 0x8260EFF0 (the run), and 38 more from a scan of the image
   for code addresses built with lis + addi/ori in another function, after a blr/bctr/b, where no function started.
   The 361 such addresses built inside their own function were left alone (labels: exception handlers, jump targets).
+
+## The shader library (runs 4-5)
+
+Runs 4 and 5 dumped 1953 vertex and 1844 pixel shader containers (6 MB; the game stays on its loading screen while
+it writes them; one container cut short when the game was closed was dropped). `tools/shaders.sh` translates all of
+them (XenosRecomp -> HLSL -> SPIR-V -> DKSH): 3795 shaders, a 67 MB library and a 55 MB DKSH cache (11,882 variants),
+built in ~2 minutes. Two translator gaps GTA IV never hit, fixed in `shaders/XenosRecomp`:
+
+- `getWeights2D` (the fetch-weights instruction, 430 pixel shaders: the shadow filters) was called with the slot's
+  1/size like tfetch2D but declared without it.
+- A 1D fetch from a sampler the constant table declares 2D (`materialIdSampler`, 19 pixel shaders) had no texture to
+  read: it now reads the 2D texture's first row (`tfetch1D` in `shader_common.h`), as the Xenos does.
+
+`shaders/build_library.sh` names the library `mp3_shaders.dslib` (it still wrote GTA IV's name).

@@ -1269,6 +1269,8 @@ void ShaderRecompiler::printSampler(uint32_t reg, const char* constantName, cons
         // tfetch2DSombraMin's pair arrives in the 3D index word of the same register.
         println("[[vk::binding({}, 0)]] Texture2D<float4> {}_Pareja;", 16 + reg, constantName);
         println("#define {0}_Texture3DDescriptorIndex {0}_Pareja", constantName);
+        // A 1D fetch from it reads its first row (tfetch1D in the header).
+        println("#define {0}_Texture1DDescriptorIndex {0}_Textura", constantName);
     }
 
     const uint32_t invBase = 360 + reg * 8;
@@ -2262,7 +2264,7 @@ void ShaderRecompiler::recompile(const uint8_t* shaderData, const std::string_vi
     if (manualesR0)
     {
         // Kept alive by a test no draw passes (an unused spec constant could be dropped): the runtime reads its default
-        // value from the SPIR-V (gta4_shaders.cpp) to know these elements are read by the shader itself.
+        // value from the SPIR-V (mp3_shaders.cpp) to know these elements are read by the shader itself.
         out.insert(marcaTrasInclude, fmt::format("[[vk::constant_id(1)]] const uint g_ManualesR0 = {}u;\n", manualesR0));
         const std::string marca = "\toPos.xy += g_HalfPixelOffset * oPos.w;\n";
         for (size_t p = out.find(marca); p != std::string::npos; p = out.find(marca, p + 1))

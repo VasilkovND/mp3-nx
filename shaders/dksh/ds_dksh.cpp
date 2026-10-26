@@ -12,7 +12,7 @@
  * minimum, no blur, and without 1/size (the texture size query).
  *
  * Usage
- *   ds_dksh <gta4_shaders.dslib> <output cache> [--contenedores DIR] [--glsl DIR] [--informe FILE.tsv]
+ *   ds_dksh <mp3_shaders.dslib> <output cache> [--contenedores DIR] [--glsl DIR] [--informe FILE.tsv]
  *           [--hilos N] [--limite SECONDS]
  *   --contenedores   the library's container folder: the report uses its names instead of numbers.
  *   Exit code 0 only if every variant compiled.
@@ -208,7 +208,7 @@ bool Deserializar(const std::string& d, Compilado& c) {
 int main(int argc, char** argv) try {
   if (argc < 3) {
     std::fprintf(stderr,
-                 "uso: ds_dksh <gta4_shaders.dslib> <cache de salida> [--contenedores DIR]"
+                 "uso: ds_dksh <mp3_shaders.dslib> <cache de salida> [--contenedores DIR]"
                  " [--glsl DIR] [--informe FICHERO.tsv] [--variantes FICHERO] [--hilos N] [--limite SEGUNDOS]\n");
     return 1;
   }
