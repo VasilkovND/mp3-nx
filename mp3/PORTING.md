@@ -116,3 +116,12 @@ Then the process ended when the game created its first save (`MP3_PROGRESSION`, 
 cached entry of a writable device still exists with the throwing `std::filesystem::exists`, and on the SD card the stat
 of the file the game had just created and still held open failed with an I/O error. SDK patch 0094 uses the
 error-code overload: only a clear "not there" drops the entry.
+
+## Run 7 (2026-10-27, handheld)
+
+No crash in 42 s; saves open and close. In its last 10 s the game sent 8218 draws: 6216 were Direct3D's inline point
+(nothing to draw), 1126 drawn, 155 rejected: rectangle lists (primitive 8) whose vertex shader (n89) reads packed
+elements, which the expansion to quads refused ("not a float format"). `ExpandRectList` (src/mp3_gpu.cpp) now
+extrapolates the fourth vertex for packed formats too (a + b - corner per byte, 16-bit or 10-bit lane in modular
+arithmetic, half floats through float) and takes a 16_16 position. `telemetria.flag` beside the NRO turns on the
+640x360 capture every 15 s (`capturas/`).

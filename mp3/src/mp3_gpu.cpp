@@ -2148,8 +2148,11 @@ class RingGraphicsSystem final : public rex::system::IGraphicsSystem {
   // for. Each rectangle becomes a quad (deko3d draws quad lists natively): the corner is the vertex opposite the
   // longest edge (by POSITION0's x and y), the missing vertex is a + b - corner for every component (a rectangle's
   // attributes are affine across it), written to a guest buffer of ours that the fetch constant points at for this
-  // draw. Only what such quads use: auto-indexed draws, one vertex stream, 32-bit float elements, in k8in32 or no
-  // swap. The registers are restored with the alias scope.
+  // draw. Only what such quads use: auto-indexed draws, one vertex stream, in k8in32 or no swap. Elements in 32-bit
+  // float are computed as floats; Max Payne 3's UI rectangles also carry packed elements (bytes, 16-bit, 2_10_10_10,
+  // half floats): a + b - corner per lane, in modular integer arithmetic (exact when the result is in range, as an
+  // affine value inside the rectangle is) or through float for half floats. The position must be float or 16_16. The
+  // registers are restored with the alias scope.
   bool ExpandRectList(AliasScope& scope) {
     namespace g = rex::graphics;
     const uint32_t init = Register(g::XE_GPU_REG_VGT_DRAW_INITIATOR);
@@ -2158,6 +2161,10 @@ class RingGraphicsSystem final : public rex::system::IGraphicsSystem {
     if (!count || count % 3 || count > 3 * 4096) return Unexpanded("vertex count");
     int32_t slot = -1;
     uint32_t stride = 0, position = UINT32_MAX;
+    bool position_float = true;
+    // How each word of a vertex is extrapolated (Lane): words no element reads are copied from a neighbour.
+    enum Lane : uint8_t { kCopy, kFloat, kBytes, kHalves, kHalfFloats, k10_10_10_2, kWord };
+    Lane lanes[256] = {};
     for (const rex::x360::ElementoVertice& el : vs_->elementos) {
       const size_t i = size_t(el.instruccion) * 3;
       if (i + 2 >= vs_microcode_.size()) return Unexpanded("fetch outside the microcode");
@@ -2166,12 +2173,38 @@ class RingGraphicsSystem final : public rex::system::IGraphicsSystem {
       if (slot >= 0 && s != slot) return Unexpanded("more than one stream");
       slot = s;
       const uint32_t format = (w1 >> 16) & 0x3F;
-      if (format != 36 && format != 37 && format != 57 && format != 38) return Unexpanded("not a float format");
+      Lane lane;
+      uint32_t words;
+      switch (format) {
+        case 36: lane = kFloat; words = 1; break;                // 32_FLOAT
+        case 37: lane = kFloat; words = 2; break;                // 32_32_FLOAT
+        case 57: lane = kFloat; words = 3; break;                // 32_32_32_FLOAT
+        case 38: lane = kFloat; words = 4; break;                // 32_32_32_32_FLOAT
+        case 6: lane = kBytes; words = 1; break;                 // 8_8_8_8
+        case 7: lane = k10_10_10_2; words = 1; break;            // 2_10_10_10
+        case 25: lane = kHalves; words = 1; break;               // 16_16
+        case 26: lane = kHalves; words = 2; break;               // 16_16_16_16
+        case 31: lane = kHalfFloats; words = 1; break;           // 16_16_FLOAT
+        case 32: lane = kHalfFloats; words = 2; break;           // 16_16_16_16_FLOAT
+        case 33: lane = kWord; words = 1; break;                 // 32
+        case 34: lane = kWord; words = 2; break;                 // 32_32
+        case 35: lane = kWord; words = 4; break;                 // 32_32_32_32
+        default: return Unexpanded("vertex format");
+      }
       if (stride && (w2 & 0xFF) != stride) return Unexpanded("strides differ");
       stride = w2 & 0xFF;
-      if (el.uso == 0 && el.indice_uso == 0) position = (w2 >> 8) & 0x7FFFFF;
+      const uint32_t offset = (w2 >> 8) & 0x7FFFFF;
+      if (offset + words > stride || stride > 256) return Unexpanded("element outside the vertex");
+      for (uint32_t w = 0; w < words; ++w) lanes[offset + w] = lane;
+      if (el.uso == 0 && el.indice_uso == 0) {
+        if (lane != kFloat && format != 25) return Unexpanded("position format");
+        position = offset;
+        position_float = lane == kFloat;
+      }
     }
-    if (slot < 0 || !stride || position == UINT32_MAX || position + 2 > stride) return Unexpanded("no position");
+    if (slot < 0 || !stride || position == UINT32_MAX || position + (position_float ? 2 : 1) > stride) {
+      return Unexpanded("no position");
+    }
     const uint32_t reg = 0x4800 + uint32_t(slot) * 2;
     const uint32_t f0 = registers_[reg], f1 = registers_[reg + 1];
     const uint32_t endian = f1 & 0x3;
@@ -2203,11 +2236,50 @@ class RingGraphicsSystem final : public rex::system::IGraphicsSystem {
       std::memcpy(&v, &f, 4);
       return endian ? __builtin_bswap32(v) : v;
     };
+    auto value = [&](uint32_t w) { return endian ? __builtin_bswap32(w) : w; };  // the word as the GPU reads it
+    // a + b - c in lanes of `bits` bits (modular), for one word.
+    auto lanes_sum = [](uint32_t a, uint32_t b, uint32_t c, std::initializer_list<uint32_t> bits) {
+      uint32_t out = 0, shift = 0;
+      for (uint32_t n : bits) {
+        const uint32_t mask = n == 32 ? 0xFFFFFFFFu : ((1u << n) - 1);
+        out |= ((((a >> shift) & mask) + ((b >> shift) & mask) - ((c >> shift) & mask)) & mask) << shift;
+        shift += n;
+      }
+      return out;
+    };
+    auto half_sum = [](uint32_t a, uint32_t b, uint32_t c) {
+      uint32_t out = 0;
+      for (uint32_t shift : {0u, 16u}) {
+        auto h = [&](uint32_t v) { return float(std::bit_cast<_Float16>(uint16_t(v >> shift))); };
+        const _Float16 r = _Float16(h(a) + h(b) - h(c));
+        out |= uint32_t(std::bit_cast<uint16_t>(r)) << shift;
+      }
+      return out;
+    };
+    auto extrapolate = [&](uint32_t w, uint32_t a, uint32_t b, uint32_t c) -> uint32_t {
+      switch (lanes[w]) {
+        case kCopy: return a;
+        case kFloat: return store(load(a) + load(b) - load(c));
+        case kBytes: return value(lanes_sum(value(a), value(b), value(c), {8, 8, 8, 8}));
+        case kHalves: return value(lanes_sum(value(a), value(b), value(c), {16, 16}));
+        case kHalfFloats: return value(half_sum(value(a), value(b), value(c)));
+        case k10_10_10_2: return value(lanes_sum(value(a), value(b), value(c), {10, 10, 10, 2}));
+        case kWord: return value(lanes_sum(value(a), value(b), value(c), {32}));
+      }
+      return a;
+    };
+    // The position's x and y (16_16: two signed lanes; which one is x does not matter for the edge lengths).
+    auto xy = [&](const uint32_t* v) -> std::pair<float, float> {
+      if (position_float) return {load(v[position]), load(v[position + 1])};
+      const uint32_t p = value(v[position]);
+      return {float(int16_t(p >> 16)), float(int16_t(p & 0xFFFF))};
+    };
     for (uint32_t r = 0; r < rects; ++r) {
       const uint32_t* v[3] = {src + (r * 3) * stride, src + (r * 3 + 1) * stride, src + (r * 3 + 2) * stride};
       auto edge = [&](int a, int b) {
-        const float dx = load(v[a][position]) - load(v[b][position]);
-        const float dy = load(v[a][position + 1]) - load(v[b][position + 1]);
+        const auto [ax, ay] = xy(v[a]);
+        const auto [bx, by] = xy(v[b]);
+        const float dx = ax - bx, dy = ay - by;
         return dx * dx + dy * dy;
       };
       const float e12 = edge(1, 2), e20 = edge(2, 0), e01 = edge(0, 1);
@@ -2218,7 +2290,7 @@ class RingGraphicsSystem final : public rex::system::IGraphicsSystem {
       uint32_t* q = dst + r * 4 * stride;
       std::memcpy(q, corner, stride * 4);
       std::memcpy(q + stride, a, stride * 4);
-      for (uint32_t w = 0; w < stride; ++w) q[2 * stride + w] = store(load(a[w]) + load(b[w]) - load(corner[w]));
+      for (uint32_t w = 0; w < stride; ++w) q[2 * stride + w] = extrapolate(w, a[w], b[w], corner[w]);
       std::memcpy(q + 3 * stride, b, stride * 4);
     }
     scope.Save(g::XE_GPU_REG_VGT_DRAW_INITIATOR);
