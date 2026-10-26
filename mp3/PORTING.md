@@ -43,6 +43,20 @@ ReXGlue v0.10.0 (the host build of ds3-nx, the same tag and host patch) applies 
 0.0.9.6) and generates the code in ~55 s. The first run found 10 branches to 7 addresses outside any function, each a
 tail branch to a small function after a blr/b/bctr: added to `codegen/mp3_config.toml` [functions].
 
-## Status
+## Unresolved-branch traps (tools/patch_branch_traps.py, from ds3-nx)
 
-To be filled in after the first console run.
+ReXGlue v0.10.0 writes `REX_FATAL("Unresolved branch/call from A to B")` for a branch it could not tie to a call
+target. GTA IV never met one (Liberty Recompiled's config named its targets); Max Payne 3's first codegen has 329. `patch_branch_traps.py` (ds3-nx's) turns a trap whose target is a label of the same function into a goto
+(300 of them: the codegen classifies the branch as a call although the label is right there), and one to a function's
+entry into a tail call. The other 29 traps went to 18 addresses that are neither (mostly 0x82FFxxxx-0x8303xxxx, XDK and
+CRT code with several entries): they are function entries in `codegen/mp3_config.toml` now, so the pass makes them tail
+calls. A trap the pass cannot place stops the build.
+
+## Run 1 (2026-10-26, handheld)
+
+Everything up to the game's code works: the package in `god/` is found and mapped (48 pieces; "SVOD uses an XSF layout
+... converted using a third-party tool", read fine), `default.xex` is copied to `god_xex/`, TU6's `default.xexp` is
+applied (0.0.0.6 -> 0.0.9.6), `update/` is mounted (57 entries), the deko3d presenter and the ring reader start. No
+shader library yet (expected). The main thread (start 0x821F1220) died at once on a trap: "Unresolved call from
+0x821F42E4 to 0x821F43E0", a branch to the `__finally`-like tail of its own function (`sub_821F3B78`). That is what
+the pass above fixes.

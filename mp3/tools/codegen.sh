@@ -10,6 +10,7 @@
 #   2. The manifest: codegen/mp3_config.toml (analysis settings, native CRT functions and the function entries
 #      discovery misses) and codegen/names.toml (names for the functions we hook).
 #   3. rexglue codegen, then our passes over the generated code:
+#      patch_branch_traps.py  the codegen's unresolved-branch traps as gotos and tail calls (from ds3-nx)
 #      patch_vmx_exact.py     vmaddfp/vnmsubfp fused as on the console, vpkuwus with vD = vA or vB (VMX_EXACT=0 skips it)
 #      patch_barriers.py      the PowerPC barriers as ARM fences, spin pauses, prefetches (BARRIERS=0 skips it)
 #      patch_stack_access.py  guest stack accesses without volatile
@@ -96,7 +97,7 @@ done
 # 3. Codegen (re-run only when an input changed) and our passes.
 STAMP="$CG/inputs.sha"
 INPUTS=$( (cat "$CG/game/default.xex" "$CG/game/default.xexp" "$CG"/*.toml "$REXGLUE" \
-  "$ROOT"/mp3/tools/patch_vmx_exact.py \
+  "$ROOT"/mp3/tools/patch_vmx_exact.py "$ROOT"/mp3/tools/patch_branch_traps.py \
   "$ROOT"/mp3/tools/patch_barriers.py "$ROOT"/mp3/tools/patch_stack_access.py \
   "$ROOT"/mp3/tools/patch_inline_calls.py "$ROOT"/mp3/tools/patch_local_regs.py
   echo "barriers=$BARRIERS localregs=$LOCALREGS check=${PLR_CHECK:-0} vmx_exact=$VMX_EXACT"
@@ -117,6 +118,12 @@ if [ "$(cat "$STAMP" 2>/dev/null)" != "$INPUTS" ] || [ ! -f "$CG/generated/defau
   (cd "$ST" && REX_DUMP_IMAGE="$CG/image.bin" "$REXGLUE" --force codegen mp3_manifest.toml > "$CG/codegen.log" 2>&1) || {
     tail -20 "$CG/codegen.log"; exit 1; }
   GEN="generated/default"
+  # The codegen's traps for branches it could not tie up (REX_FATAL "Unresolved branch/call", fatal on the console):
+  # to a label of the same function they become gotos, to a function's entry tail calls (patch_branch_traps.py, from
+  # ds3-nx). A target that is neither stops the build: name it in codegen/mp3_config.toml [functions].
+  (cd "$ST" && python3 "$ROOT/mp3/tools/patch_branch_traps.py" $GEN/*.cpp) > "$CG/patch_branch_traps.log" || {
+    cat "$CG/patch_branch_traps.log"; exit 1; }
+  head -1 "$CG/patch_branch_traps.log"
   if [ "$VMX_EXACT" = 1 ]; then
     (cd "$ST" && python3 "$ROOT/mp3/tools/patch_vmx_exact.py" $GEN/mp3_recomp.*.cpp) > "$CG/patch_vmx_exact.log"
     tail -1 "$CG/patch_vmx_exact.log"

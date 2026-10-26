@@ -22,3 +22,26 @@ large_function_threshold = 1048576
 "0x82E51820" = {}   # from 0x83102FE8, 0x83102FF8, 0x83103008, 0x83103028
 "0x82E934F0" = {}   # from 0x82E8FE90
 "0x82E93500" = {}   # from 0x82E90E18
+
+# Targets of branches the codegen left as traps that tools/patch_branch_traps.py cannot place (no label of the branching
+# function, no function entry there): first console run, "Unresolved call from 0x821F42E4 to 0x821F43E0" at start
+# (that one is a goto now). Made function entries, so the branches become tail calls. Mostly near 0x83000000-0x8303FFFF
+# (XDK/CRT code with several entries).
+"0x82D792F8" = {}
+"0x82D794F8" = {}
+"0x823010FC" = {}
+"0x82FFFF68" = {}
+"0x83000128" = {}
+"0x830001F0" = {}
+"0x8300DF98" = {}
+"0x83010A28" = {}
+"0x83010B54" = {}
+"0x83013A14" = {}
+"0x83013A30" = {}
+"0x83018300" = {}
+"0x83018308" = {}
+"0x83030B80" = {}
+"0x83030BA0" = {}
+"0x83030BBC" = {}
+"0x830390B8" = {}
+"0x830391FC" = {}
