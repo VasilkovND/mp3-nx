@@ -137,3 +137,17 @@ after it): the game lists its saves, opens `MP3_PROGRESSION` (content type 1) an
 nothing more is logged. That save was 0 bytes: run 6 created it and died before writing it (patch 0094's crash). It
 was removed from the card (kept in the logs folder on the Mac), so the next run creates it anew; if the freeze
 stays, it is in the read path of a save and needs a closer look.
+
+## Run 9 (2026-10-27, handheld): gameplay reached, the scene white
+
+With the empty save gone the game went through its loading screens, the intro (Bink movies, shown fine) and into
+the first level: ~1200 draws a frame at 17-21 fps, GPU ~46-56 ms a frame, 47-49 copies and ~28 EDRAM transfers a frame.
+The captures of gameplay are white but for the HUD prompt. The renderer's once-only warnings point at:
+
+- cause 423: a `k_24_8_FLOAT` texture (depth as 20e4 float) sampled with no resolve found at its address and size:
+  the draw gets an empty texture (depth 0 everywhere: fog, lights or depth of field reading it whiten the frame);
+- cause 202: copies into `k_8` (one channel) refused.
+
+SDK patch 0095 resolves into `k_8` and `k_8_8` (R8, RG8) and logs, for the first depth textures without a resolve,
+their base and size and the resolves within 8 MB of it. `mp3.toml` takes one automatic dump of a gameplay frame's
+resolved textures and three frame traces for the next run.

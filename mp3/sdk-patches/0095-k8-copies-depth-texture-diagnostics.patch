@@ -1,0 +1,40 @@
+--- a/src/x360/deko/destinos.cpp
++++ b/src/x360/deko/destinos.cpp
+@@ -1053,6 +1053,12 @@
+ // from guest memory, so only the values matter (Dead Space 2 resolves into 5_6_5 and samples it back).
+ bool FormatoResueltaDk(uint32_t formato_copia, DkImageFormat& host) {
+   switch (formato_copia) {
++    case 2:   // k_8 (Max Payne 3 resolves one channel into it)
++      host = DkImageFormat_R8_Unorm;
++      return true;
++    case 10:  // k_8_8
++      host = DkImageFormat_RG8_Unorm;
++      return true;
+     case 6:   // k_8_8_8_8
+     case 8:   // k_8_8_8_8_A
+     case 50:  // k_8_8_8_8_AS_16_16_16_16
+--- a/src/x360/deko/texturas.cpp
++++ b/src/x360/deko/texturas.cpp
+@@ -638,6 +638,22 @@
+   FormatoDk tf;
+   if (!FormatoDe(formato, tf)) {
+     Avisar(400 + formato, "formato de textura todavia no soportado: se usa una vacia");
++    // A depth texture (k_24_8, k_24_8_FLOAT) is only ever a resolve: which one was asked for and what was resolved
++    // near it (Max Payne 3 samples a k_24_8_FLOAT the lookup above did not find).
++    static uint32_t detalles = 0;
++    if ((formato == 22 || formato == 23) && detalles < 12) {
++      ++detalles;
++      std::string cerca;
++      for (const auto& [direccion, r] : resueltas_) {
++        if (direccion + 0x800000 > (base & 0x1FFFFFFF) && direccion < (base & 0x1FFFFFFF) + 0x800000) {
++          cerca += fmt::format(" {:08X}:{}x{}{}{}", direccion, r.imagen.ancho, r.imagen.alto,
++                               r.imagen.profundidad ? " z" : "", r.escrita ? "" : " (sin escribir)");
++        }
++      }
++      REXLOG_WARN("[deko3d] causa {}: textura de profundidad {:08X} {}x{} sin resolve; resueltas cerca:{}",
++                  400 + formato, base, (f[2] & 0x1FFF) + 1, ((f[2] >> 13) & 0x1FFF) + 1,
++                  cerca.empty() ? " ninguna" : cerca);
++    }
+     return VaciaDe(tipo_shader);
+   }
+   const DkImageFormat formato_vista = FormatoVistaSigno(tf.formato, signos);
