@@ -1,0 +1,15 @@
+--- a/src/filesystem/virtual_file_system.cpp
++++ b/src/filesystem/virtual_file_system.cpp
+@@ -247,7 +247,11 @@
+       const auto* host_path_entry = dynamic_cast<const HostPathEntry*>(parent_entry);
+       if (host_path_entry) {
+         const auto file_path = host_path_entry->host_path() / rex::to_path(entry->name());
+-        if (!std::filesystem::exists(file_path)) {
++        // Without the error code: on the Switch's SD card a stat of a file the game has just created and still holds
++        // open (Max Payne 3's MP3_PROGRESSION save) failed with an I/O error, and the throwing overload ended the
++        // process. Only a clear "not there" drops the entry.
++        std::error_code ec;
++        if (!std::filesystem::exists(file_path, ec) && !ec) {
+           entry->Delete();
+           entry = nullptr;
+         }

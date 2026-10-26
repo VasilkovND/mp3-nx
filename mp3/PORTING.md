@@ -104,3 +104,15 @@ built in ~2 minutes. Two translator gaps GTA IV never hit, fixed in `shaders/Xen
   read: it now reads the 2D texture's first row (`tfetch1D` in `shader_common.h`), as the Xenos does.
 
 `shaders/build_library.sh` names the library `mp3_shaders.dslib` (it still wrote GTA IV's name).
+
+## Run 6 (2026-10-27, handheld): the first frames drawn
+
+With the library the renderer draws: 378 draws in 10 s at the end, 33 frames/s, every library shader the game loads
+found by its object's address. The rest of the skipped draws: 1128 of one 24-word vertex shader loaded inline (no
+address), a single point with no color or depth target (Direct3D's own, nothing to draw), and 237 with pixel shaders
+the game created after runs 4-5 (23 new containers, dumped, now in the library: 3816 shaders).
+
+Then the process ended when the game created its first save (`MP3_PROGRESSION`, content type 1): the VFS checks that a
+cached entry of a writable device still exists with the throwing `std::filesystem::exists`, and on the SD card the stat
+of the file the game had just created and still held open failed with an I/O error. SDK patch 0094 uses the
+error-code overload: only a clear "not there" drops the entry.
