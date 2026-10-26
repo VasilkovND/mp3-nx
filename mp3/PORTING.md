@@ -125,3 +125,15 @@ elements, which the expansion to quads refused ("not a float format"). `ExpandRe
 extrapolates the fourth vertex for packed formats too (a + b - corner per byte, 16-bit or 10-bit lane in modular
 arithmetic, half floats through float) and takes a 16_16 position. `telemetria.flag` beside the NRO turns on the
 640x360 capture every 15 s (`capturas/`).
+
+## Run 8 (2026-10-27, handheld): the first loading screen, then a freeze
+
+The 15 s captures show the first loading screen drawn: the MAX PAYNE 3 logo (its broken-film effect) and "LOADING ...".
+1506 draws in the last 10 s, none rejected (the rectangle lists are expanded). `[mem] process memory: 3281 MB used of
+3285 MB` is the same from the start in every run (the reservation at startup, not growth).
+
+Runs 7 and 8 both stopped ~43 s in at the same step, the whole process at once (not even the ring thread's 10 s report
+after it): the game lists its saves, opens `MP3_PROGRESSION` (content type 1) and closes it, opens it again, and
+nothing more is logged. That save was 0 bytes: run 6 created it and died before writing it (patch 0094's crash). It
+was removed from the card (kept in the logs folder on the Mac), so the next run creates it anew; if the freeze
+stays, it is in the read path of a save and needs a closer look.
