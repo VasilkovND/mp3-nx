@@ -1,0 +1,24 @@
+--- a/src/kernel/xboxkrnl/xboxkrnl_audio.cpp
++++ b/src/kernel/xboxkrnl/xboxkrnl_audio.cpp
+@@ -35,6 +35,10 @@
+ #include <unordered_map>
+ #include <vector>
+ 
++REXCVAR_DEFINE_INT32(audio_configuracion_altavoces, 0x00010001, "Audio",
++                     "Lo que XAudioGetSpeakerConfig devuelve al juego: 65537 (0x00010001) = Dolby Digital y analogico "
++                     "estereo, como en Xenia; 1 = solo estereo analogico (GTA IV mezcla entonces en modo 1 en vez de 3). "
++                     "Se lee en cada llamada");
+ REXCVAR_DEFINE_INT32(audio_volcado_s, 0, "Audio",
+                      "Diagnostico: segundos del audio que entrega el juego (6 canales, antes del "
+                      "driver) que se guardan en audio_volcado_<cliente>.wav junto al ejecutable; "
+@@ -178,7 +182,9 @@
+ using namespace rex::system;
+ 
+ u32 XAudioGetSpeakerConfig_entry(mapped_u32 config_ptr) {
+-  *config_ptr = 0x00010001;
++  // GTA IV polls this and turns the Dolby Digital bit (0x10000) into its mixing mode 3, stereo into 1
++  // (sub_8291F508); its reverb setup (sub_82935A70) reads it too. The Switch outputs stereo.
++  *config_ptr = uint32_t(REXCVAR_GET(audio_configuracion_altavoces));
+   return X_ERROR_SUCCESS;
+ }
+ 

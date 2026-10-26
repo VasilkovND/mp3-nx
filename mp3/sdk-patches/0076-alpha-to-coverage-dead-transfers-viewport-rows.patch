@@ -1,0 +1,144 @@
+--- a/src/x360/deko/dibujos.cpp
++++ b/src/x360/deko/dibujos.cpp
+@@ -37,6 +37,13 @@
+                      "Los dibujos con un vertex shader de mas KB de codigo compilado no se graban (los que el compilador "
+                      "desborda: segundos por dibujo); 0 = todos");
+ REXCVAR_DECLARE(bool, x360_volcado_en_vivo);  // destinos.cpp
++REXCVAR_DEFINE_BOOL(x360_edram_saltar_muertas, true, "X360",
++                    "Un pase cuyo primer dibujo pinta todos sus destinos de color enteros y opacos (un cuadrado a "
++                    "pantalla completa sin mezcla, prueba ni descarte) no recibe lo que otras vistas tienen en esas "
++                    "tejas: GTA IV convierte su mapa de sombras a R32F sobre tejas de la escena (3 ms de transferencias)");
++REXCVAR_DEFINE_BOOL(x360_alfa_a_cobertura, true, "X360",
++                    "Alpha to coverage (RB_COLORCONTROL bit 4) como prueba de alfa >= 0.5, como Xenia con una muestra: "
++                    "las hojas de los arboles y los cables de los puentes de GTA IV salian como tarjetas enteras");
+ REXCVAR_DEFINE_BOOL(x360_edram_filas_de_tijera, true, "X360",
+                     "Un pase recibe de las otras vistas de la EDRAM solo las filas hasta el fondo de su tijera (y mas si "
+                     "un dibujo posterior baja), no 720: el pase de 640x360 a 4x de GTA IV recibia 720 filas de "
+@@ -731,6 +738,20 @@
+     const uint32_t ventana = r[gr::XE_GPU_REG_PA_SC_WINDOW_OFFSET];
+     y1 += int32_t(((ventana >> 16) & 0x7FFF) << 17) >> 17;
+   }
++  // With clipping on, nothing is drawn below the viewport either (GTA IV's post passes set a 1280x720 scissor and a
++  // 320x180 viewport): its bottom, rounded up, a row more for the pixel centers.
++  const uint32_t vte = r[gr::XE_GPU_REG_PA_CL_VTE_CNTL];
++  if (!((r[gr::XE_GPU_REG_PA_CL_CLIP_CNTL] >> 16) & 0x1) && (vte & 0xC) == 0xC) {
++    float fondo_vp = Flotante(r[gr::XE_GPU_REG_PA_CL_VPORT_YOFFSET]) +
++                     std::abs(Flotante(r[gr::XE_GPU_REG_PA_CL_VPORT_YSCALE]));
++    if (((r[gr::XE_GPU_REG_PA_SU_SC_MODE_CNTL] >> 16) & 0x1) && !REXCVAR_GET(nfsmw_dk_tiles_en_pantalla)) {
++      const uint32_t ventana = r[gr::XE_GPU_REG_PA_SC_WINDOW_OFFSET];
++      fondo_vp += float(int32_t(((ventana >> 16) & 0x7FFF) << 17) >> 17);
++    }
++    if (fondo_vp > 0.0f && fondo_vp < 16384.0f) {
++      y1 = std::min(y1, int32_t(std::ceil(fondo_vp)) + 1);
++    }
++  }
+   return uint32_t(std::max(y1, 1));
+ }
+ 
+@@ -771,7 +792,13 @@
+   // draw in: at least 720 (targets are max(720, pitch) tall: a 1280-pitch one has 1280 rows nobody uses).
+   EdramTopes(imagenes);
+   edram_estencil_aplazable_ = !dibujo_usa_estencil_;
+-  for (ImagenDk* imagen : imagenes) {
++  for (uint32_t i = 0; i < 5; ++i) {
++    ImagenDk* imagen = imagenes[i];
++    if (imagen && i < 4 && dibujo_opaco_completo_) {
++      imagen->edram_filas = 0;  // its first draw paints all of it (x360_edram_saltar_muertas)
++      ++pases_sin_transferir_;
++      continue;
++    }
+     if (imagen) {
+       EdramPreparar(*imagen, filas_pase_pedidas_ == UINT32_MAX
+                                  ? std::min(imagen->alto, std::max(720u, imagen->alto_usado))
+@@ -1641,6 +1668,37 @@
+   // the rows written so far are claimed, the others' content comes for the new rows.
+   const uint32_t fondo_tijera = FondoDeTijera(r);
+   dibujo_usa_estencil_ = claves[4] && (r[gr::XE_GPU_REG_RB_DEPTHCONTROL] & 0x1);
++  // A pass whose first draw paints all of its color targets' scissor, opaque (x360_edram_saltar_muertas): what other views
++  // of those tiles hold is overwritten before anyone reads it, so it is not transferred. GTA IV converts its shadow map
++  // to R32F that way over 1280x1280 tiles that held the scene and the G-buffer (3 ms of reinterpreting transfers).
++  // Taken as full: a 4-vertex quad or a 3-vertex rectangle list without indices, viewport and scissor over the whole
++  // target from (0, 0), no blending, all channels written, no alpha test, coverage or discard, no depth or stencil test.
++  dibujo_opaco_completo_ = false;
++  if (REXCVAR_GET(x360_edram_saltar_muertas) && ps && !ps->descarta && fuente == 2 &&
++      ((cuenta == 4 && (tipo == 5 || tipo == 6 || tipo == 13)) || (cuenta == 3 && tipo == 8)) &&
++      !(control_profundidad & 0x3) && hay_destino) {
++    const uint32_t cc = r[gr::XE_GPU_REG_RB_COLORCONTROL];
++    bool ok = !((cc >> 4) & 0x1) && (!((cc >> 3) & 0x1) || (cc & 0x7) == 7);
++    for (uint32_t i = 0; i < 4 && ok; ++i) {
++      if (!claves[i]) continue;
++      const uint32_t m = (mascaras >> (i * 4)) & 0xF;
++      const uint32_t f = uint32_t(claves[i] >> 16) & 0xF;
++      const bool canales = m == 0xF || (f == 14 && (m & 0x1)) || ((f == 4 || f == 6 || f == 15) && (m & 0x3) == 0x3);
++      ok = canales && (r[kMezcla[i]] & 0x1FFF1FFF) == 0x00010001;
++    }
++    const uint32_t tl = r[gr::XE_GPU_REG_PA_SC_WINDOW_SCISSOR_TL];
++    const uint32_t br = r[gr::XE_GPU_REG_PA_SC_WINDOW_SCISSOR_BR];
++    const uint32_t vte = r[gr::XE_GPU_REG_PA_CL_VTE_CNTL];
++    if (ok && (tl & 0x3FFF3FFF) == 0 && (br & 0x3FFF) >= pitch && (vte & 0xF) == 0xF &&
++        r[gr::XE_GPU_REG_PA_SC_WINDOW_OFFSET] == 0) {
++      const float xs = std::abs(Flotante(r[gr::XE_GPU_REG_PA_CL_VPORT_XSCALE]));
++      const float xo = Flotante(r[gr::XE_GPU_REG_PA_CL_VPORT_XOFFSET]);
++      const float ys = std::abs(Flotante(r[gr::XE_GPU_REG_PA_CL_VPORT_YSCALE]));
++      const float yo = Flotante(r[gr::XE_GPU_REG_PA_CL_VPORT_YOFFSET]);
++      const float x1 = float(br & 0x3FFF), y1 = float((br >> 16) & 0x3FFF);
++      dibujo_opaco_completo_ = xo - xs <= 0.5f && xo + xs >= x1 - 0.5f && yo - ys <= 0.5f && yo + ys >= y1 - 0.5f;
++    }
++  }
+   if (g_.pase_valido && fondo_tijera > filas_pase_preparadas_) {
+     g_.pase_valido = false;
+     ++pases_ampliados_;
+@@ -1803,6 +1861,21 @@
+   if (ps && ((control_color >> 3) & 0x1) && (control_color & 0x7) != 7) {
+     umbral_alfa = Flotante(r[gr::XE_GPU_REG_RB_ALPHA_REF]);
+     funcion_alfa = control_color & 0x7;
++  }
++  // Alpha to coverage (RB_COLORCONTROL bit 4, x360_alfa_a_cobertura): GTA IV's foliage and the bridges' cables are cards
++  // whose texture alpha says where the leaf or the cable is. Without it they were drawn whole: black cards in the trees,
++  // and far bridges' cable planes as dark triangles (their depth too, so the lights and the fog saw a surface). As
++  // Xenia does for one sample: the pixel is kept where alpha >= 0.5 (an edge as sharp as an alpha test).
++  if (ps && ((control_color >> 4) & 0x1) && REXCVAR_GET(x360_alfa_a_cobertura)) {
++    if (funcion_alfa == 7) {
++      funcion_alfa = 6;  // greater or equal
++      umbral_alfa = 0.5f;
++    } else if (funcion_alfa == 4 || funcion_alfa == 6) {
++      umbral_alfa = std::max(umbral_alfa, 0.5f);
++    }
++    ++dibujos_alfa_a_cobertura_;
++  }
++  if (funcion_alfa != 7) {
+     especializacion |= 0x2 | ((funcion_alfa & 0x7u) << kSpecFuncionAlfaDesplazamiento);
+   }
+   // nfsmw_nativo_sin_desenfoque: the race's final composite without its radial blur (the Vulkan path's
+--- a/src/x360/deko/destinos.cpp
++++ b/src/x360/deko/destinos.cpp
+@@ -2822,14 +2822,15 @@
+       "[deko3d] por fotograma: GPU sombras {:.2f} ms, escena {:.2f}, reflejo {:.2f}, 320 {:.2f}, menores {:.2f}, copias "
+       "{:.2f}, borrados {:.2f}, resto {:.2f}, escena sin profundidad {:.2f}, GPU parada entre trabajos {:.2f}; el anillo "
+       "espero a la GPU {:.2f} ms; borrados saltados {:.1f}; dibujos con Z temprana {:.0f}; ZCULL invalidado por otra prueba {:.1f}; stencil de transferencias aplazado "
+-      "{} (hecho {}, descartado {}) y pases ampliados {} en total",
++      "{} (hecho {}, descartado {}), pases ampliados {}, pases sin transferir {} y dibujos con alfa a cobertura {} "
++      "en total",
+       ms(kGpuSombras), ms(kGpuEscena), ms(kGpuReflejo), ms(kGpu320), ms(kGpuMenores), ms(kGpuCopias), ms(kGpuBorrados),
+       ms(kGpuOtros), ms(kGpuEscenaSinProfundidad), ms(kGpuHuecoEntreTrabajos),
+       double(nucleo_.NsEsperandoValla() - informe_espera_ns_) / 1e6 / fotogramas,
+       double(borrados_saltados_ - informe_saltados_) / fotogramas,
+       double(dibujos_z_temprana_ - informe_z_temprana_) / fotogramas,
+       double(zcull_invalidaciones_ - informe_zcull_) / fotogramas, estencil_aplazados_, estencil_ejecutados_,
+-      estencil_descartados_, pases_ampliados_);
++      estencil_descartados_, pases_ampliados_, pases_sin_transferir_, dibujos_alfa_a_cobertura_);
+   const auto us = [&](uint32_t e) { return dibujos ? double(ns_etapas_[e] - informe_etapas_[e]) / double(dibujos) / 1e3 : 0.0; };
+   static constexpr const char* kFasesSm[3] = {"mirando", "APLICANDO", "apagada"};
+   X360_INFORME(
+--- a/include/rex/x360/deko/render.h
++++ b/include/rex/x360/deko/render.h
+@@ -598,6 +598,9 @@
+   uint32_t filas_pase_pedidas_ = UINT32_MAX, filas_pase_preparadas_ = UINT32_MAX;
+   uint64_t pases_ampliados_ = 0;
+   bool dibujo_usa_estencil_ = false;  // the draw that begins the pass tests or writes the stencil: no deferring
++  uint64_t dibujos_alfa_a_cobertura_ = 0;
++  bool dibujo_opaco_completo_ = false;  // the draw that begins the pass paints its color targets whole (x360_edram_saltar_muertas)
++  uint64_t pases_sin_transferir_ = 0;  // draws with alpha to coverage, drawn with an alpha test (x360_alfa_a_cobertura)
+   // The DKSH of a library shader for that specialization value (masked) and, for a vertex shader, the
+   // interpolators it keeps. nullptr if it cannot be had (logged once).
+   // `variante_ps` (pixel shaders): kVariante* flags (nfsmw_dk_dibujos.cpp), part of the DKSH cache key; 0 is the

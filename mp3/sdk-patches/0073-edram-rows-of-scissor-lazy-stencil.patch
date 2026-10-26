@@ -1,0 +1,325 @@
+--- a/src/x360/deko/dibujos.cpp
++++ b/src/x360/deko/dibujos.cpp
+@@ -37,6 +37,10 @@
+                      "Los dibujos con un vertex shader de mas KB de codigo compilado no se graban (los que el compilador "
+                      "desborda: segundos por dibujo); 0 = todos");
+ REXCVAR_DECLARE(bool, x360_volcado_en_vivo);  // destinos.cpp
++REXCVAR_DEFINE_BOOL(x360_edram_filas_de_tijera, true, "X360",
++                    "Un pase recibe de las otras vistas de la EDRAM solo las filas hasta el fondo de su tijera (y mas si "
++                    "un dibujo posterior baja), no 720: el pase de 640x360 a 4x de GTA IV recibia 720 filas de "
++                    "profundidad y stencil");
+ REXCVAR_DEFINE_BOOL(x360_sesgo_exp_color, true, "X360",
+                     "Aplica el color_exp_bias de RB_COLOR_INFO: el pixel shader escala lo que escribe en cada destino por "
+                     "2^sesgo (GTA IV acumula las luces en la escena 7e3 a x0.5 y la resuelve a x2)");
+@@ -713,6 +717,21 @@
+   }
+   tijera = DkScissor{uint32_t(x0), uint32_t(y0), uint32_t(x1 - x0), uint32_t(y1 - y0)};
+   return 0;
++}
++
++// The bottom row a draw may write, from its window scissor alone (CalcularEncuadre's rule, before the pass binds its
++// targets): the rows the pass's views must hold others' content for (x360_edram_filas_de_tijera). UINT32_MAX when
++// unknown (the pass scale).
++uint32_t RenderDk::FondoDeTijera(const uint32_t* r) const {
++  if (pase_escala_ != 1.0f || !REXCVAR_GET(x360_edram_filas_de_tijera)) return UINT32_MAX;
++  const uint32_t tl = r[gr::XE_GPU_REG_PA_SC_WINDOW_SCISSOR_TL];
++  const uint32_t br = r[gr::XE_GPU_REG_PA_SC_WINDOW_SCISSOR_BR];
++  int32_t y1 = int32_t((br >> 16) & 0x3FFF);
++  if (!((tl >> 31) & 0x1) && !REXCVAR_GET(nfsmw_dk_tiles_en_pantalla)) {
++    const uint32_t ventana = r[gr::XE_GPU_REG_PA_SC_WINDOW_OFFSET];
++    y1 += int32_t(((ventana >> 16) & 0x7FFF) << 17) >> 17;
++  }
++  return uint32_t(std::max(y1, 1));
+ }
+ 
+ // ---- Render targets of a draw. Nothing to close or open: binding others is all a pass change costs.
+@@ -751,12 +770,17 @@
+   // Each view gets what other views of its tiles wrote since it last held them (edram.cpp), all the rows the pass may
+   // draw in: at least 720 (targets are max(720, pitch) tall: a 1280-pitch one has 1280 rows nobody uses).
+   EdramTopes(imagenes);
++  edram_estencil_aplazable_ = !dibujo_usa_estencil_;
+   for (ImagenDk* imagen : imagenes) {
+     if (imagen) {
+-      EdramPreparar(*imagen, std::min(imagen->alto, std::max(720u, imagen->alto_usado)));
++      EdramPreparar(*imagen, filas_pase_pedidas_ == UINT32_MAX
++                                 ? std::min(imagen->alto, std::max(720u, imagen->alto_usado))
++                                 : std::min(imagen->alto, filas_pase_pedidas_));
+       imagen->edram_filas = 0;
+     }
+   }
++  edram_estencil_aplazable_ = false;
++  filas_pase_preparadas_ = filas_pase_pedidas_;
+   z_por_color_pase_ = false;
+   AntesDe3D();
+   // Creating a target records its first clear and forgets the emitted state: the binding comes after.
+@@ -1613,7 +1637,16 @@
+   }
+ 
+   // --- Render targets
++  // A draw whose scissor reaches below the rows the pass prepared begins it again with them (x360_edram_filas_de_tijera):
++  // the rows written so far are claimed, the others' content comes for the new rows.
++  const uint32_t fondo_tijera = FondoDeTijera(r);
++  dibujo_usa_estencil_ = claves[4] && (r[gr::XE_GPU_REG_RB_DEPTHCONTROL] & 0x1);
++  if (g_.pase_valido && fondo_tijera > filas_pase_preparadas_) {
++    g_.pase_valido = false;
++    ++pases_ampliados_;
++  }
+   if (!g_.pase_valido || std::memcmp(g_.pase, claves, sizeof(claves)) != 0) {
++    filas_pase_pedidas_ = fondo_tijera;
+     if (!EmpezarPase(claves, pitch)) {
+       return false;
+     }
+@@ -1635,6 +1668,15 @@
+   if (z_por_color_pase_) {
+     if (edram_diag_) REXLOG_INFO("[edram-diag] dibujo del pase de profundidad por color: no se graba");
+     return true;
++  }
++  // A draw that tests or writes the stencil of a view whose transfer left its stencil passes for later: they run now and
++  // the pass binds its targets again (x360_edram_estencil_perezoso).
++  if (dibujo_usa_estencil_ && imagenes_pase_[4] && !imagenes_pase_[4]->estencil_pendiente.empty()) {
++    EdramEstencilPendiente(*imagenes_pase_[4], true);
++    filas_pase_pedidas_ = std::max(filas_pase_preparadas_, fondo_tijera);
++    if (!EmpezarPase(claves, pitch)) {
++      return false;
++    }
+   }
+   DkCmdBuf cmd = nucleo_.comandos();
+ 
+--- a/src/x360/deko/edram.cpp
++++ b/src/x360/deko/edram.cpp
+@@ -47,6 +47,14 @@
+ REXCVAR_DEFINE_BOOL(x360_edram_z_por_color, true, "X360",
+                     "Un pase con color de 8 bits y profundidad en la misma base escribe la profundidad como color "
+                     "(GTA IV la restaura asi para las luces): la profundidad recibe la ultima resuelta de esa base");
++REXCVAR_DEFINE_BOOL(x360_edram_estencil_perezoso, true, "X360",
++                    "Las pasadas de stencil de una transferencia de profundidad hecha al empezar un pase esperan: se "
++                    "hacen antes del primer dibujo del pase que usa el stencil o si el pase escribe la vista; si no, la "
++                    "vista queda marcada como vieja (GTA IV: el pase de 640x360 a 4x no usa el stencil)");
++REXCVAR_DEFINE_BOOL(x360_edram_z_de_z_un_pase, true, "X360",
++                    "La restauracion de la profundidad de GTA IV (stencil 0xFF con profundidad, 0x80 sin ella) en un "
++                    "borrado y un dibujo con prueba de profundidad 'mayor que 0', no en una pasada de profundidad y otra "
++                    "de stencil");
+ REXCVAR_DEFINE_BOOL(x360_edram_registro, false, "X360",
+                     "Registra cada transferencia entre vistas del EDRAM (siempre en el fotograma de un volcado)");
+ 
+@@ -358,10 +366,96 @@
+     REXLOG_INFO("[edram-diag] cierre del pase:{}", t);
+   }
+   for (ImagenDk* imagen : imagenes_pase_) {
++    // Deferred stencil passes: needed if the pass wrote the view (its rows become the EDRAM's), else dropped.
++    if (imagen && !imagen->estencil_pendiente.empty()) {
++      EdramEstencilPendiente(*imagen, imagen->edram_filas != 0);
++    }
+     if (imagen && imagen->edram_filas) {
+       EdramReclamar(*imagen, imagen->edram_filas);
+       imagen->edram_filas = 0;
++    }
++  }
++}
++
++void RenderDk::EdramEstencilPendiente(ImagenDk& destino, bool ejecutar) {
++  std::vector<PendienteEstencil> lista;
++  lista.swap(destino.estencil_pendiente);
++  // Either way the next draw begins its pass again: the targets are bound anew, and stale tiles are transferred again
++  // (a resolve in the middle of a pass closes it here).
++  g_.pase_valido = false;
++  for (const PendienteEstencil& pe : lista) {
++    // The source is not drawn on while the pass that prepared this view is open; a source gone since is not read.
++    if (!ejecutar || pe.origen->serie != pe.serie_origen) {
++      // What the view holds of these tiles is not the EDRAM's: the next preparation transfers them again.
++      for (uint32_t k = pe.desde; k < pe.desde + pe.cuantas && k < destino.edram_versiones.size(); ++k) {
++        destino.edram_versiones[k] = 0;
++      }
++      destino.edram_generacion = UINT32_MAX;
++      ++estencil_descartados_;
++      continue;
++    }
++    AsegurarTrabajo();
++    MarcarGpu(kGpuCopias);
++    PerfilCopia("EDRAM stencil aplazado", pe.origen, &destino, pe.ancho, pe.y1 - pe.y0);
++    DkCmdBuf cmd = nucleo_.comandos();
++    // The draws of the pass that wrote depth are ordered before these (the same render target); the source was
++    // made visible to the texture units before its depth draw.
++    DkImageView vista;
++    dkImageViewDefaults(&vista, &destino.imagen);
++    dkCmdBufBindRenderTargets(cmd, nullptr, 0, &vista);
++    const DkViewport vp = {0.0f, float(pe.y0), float(pe.ancho), float(pe.y1 - pe.y0), 0.0f, 1.0f};
++    const DkScissor tijera = {0, pe.y0, pe.ancho, pe.y1 - pe.y0};
++    dkCmdBufSetViewports(cmd, 0, &vp, 1);
++    static const DkViewportSwizzle kIdentidad = {DkSwizzle_PositiveX, DkSwizzle_PositiveY, DkSwizzle_PositiveZ,
++                                                  DkSwizzle_PositiveW};
++    dkCmdBufSetViewportSwizzles(cmd, 0, &kIdentidad, 1);
++    dkCmdBufSetScissors(cmd, 0, &tijera, 1);
++    DkRasterizerState rs;
++    dkRasterizerStateDefaults(&rs);
++    rs.cullMode = DkFace_None;
++    DkColorState cs;
++    dkColorStateDefaults(&cs);
++    DkColorWriteState cws;
++    dkColorWriteStateDefaults(&cws);
++    cws.masks = 0;
++    dkCmdBufBindRasterizerState(cmd, &rs);
++    dkCmdBufBindColorState(cmd, &cs);
++    dkCmdBufBindColorWriteState(cmd, &cws);
++    dkCmdBufBindVtxAttribState(cmd, nullptr, 0);
++    dkCmdBufBindVtxBufferState(cmd, nullptr, 0);
++    const DkShader* shaders[2] = {&vs_salida_, &fs_edram_z_};
++    dkCmdBufBindShaders(cmd, DkStageFlag_GraphicsMask, shaders, 2);
++    dkCmdBufBindTexture(cmd, DkStage_Fragment, 0, dkMakeTextureHandle(pe.ranura, 0));
++    dkCmdBufBindTexture(cmd, DkStage_Fragment, 1, dkMakeTextureHandle(pe.ranura_estencil, 0));
++    DkDepthStencilState ds;
++    dkDepthStencilStateDefaults(&ds);
++    ds.depthTestEnable = true;
++    ds.depthWriteEnable = false;
++    ds.depthCompareOp = DkCompareOp_Always;
++    ds.stencilTestEnable = true;
++    ds.stencilFrontCompareOp = ds.stencilBackCompareOp = DkCompareOp_Always;
++    ds.stencilFrontPassOp = ds.stencilBackPassOp = DkStencilOp_Replace;
++    ds.stencilFrontFailOp = ds.stencilBackFailOp = DkStencilOp_Keep;
++    ds.stencilFrontDepthFailOp = ds.stencilBackDepthFailOp = DkStencilOp_Replace;
++    dkCmdBufBindDepthStencilState(cmd, &ds);
++    for (uint32_t bit = 0; bit < 8; ++bit) {
++      if (!((pe.bits >> bit) & 1)) continue;
++      const deko::Subida b = Reservar(256, DK_UNIFORM_BUF_ALIGNMENT);
++      if (!b) break;
++      int32_t ub[12];
++      std::memcpy(ub, pe.u, sizeof(ub));
++      ub[10] = int32_t(bit + 1);
++      std::memcpy(b.cpu, ub, sizeof(ub));
++      dkCmdBufSetStencil(cmd, DkFace_FrontAndBack, uint8_t(1u << bit), 0xFF, 0xFF);
++      dkCmdBufBindUniformBuffer(cmd, DkStage_Fragment, 0, b.gpu, 256);
++      dkCmdBufDraw(cmd, DkPrimitive_Triangles, 3, 1, 0, 0);
+     }
++    ++edram_estencil_pasadas_;
++    ++estencil_ejecutados_;
++    copia3d_pendiente_ = true;
++    trabajo_3d_sin_barrera_ = true;
++    invalidar_zcull_ = true;
++    OlvidarEstado();
+   }
+ }
+ 
+@@ -544,14 +638,46 @@
+   ds.stencilFrontPassOp = ds.stencilBackPassOp = DkStencilOp_Replace;
+   ds.stencilFrontFailOp = ds.stencilBackFailOp = DkStencilOp_Keep;
+   ds.stencilFrontDepthFailOp = ds.stencilBackDepthFailOp = DkStencilOp_Replace;
++  // GTA IV's restore rule in one draw (x360_edram_z_de_z_un_pase), for whole tile rows: the rows cleared to depth 0 and
++  // stencil 0x80 (the sky), then the source's depth written where it is greater than 0, with stencil 0xFF (geometry).
++  // A depth of 0 fails the test and keeps the clear. It was a depth pass and a stencil pass over all the pixels.
++  const bool de_z_un_pase = ds.stencilTestEnable && edram_estencil_de_z_ && REXCVAR_GET(x360_edram_z_de_z_un_pase) &&
++                            desde % gd.tejas_fila == 0 && cuantas % gd.tejas_fila == 0;
++  if (de_z_un_pase) {
++    dkCmdBufClearDepthStencil(cmd, true, 0.0f, 0xFF, 0x80);
++    ds.depthCompareOp = DkCompareOp_Greater;
++    ds.stencilFrontDepthFailOp = ds.stencilBackDepthFailOp = DkStencilOp_Keep;
++  }
+   dkCmdBufBindDepthStencilState(cmd, &ds);
+   if (ds.stencilTestEnable) {
+-    dkCmdBufSetStencil(cmd, DkFace_FrontAndBack, 0xFF, edram_estencil_de_z_ ? 0x80 : 0x00, 0xFF);
++    dkCmdBufSetStencil(cmd, DkFace_FrontAndBack, 0xFF, de_z_un_pase ? 0xFF : edram_estencil_de_z_ ? 0x80 : 0x00, 0xFF);
+   }
+   dkCmdBufBindUniformBuffer(cmd, DkStage_Fragment, 0, ubo.gpu, 256);
+   dkCmdBufDraw(cmd, DkPrimitive_Triangles, 3, 1, 0, 0);
+-  if (ds.stencilTestEnable && estencil_bits) {
++  if (de_z_un_pase) {
+     destino.edram_estencil = true;
++    destino.edram_estencil_bits = 0xFF;
++  } else if (ds.stencilTestEnable && estencil_bits && !edram_estencil_de_z_ && edram_estencil_aplazable_ &&
++             REXCVAR_GET(x360_edram_estencil_perezoso)) {
++    // The first draw left the stencil at 0; the bits come later, if the pass needs them (EdramEstencilPendiente).
++    PendienteEstencil pe;
++    pe.origen = &origen;
++    pe.serie_origen = origen.serie;
++    std::memcpy(pe.u, u, sizeof(pe.u));
++    pe.y0 = y0;
++    pe.y1 = y1;
++    pe.ancho = ancho;
++    pe.ranura = ranura;
++    pe.ranura_estencil = ranura_estencil;
++    pe.desde = desde;
++    pe.cuantas = cuantas;
++    pe.bits = origen.edram_estencil_bits;
++    destino.estencil_pendiente.push_back(pe);
++    destino.edram_estencil = true;
++    destino.edram_estencil_bits |= origen.edram_estencil_bits;
++    ++estencil_aplazados_;
++  } else if (ds.stencilTestEnable && estencil_bits) {
++    destino.edram_estencil = true;
+     destino.edram_estencil_bits |= edram_estencil_de_z_ ? 0xFF : origen.edram_estencil_bits;
+     ++edram_estencil_pasadas_;
+     ds.depthWriteEnable = false;
+--- a/src/x360/deko/destinos.cpp
++++ b/src/x360/deko/destinos.cpp
+@@ -2821,13 +2821,15 @@
+   X360_INFORME(
+       "[deko3d] por fotograma: GPU sombras {:.2f} ms, escena {:.2f}, reflejo {:.2f}, 320 {:.2f}, menores {:.2f}, copias "
+       "{:.2f}, borrados {:.2f}, resto {:.2f}, escena sin profundidad {:.2f}, GPU parada entre trabajos {:.2f}; el anillo "
+-      "espero a la GPU {:.2f} ms; borrados saltados {:.1f}; dibujos con Z temprana {:.0f}; ZCULL invalidado por otra prueba {:.1f}",
++      "espero a la GPU {:.2f} ms; borrados saltados {:.1f}; dibujos con Z temprana {:.0f}; ZCULL invalidado por otra prueba {:.1f}; stencil de transferencias aplazado "
++      "{} (hecho {}, descartado {}) y pases ampliados {} en total",
+       ms(kGpuSombras), ms(kGpuEscena), ms(kGpuReflejo), ms(kGpu320), ms(kGpuMenores), ms(kGpuCopias), ms(kGpuBorrados),
+       ms(kGpuOtros), ms(kGpuEscenaSinProfundidad), ms(kGpuHuecoEntreTrabajos),
+       double(nucleo_.NsEsperandoValla() - informe_espera_ns_) / 1e6 / fotogramas,
+       double(borrados_saltados_ - informe_saltados_) / fotogramas,
+       double(dibujos_z_temprana_ - informe_z_temprana_) / fotogramas,
+-      double(zcull_invalidaciones_ - informe_zcull_) / fotogramas);
++      double(zcull_invalidaciones_ - informe_zcull_) / fotogramas, estencil_aplazados_, estencil_ejecutados_,
++      estencil_descartados_, pases_ampliados_);
+   const auto us = [&](uint32_t e) { return dibujos ? double(ns_etapas_[e] - informe_etapas_[e]) / double(dibujos) / 1e3 : 0.0; };
+   static constexpr const char* kFasesSm[3] = {"mirando", "APLICANDO", "apagada"};
+   X360_INFORME(
+--- a/include/rex/x360/deko/render.h
++++ b/include/rex/x360/deko/render.h
+@@ -64,6 +64,17 @@
+ #define X360_INFORME(...) hooks_.Informe(fmt::format(__VA_ARGS__))
+ 
+ // An image of the renderer: a render target, a resolved texture or a game texture.
++// A transfer's stencil passes, deferred (x360_edram_estencil_perezoso): the uniforms of its draw, the rows, the source's
++// depth and stencil views and the bits it may hold.
++struct PendienteEstencil {
++  const struct ImagenDk* origen = nullptr;
++  uint64_t serie_origen = 0;
++  int32_t u[12] = {};
++  uint32_t y0 = 0, y1 = 0, ancho = 0, ranura = 0, ranura_estencil = 0;
++  uint32_t desde = 0, cuantas = 0;  // the destination's tiles (relative to its base)
++  uint8_t bits = 0;
++};
++
+ struct ImagenDk {
+   DkImage imagen{};
+   deko::BloqueImagen memoria;
+@@ -113,6 +124,10 @@
+   bool edram_estencil = false;  // depth: a draw or clear ever put a stencil other than 0 in it
+   // The stencil bits a draw, clear or transfer may have set (EdramTransferir copies only those, a pass per bit).
+   uint8_t edram_estencil_bits = 0;
++  // x360_edram_estencil_perezoso: stencil bit passes of transfers into this depth view not run yet (EdramTransferir
++  // while a pass prepares): run before a draw of the pass uses the stencil, when the pass wrote the view, or dropped
++  // (with its tiles marked stale) at the pass's end. RenderDk::PendienteEstencil.
++  std::vector<struct PendienteEstencil> estencil_pendiente;
+ };
+ 
+ // A texture the game reads from its memory, with what decides when to look at its bytes again.
+@@ -483,6 +498,10 @@
+   // The last restore (depth image, resolve image and its version): each draw of the pass binds it again.
+   uint64_t z_por_color_hecho_[3] = {};
+   bool edram_estencil_de_z_ = false;  // EdramTransferir: the stencil from the depth (EdramZPorColor)
++  bool edram_estencil_aplazable_ = false;  // EdramTransferir from EmpezarPase: stencil passes may wait (x360_edram_estencil_perezoso)
++  // Runs the deferred stencil passes of a depth view (true), or drops them and marks its tiles stale (false).
++  void EdramEstencilPendiente(ImagenDk& destino, bool ejecutar);
++  uint64_t estencil_aplazados_ = 0, estencil_ejecutados_ = 0, estencil_descartados_ = 0;
+ 
+   // ---- nfsmw_nativo_sombra_minimo (nfsmw_dk_destinos.cpp), the Vulkan backend's, ported with its guards: the shadow
+   // map's car pass is drawn over a cleared target instead of the world copied back (1600x1600), and the draws that
+@@ -573,6 +592,12 @@
+   uint32_t CalcularEncuadre(const uint32_t* r, uint32_t vte, bool sin_recorte, uint32_t modo_sc, float viewport[6],
+                             float ndc[4], DkScissor& tijera);
+   bool EmpezarPase(const uint64_t claves[5], uint32_t pitch);
++  uint32_t FondoDeTijera(const uint32_t* r) const;
++  // x360_edram_filas_de_tijera: the rows the next pass asks its views to hold (its first draw's scissor bottom;
++  // UINT32_MAX = the old rule, max(720, alto_usado)) and the ones the open pass prepared.
++  uint32_t filas_pase_pedidas_ = UINT32_MAX, filas_pase_preparadas_ = UINT32_MAX;
++  uint64_t pases_ampliados_ = 0;
++  bool dibujo_usa_estencil_ = false;  // the draw that begins the pass tests or writes the stencil: no deferring
+   // The DKSH of a library shader for that specialization value (masked) and, for a vertex shader, the
+   // interpolators it keeps. nullptr if it cannot be had (logged once).
+   // `variante_ps` (pixel shaders): kVariante* flags (nfsmw_dk_dibujos.cpp), part of the DKSH cache key; 0 is the

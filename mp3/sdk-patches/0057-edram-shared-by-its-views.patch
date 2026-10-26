@@ -1,0 +1,1366 @@
+--- a/include/rex/x360/deko/render.h
++++ b/include/rex/x360/deko/render.h
+@@ -100,6 +100,17 @@
+   uint32_t alto_usado = 0;
+   uint32_t alto_borrado = 0;
+   bool banda_sucia = false;
++  // A render target as a view of the EDRAM (edram.cpp, x360_edram_compartida): its base tile, pitch, MSAA mode, guest
++  // format (the aliases folded) and bytes per sample; edram_bpp 0 = not a view. edram_tope: the tiles past the base it
++  // may hold (up to the next target bound with it). edram_filas: the rows the current pass wrote, claimed when it
++  // ends. edram_versiones: per tile past the base, the version of it this image holds.
++  uint32_t edram_base = 0, edram_pitch = 0, edram_msaa = 0, edram_formato = 0, edram_bpp = 0;
++  uint32_t edram_tope = 2048;
++  uint32_t edram_tope_fijo = 2048;  // the nearest next base it was ever bound with: it never holds tiles past that
++  uint32_t edram_filas = 0;
++  std::vector<uint32_t> edram_versiones;
++  uint32_t edram_generacion = UINT32_MAX;  // the claims count when all of it was last found up to date
++  bool edram_estencil = false;  // depth: a draw or clear ever put a stencil other than 0 in it
+ };
+ 
+ // A texture the game reads from its memory, with what decides when to look at its bytes again.
+@@ -243,6 +254,26 @@
+                 float escala = 1.0f);  // 2^copy_dest_exp_bias (RB_COPY_DEST_INFO bits 16-21)
+   bool rop_sin_barrera_ = true;
+   bool copia3d_pendiente_ = false;
++  // The 3D copies since the last barrier: the images they wrote and read (series). Another copy needs a barrier only
++  // when it reads what one of them wrote or writes what one of them reads: GTA IV resolves its G-buffer five times in a
++  // row, and each paid a Fragments barrier (76 per frame; copies were 26 ms of a 60-70 ms GPU frame).
++  std::vector<uint64_t> copias3d_escritas_, copias3d_leidas_;
++  bool CopiaDependeDePendientes(uint64_t origen, uint64_t destino) const {
++    return std::find(copias3d_escritas_.begin(), copias3d_escritas_.end(), origen) != copias3d_escritas_.end() ||
++           std::find(copias3d_leidas_.begin(), copias3d_leidas_.end(), destino) != copias3d_leidas_.end() ||
++           std::find(copias3d_escritas_.begin(), copias3d_escritas_.end(), destino) != copias3d_escritas_.end();
++  }
++  void AnotarCopia3D(uint64_t origen, uint64_t destino) {
++    if (copias3d_escritas_.size() > 32) {  // a long run of copies: a barrier comes anyway, the lists just stop growing
++      copias3d_escritas_.clear();
++      copias3d_leidas_.clear();
++      copia3d_pendiente_ = true;
++      fuerza_barrera_copia_ = true;
++    }
++    copias3d_escritas_.push_back(destino);
++    copias3d_leidas_.push_back(origen);
++  }
++  bool fuerza_barrera_copia_ = false;
+   uint64_t copias_3d_ = 0, barreras_fragmentos_ = 0;
+   DkShader fs_copia_color_{}, fs_copia_profundidad_{}, fs_copia_signo_{};
+   bool fs_copia_color_valido_ = false, fs_copia_profundidad_valido_ = false, fs_copia_signo_valido_ = false;
+@@ -277,8 +308,9 @@
+   deko::Subida Reservar(uint32_t bytes, uint32_t alineacion);
+ 
+   // ---- Render targets and resolved textures (nfsmw_dk_destinos.cpp)
+-  ImagenDk* DestinoColor(uint32_t base, uint32_t formato, uint32_t pitch);
+-  ImagenDk* DestinoProfundidad(uint32_t base, uint32_t formato, uint32_t pitch);
++  // msaa (RB_SURFACE_INFO bits 16-17): part of the key with x360_edram_compartida (another view of the same tiles).
++  ImagenDk* DestinoColor(uint32_t base, uint32_t formato, uint32_t pitch, uint32_t msaa = 0);
++  ImagenDk* DestinoProfundidad(uint32_t base, uint32_t formato, uint32_t pitch, uint32_t msaa = 0);
+   // The resolved texture at that address, if one exists and has content.
+   // `ancho`/`alto`: the size the fetch constant gives (0 = any). With several sizes resolved to that address
+   // (resueltas_otras_), the one of that size.
+@@ -363,6 +395,56 @@
+   // resolved again; or, for the shadow map's car pass while the shadow minimum is applied, a clear instead.
+   void RestaurarContenido(ImagenDk& destino, bool para_resolver);
+ 
++  // ---- The EDRAM shared by its views (edram.cpp, x360_edram_compartida): each tile remembers the view that wrote it
++  // last; a view drawn or resolved first gets what other views wrote over its tiles (a transfer draw).
++  static constexpr uint32_t kTejasEdram = 2048;
++  struct TejaEdram {
++    ImagenDk* dueno = nullptr;  // the view that wrote it last (nullptr: none yet)
++    uint32_t version = 0;
++    // That write was a clear, of this value (color: RGBA as the view's host image holds it; depth: z, stencil):
++    // another view gets the tile as a clear of its own, not a transfer draw.
++    bool borrada = false;
++    float valor[4] = {};
++  };
++  std::array<TejaEdram, kTejasEdram> tejas_color_{}, tejas_z_{};
++  uint32_t version_edram_ = 0;
++  uint32_t generacion_color_ = 0, generacion_z_ = 0;  // claims so far, per map
++  bool EdramActiva() const;
++  // A new render target's view: after CrearImagen.
++  void EdramVista(ImagenDk& imagen, uint32_t base, uint32_t pitch, uint32_t msaa, uint32_t formato);
++  // The limits of the views bound in one pass (EmpezarPase).
++  void EdramTopes(const std::array<ImagenDk*, 5>& imagenes);
++  // Before a view is drawn or read in its first `filas` rows: the tiles other views wrote since are brought in.
++  void EdramPreparar(ImagenDk& vista, uint32_t filas);
++  // The view wrote its first `filas` rows (a clear, a pass): its tiles are its own.
++  void EdramReclamar(ImagenDk& vista, uint32_t filas, const float* borrado = nullptr);
++  bool EdramBorrarComo(const ImagenDk& origen, const TejaEdram& teja, ImagenDk& destino, uint32_t desde,
++                       uint32_t cuantas);
++  // The pass that ends claims the rows its draws wrote (EmpezarPase, Copiar).
++  void EdramCerrarPase();
++  void EdramFotograma();
++  bool EdramTransferir(ImagenDk& origen, ImagenDk& destino, uint32_t desde, uint32_t cuantas);
++  bool EdramShaders();
++  // A depth image's stencil as a texture (usampler2D).
++  uint32_t VistaEstencil(const ImagenDk& imagen);
++  DkShader fs_edram_color_{}, fs_edram_z_{};
++  int32_t edram_shaders_ = 0;  // 0 not tried, 1 ready, -1 failed
++  uint64_t edram_transferencias_ = 0, edram_pixeles_ = 0, edram_sin_soporte_ = 0, edram_fotogramas_ = 0;
++  uint64_t edram_borrados_ = 0, edram_estencil_pasadas_ = 0;
++  std::set<uint64_t> edram_avisos_;
++  uint32_t edram_diag_encuadres_ = 0;
++  // The last depth resolve from each EDRAM base: the texture's address (CopiarProfundidad), for EdramZPorColor.
++  std::unordered_map<uint32_t, uint32_t> z_resuelta_por_base_;
++  uint32_t edram_z_por_color_registrados_ = 0;
++  // A pass that binds an 8-bit color target and a depth target on the same base and pitch: the game writes depth and
++  // stencil bits as color over the depth's EDRAM (GTA IV puts its G-buffer's depth back that way for the lights). The
++  // depth gets that base's last depth resolve instead, depth and stencil.
++  bool EdramZPorColor(ImagenDk& z);
++  bool z_por_color_pase_ = false;  // the bound pass is such a restore: its draws are skipped
++  // The last restore (depth image, resolve image and its version): each draw of the pass binds it again.
++  uint64_t z_por_color_hecho_[3] = {};
++  bool edram_estencil_de_z_ = false;  // EdramTransferir: the stencil from the depth (EdramZPorColor)
++
+   // ---- nfsmw_nativo_sombra_minimo (nfsmw_dk_destinos.cpp), the Vulkan backend's, ported with its guards: the shadow
+   // map's car pass is drawn over a cleared target instead of the world copied back (1600x1600), and the draws that
+   // sample the texture with the cars take the minimum with the world's (tfetch2DSombraMin, spec bit 23). It watches
+@@ -714,6 +796,9 @@
+     uint32_t registros = 0, bytes_codigo = 0, scratch = 0;
+   };
+   std::unordered_map<const DkShader*, DatosShaderDk> datos_shaders_;
++  std::set<uint32_t> vs_enormes_;
++  std::unordered_map<uint32_t, uint64_t> lecturas_registradas_;  // EscribirLecturas: the frame each was last logged  // vertex shaders over x360_vs_codigo_max_kb (their draws are not recorded)
++  uint64_t vs_enormes_saltados_ = 0;
+   std::unordered_set<const DkShader*> constantes_registradas_;  // pixel shaders whose constants the variants logged
+   struct MarcaPerfil {
+     const DkShader* vs;
+--- a/src/x360/deko/destinos.cpp
++++ b/src/x360/deko/destinos.cpp
+@@ -29,6 +29,13 @@
+ #include <rex/x360/deko/render.h>
+ 
+ REXCVAR_DECLARE(bool, nfsmw_dk_tiles_en_pantalla);
++REXCVAR_DEFINE_BOOL(x360_copias_sin_barrera, true, "X360",
++                    "Las copias en el motor 3D seguidas comparten una barrera si ninguna lee lo que otra escribio (los "
++                    "resolves del G-buffer); false = una barrera antes de cada una");
++REXCVAR_DEFINE_BOOL(x360_f14_sanear, true, "X360",
++                    "Los resolves de destinos k_32_FLOAT (la cadena de luminancia de GTA IV) se limitan a 0..31.875 (el "
++                    "maximo del HDR) y NaN a 0: un pixel de -60000 llevaba la luminancia adaptada a 0 y la exposicion "
++                    "al blanco");
+ REXCVAR_DEFINE_INT32(nfsmw_dk_volcado_pase_desde, 0, "NFSMW", "Volcado de un fotograma: primer pase cuyos destinos se vuelcan");
+ REXCVAR_DEFINE_INT32(nfsmw_dk_volcado_pase_hasta, 100000, "NFSMW", "Volcado de un fotograma: ultimo pase cuyos destinos se vuelcan");
+ REXCVAR_DEFINE_INT32(nfsmw_dk_volcado_pase_base, -1, "NFSMW", "Volcado de un fotograma: solo los pases con c0 en esta base EDRAM (-1 = todos)");
+@@ -574,6 +581,9 @@
+   transferencia_sin_barrera_ = false;
+   rop_sin_barrera_ = false;  // the Fragments barrier above made it visible
+   copia3d_pendiente_ = false;
++  copias3d_escritas_.clear();
++  copias3d_leidas_.clear();
++  fuerza_barrera_copia_ = false;
+   // What an earlier submission sampled or wrote (the previous output pass, the presenter's paint of the same image)
+   // is done before this one's draws; the caches forget what the CPU rewrote in this slot's memory.
+   dkCmdBufBarrier(cmd, DkBarrier_Fragments,
+@@ -683,12 +693,18 @@
+     transferencia_sin_barrera_ = false;
+     invalidar_zcull_ = false;
+     copia3d_pendiente_ = false;
++    copias3d_escritas_.clear();
++    copias3d_leidas_.clear();
++    fuerza_barrera_copia_ = false;
+   } else if (copia3d_pendiente_) {
+     // A 3D copy: what it wrote is sampled from now on, and its source may be written (cleared, drawn on) next.
+     dkCmdBufBarrier(nucleo_.comandos(), DkBarrier_Fragments,
+                     DkInvalidateFlags_Image | (invalidar_zcull_ ? DkInvalidateFlags_Zcull : 0u));
+     ++barreras_fragmentos_;
+     copia3d_pendiente_ = false;
++    copias3d_escritas_.clear();
++    copias3d_leidas_.clear();
++    fuerza_barrera_copia_ = false;
+     invalidar_zcull_ = false;
+   } else if (invalidar_zcull_) {
+     dkCmdBufBarrier(nucleo_.comandos(), DkBarrier_None, DkInvalidateFlags_Zcull);
+@@ -727,16 +743,25 @@
+     BarreraTransferencia();  // a copy engine transfer wrote what this reads (or reads what this writes)
+     transferencia_sin_barrera_ = false;
+     copia3d_pendiente_ = false;
++    copias3d_escritas_.clear();
++    copias3d_leidas_.clear();
++    fuerza_barrera_copia_ = false;
+     rop_sin_barrera_ = false;
+   }
+-  if (rop_sin_barrera_ || copia3d_pendiente_) {
+-    // The source was drawn (or copied into) since the last barrier: its writes must reach the texture units.
++  // The source was drawn since the last barrier, or a pending 3D copy wrote it or reads the destination: those writes
++  // must reach the texture units first. Copies reading render targets one after another share one barrier.
++  if (rop_sin_barrera_ || fuerza_barrera_copia_ || (z && invalidar_zcull_) ||
++      (copia3d_pendiente_ && (!REXCVAR_GET(x360_copias_sin_barrera) ||
++                              CopiaDependeDePendientes(origen.serie, destino.serie)))) {
+     dkCmdBufBarrier(cmd, DkBarrier_Fragments,
+                     DkInvalidateFlags_Image | (invalidar_zcull_ ? DkInvalidateFlags_Zcull : 0u));
+     ++barreras_fragmentos_;
+     rop_sin_barrera_ = false;
+     copia3d_pendiente_ = false;
+     invalidar_zcull_ = false;
++    fuerza_barrera_copia_ = false;
++    copias3d_escritas_.clear();
++    copias3d_leidas_.clear();
+   }
+   DkImageView vista;
+   dkImageViewDefaults(&vista, &destino.imagen);
+@@ -785,6 +810,7 @@
+   dkCmdBufDraw(cmd, DkPrimitive_Triangles, 3, 1, 0, 0);
+   ++copias_3d_;
+   copia3d_pendiente_ = true;
++  AnotarCopia3D(origen.serie, destino.serie);
+   trabajo_3d_sin_barrera_ = true;  // for a copy engine transfer that comes next
+   OlvidarEstado();
+   return true;
+@@ -944,7 +970,7 @@
+   }
+ }
+ 
+-ImagenDk* RenderDk::DestinoColor(uint32_t base, uint32_t formato, uint32_t pitch) {
++ImagenDk* RenderDk::DestinoColor(uint32_t base, uint32_t formato, uint32_t pitch, uint32_t msaa) {
+   // The same EDRAM bits under another name: k_2_10_10_10_FLOAT_AS_16_16_16_16 (12) is k_2_10_10_10_FLOAT (3) and
+   // k_2_10_10_10_AS_10_10_10_10 (10) is k_2_10_10_10 (2). Gears of War 2 draws its scene as 3 and adds its lights as
+   // 12: as two images, the lights and the resolve never saw the base pass, and the scene came out black.
+@@ -957,7 +983,10 @@
+     Rechazar(7, "destino de render con pitch 0");
+     return nullptr;
+   }
+-  const uint64_t clave = (uint64_t(base) << 20) | (uint64_t(formato) << 16) | pitch;
++  // With the EDRAM shared by its views (edram.cpp) another MSAA mode is another view: GTA IV resolves its 1280x720
++  // scene as 640x360 4x (a downsample) and restores its depth that way.
++  msaa = EdramActiva() ? (msaa & 0x3) : 0;
++  const uint64_t clave = (uint64_t(base) << 20) | (uint64_t(formato) << 16) | (uint64_t(msaa) << 14) | pitch;
+   if (auto it = destinos_.find(clave); it != destinos_.end()) {
+     return &it->second;
+   }
+@@ -977,18 +1006,21 @@
+     Rechazar(8, "no se pudo crear un destino de render");
+     return nullptr;
+   }
+-  REXLOG_INFO("[deko3d] destino de render base {:03X}, formato {}, {}x{}", base, formato, pitch, alto);
++  REXLOG_INFO("[deko3d] destino de render base {:03X}, formato {}, {}x{}{}", base, formato, pitch, alto,
++              msaa ? (msaa == 1 ? " 2x MSAA" : " 4x MSAA") : "");
+   ImagenDk& nueva = destinos_.emplace(clave, imagen).first->second;
++  EdramVista(nueva, base, pitch, msaa, formato);
+   PrepararDestino(nueva);
+   return &nueva;
+ }
+ 
+-ImagenDk* RenderDk::DestinoProfundidad(uint32_t base, uint32_t formato, uint32_t pitch) {
++ImagenDk* RenderDk::DestinoProfundidad(uint32_t base, uint32_t formato, uint32_t pitch, uint32_t msaa) {
+   if (!pitch) {
+     Rechazar(11, "sin destino de profundidad (pitch 0)");
+     return nullptr;
+   }
+-  const uint64_t clave = (uint64_t(base) << 20) | (uint64_t(formato) << 16) | pitch;
++  msaa = EdramActiva() ? (msaa & 0x3) : 0;  // as DestinoColor
++  const uint64_t clave = (uint64_t(base) << 20) | (uint64_t(formato) << 16) | (uint64_t(msaa) << 14) | pitch;
+   if (auto it = profundidades_.find(clave); it != profundidades_.end()) {
+     return &it->second;
+   }
+@@ -1002,8 +1034,10 @@
+     Rechazar(12, "no se pudo crear un destino de profundidad");
+     return nullptr;
+   }
+-  REXLOG_INFO("[deko3d] destino de profundidad base {:03X}, formato {}, {}x{}", base, formato, pitch, alto);
++  REXLOG_INFO("[deko3d] destino de profundidad base {:03X}, formato {}, {}x{}{}", base, formato, pitch, alto,
++              msaa ? (msaa == 1 ? " 2x MSAA" : " 4x MSAA") : "");
+   ImagenDk& nueva = profundidades_.emplace(clave, imagen).first->second;
++  EdramVista(nueva, base, pitch, msaa, formato);
+   PrepararDestino(nueva);
+   return &nueva;
+ }
+@@ -1248,6 +1282,7 @@
+ bool RenderDk::Copiar(const RegistrosCopia& reg) {
+   AsegurarTrabajo();
+   EmitirCieloPendiente();  // a resolve reads the pass's target: the deferred sky goes in first
++  EdramCerrarPase();  // what the pass drew is in EDRAM before the copy reads or clears it
+   const uint32_t control = reg.rb_copy_control;
+   const uint32_t origen = control & 0x7;
+   bool borrar_color = (control >> 8) & 0x1;
+@@ -1275,10 +1310,14 @@
+   if (!Rectangulo(reg, pitch, x0, y0, x1, y1)) {
+     return false;
+   }
+-  ImagenDk* destino_render = DestinoColor(info_color & 0xFFF, formato_color, pitch);
++  const uint32_t msaa = (reg.rb_surface_info >> 16) & 0x3;
++  ImagenDk* destino_render = DestinoColor(info_color & 0xFFF, formato_color, pitch, msaa);
+   if (!destino_render) {
+     return false;
+   }
++  if (copiar) {
++    EdramPreparar(*destino_render, uint32_t(y1));  // another view of these tiles may have drawn them since
++  }
+   DkCmdBuf cmd = nucleo_.comandos();
+   if (copiar) {
+     const uint32_t info_destino = reg.rb_copy_dest_info;
+@@ -1379,9 +1418,14 @@
+         const DkImageView destino_vista = VistaCompleta(resuelta->imagen.imagen);
+         // On the 3D engine, except the shrink (a linear blit) and the small resolves the game reads back (their
+         // read-back is a copy engine transfer: both go there, one after the other, with no barrier between).
+-        if (encoger || (se_lee && sesgo_exp == 0) ||
++        // A k_32_FLOAT one kept to real values (x360_f14_sanear) goes through the 3D engine's clamp even when it is read
++        // back: GTA IV's luminance chain is mostly such small resolves (80x45 down to the 8x1 exposure).
++        const bool sanear_f14 = formato_color == 14 && REXCVAR_GET(x360_f14_sanear);
++        if (encoger || (se_lee && sesgo_exp == 0 && !sanear_f14) ||
+             !Copiar3D(*destino_render, uint32_t(x0), uint32_t(y0), ancho, alto, resuelta->imagen, dx, dy, nullptr,
+-                      formato_color == 3 || formato_color == 12, escala_exp)) {
++                      formato_color == 3 || formato_color == 12 ||
++                          (formato_color == 14 && REXCVAR_GET(x360_f14_sanear)),
++                      escala_exp)) {
+           MarcarGpu(kGpuCopias);
+           AntesDeTransferir();
+           if (encoger) {
+@@ -1432,6 +1476,7 @@
+     if (it != borrado_previo_.end() && it->second.dibujos == dibujados_ && it->second.valor == valor) {
+       ++borrados_saltados_;
+       borrar_color = false;
++      EdramReclamar(*destino_render, uint32_t(y1), destino_render->borrado_color);  // still the clear's rows
+     }
+   }
+   if (borrar_color) {
+@@ -1449,6 +1494,7 @@
+     // Done when the target is next bound (EmpezarPase), resolved or painted, not now: the front buffer may still be
+     // painted from it, and a later clear makes this one unnecessary.
+     destino_render->borrado_pendiente = true;
++    EdramReclamar(*destino_render, uint32_t(y1), destino_render->borrado_color);  // the cleared rows are this view's
+     ++borrados_;
+     const bool aplazar = REXCVAR_GET(nfsmw_dk_borrado_color_aplazado);  // read each time: the game can switch it (ds2 safe mode)
+     if (aplazar) {
+@@ -1470,10 +1516,23 @@
+ 
+ void RenderDk::BorrarProfundidad(const RegistrosCopia& reg, uint32_t pitch) {
+   const uint32_t info = reg.rb_depth_info;
+-  ImagenDk* profundidad = DestinoProfundidad(info & 0xFFF, (info >> 16) & 0x1, pitch);
++  ImagenDk* profundidad =
++      DestinoProfundidad(info & 0xFFF, (info >> 16) & 0x1, pitch, (reg.rb_surface_info >> 16) & 0x3);
+   if (!profundidad) {
+     return;
+   }
++  if (EdramActiva()) {
++    // The cleared rows are this view's: the copy rectangle's (not counted as a rejection if there is none), or all.
++    int32_t x0, y0, x1, y1;
++    const uint64_t rechazados = rechazados_;
++    const bool rect = Rectangulo(reg, pitch, x0, y0, x1, y1);
++    rechazados_ = rechazados;
++    // A stencil-only clear keeps the depth: a write of unknown values, not a clear.
++    const bool solo_estencil = (reg.rb_copy_control >> 30) & 0x1;
++    const float valor[4] = {float(reg.rb_depth_clear >> 8) / 16777215.0f, float(reg.rb_depth_clear & 0xFF), 0.0f, 0.0f};
++    EdramReclamar(*profundidad, rect ? uint32_t(y1) : profundidad->alto, solo_estencil ? nullptr : valor);
++    profundidad->edram_estencil |= (reg.rb_depth_clear & 0xFF) != 0;
++  }
+   SombraMinimoAntesDeBorrar(*profundidad);
+   profundidad->contenido_invalido = false;  // cleared: what a swap took away is no longer needed
+   const bool saltar_repetidos = REXCVAR_GET(nfsmw_nativo_saltar_borrados_repetidos);  // read each time: the game can switch it (ds2 safe mode)
+@@ -1668,10 +1727,12 @@
+   }
+   const uint32_t info = reg.rb_depth_info;
+   ++copias_profundidad_;
+-  ImagenDk* profundidad = DestinoProfundidad(info & 0xFFF, (info >> 16) & 0x1, pitch);
++  ImagenDk* profundidad =
++      DestinoProfundidad(info & 0xFFF, (info >> 16) & 0x1, pitch, (reg.rb_surface_info >> 16) & 0x3);
+   if (!profundidad) {
+     return;
+   }
++  EdramPreparar(*profundidad, uint32_t(y1));
+   const uint32_t pitch_destino = reg.rb_copy_dest_pitch & 0x3FFF;
+   const uint32_t alto_destino = (reg.rb_copy_dest_pitch >> 16) & 0x3FFF;
+   // At its own position in the texture at the copy's base, as for color (Copiar).
+@@ -1692,6 +1753,12 @@
+   }
+   if (!resuelta) {
+     return;
++  }
++  // EdramZPorColor: the texture's own key (a band lands in an earlier texture at another address), whole ones only.
++  if (dy == 0 && y0 == 0) {
++    for (const auto& [b, r] : resueltas_) {
++      if (&r == resuelta) z_resuelta_por_base_[info & 0xFFF] = b;
++    }
+   }
+   RectanguloEnPantalla(reg, x0, y0, x1, y1);
+   const uint32_t ancho = std::min({uint32_t(x1 - x0), profundidad->ancho - uint32_t(x0), resuelta->imagen.ancho - dx});
+@@ -2014,6 +2081,21 @@
+     const uint8_t b0 = uint8_t(permutacion), b1 = uint8_t(permutacion >> 8), b2 = uint8_t(permutacion >> 16),
+                   b3 = uint8_t(permutacion >> 24);
+     const uint64_t base = uint64_t(p.base & 0x1FFFFFFF);
++    // Tiny 32-bit float read-backs (GTA IV's exposure: the adapted luminance 8x1, the 8x5 before it): their values in
++    // the log every 300 frames per address, to see the exposure without a frame dump.
++    if (formato_copia == 36 && p.ancho * p.alto <= 64) {
++      uint64_t& ultimo = lecturas_registradas_[p.base];
++      if (fotograma_ >= ultimo + 300 || ultimo == 0) {
++        ultimo = fotograma_;
++        std::string valores;
++        for (uint32_t k = 0; k < std::min<uint32_t>(p.ancho * p.alto, 8); ++k) {
++          float v;
++          std::memcpy(&v, datos + k * 4, 4);
++          valores += fmt::format(" {:g}", v);
++        }
++        REXLOG_INFO("[exposicion] lectura {:08X} {}x{}:{}", p.base, p.ancho, p.alto, valores);
++      }
++    }
+     const uint64_t baldosas_por_fila = ((p.pitch + 31) & ~uint32_t(31)) >> 5;
+     for (uint32_t j = 0; j < p.alto; ++j) {
+       const uint32_t ty = uint32_t(p.y0) + j;
+@@ -2261,6 +2343,7 @@
+ }
+ 
+ bool RenderDk::Presentar(rex::ui::Presenter* presentador, const TexturaSwap& swap, uint32_t ancho, uint32_t alto) {
++  EdramFotograma();
+   if (volcando_) {
+     TerminarVolcado();
+   }
+@@ -2684,11 +2767,12 @@
+     for (size_t j = i + 1; j < perfil_marcas_.size() && perfil_marcas_[j].repeticion; ++j) {
+       pruebas += fmt::format("; {} {:.2f} ms", kVeces[std::min<uint32_t>(perfil_marcas_[j].repeticion, 4)], ms_de(j));
+     }
+-    REXLOG_INFO("[deko3d] perfil GPU: dibujo {} ({:.2f} ms): PS {:016X} (n{}), pase {} {}x{}, viewport {:.0f}x{:.0f}, "
+-                "tijera {}x{}, mascaras {:04X}, RB_DEPTHCONTROL {:08X}, {} vertices o indices; {} texturas, la primera "
+-                "{}x{} formato {} sampler {}{}",
+-                i, dibujos[k].first, it != datos_shaders_.end() ? it->second.huella : 0,
+-                it != datos_shaders_.end() ? it->second.numero : 0,
++    const auto vs = datos_shaders_.find(m.vs);
++    REXLOG_INFO("[deko3d] perfil GPU: dibujo {} ({:.2f} ms): VS n{}, PS {:016X} (n{}), pase {} {}x{}, viewport "
++                "{:.0f}x{:.0f}, tijera {}x{}, mascaras {:04X}, RB_DEPTHCONTROL {:08X}, {} vertices o indices; {} texturas, "
++                "la primera {}x{} formato {} sampler {}{}",
++                i, dibujos[k].first, vs != datos_shaders_.end() ? int64_t(vs->second.numero) : -1,
++                it != datos_shaders_.end() ? it->second.huella : 0, it != datos_shaders_.end() ? it->second.numero : 0,
+                 kCategorias[std::min<uint32_t>(m.categoria, kGpuCategorias - 1)], m.ancho, m.alto, m.vp_ancho,
+                 m.vp_alto, m.tijera_ancho, m.tijera_alto, m.mascaras, m.profundidad_control, m.vertices, m.texturas,
+                 m.tex_ancho, m.tex_alto, m.tex_formato, m.tex_sampler, pruebas);
+@@ -2928,6 +3012,13 @@
+   }
+   REXLOG_INFO("[deko3d] volcado: {} texturas resueltas copiadas, se escriben en {}", volcado_.size(), carpeta.string());
+   EncolarEscrituraSd([entradas = std::move(volcado_), copias = std::move(copias), carpeta]() {
++  // The folder only holds this dump: an earlier one's files of other names stayed beside it and were read as this one's.
++  {
++    std::error_code ec_carpeta;
++    for (const auto& viejo : std::filesystem::directory_iterator(carpeta, ec_carpeta)) {
++      std::filesystem::remove(viejo.path(), ec_carpeta);
++    }
++  }
+   char nombre[128];
+   for (size_t n = 0; n < entradas.size(); ++n) {
+     const EntradaVolcado& e = entradas[n];
+@@ -3012,6 +3103,14 @@
+     std::snprintf(nombre, sizeof(nombre), "%02u_%08X_%ux%u_g%u%s_rango_%g_%g", unsigned(n), e.base, e.ancho, e.alto,
+                   e.formato_guest, profundidad ? "_z" : "", double(minimo), double(maximo));
+     EscribirBmp(carpeta / (std::string(nombre) + ".bmp"), e.ancho, e.alto, bgr);
++    // Small float images also as the raw floats (4 per texel, host order): the BMP spreads the image's range over 256
++    // levels, and one value of -60000 among values of 0-30 leaves nothing readable.
++    if (flotante && texels <= 640u * 360u) {
++      if (std::FILE* f = std::fopen((carpeta / (std::string(nombre) + ".f32")).string().c_str(), "wb")) {
++        std::fwrite(c.data(), sizeof(float), texels * 4, f);
++        std::fclose(f);
++      }
++    }
+     if (alfa) {
+       EscribirBmp(carpeta / (std::string(nombre) + "_alfa.bmp"), e.ancho, e.alto, a);
+     }
+--- a/src/x360/deko/dibujos.cpp
++++ b/src/x360/deko/dibujos.cpp
+@@ -33,6 +33,9 @@
+ // and not distributed. Without them the setting keeps the game's shader, as in the Vulkan build.
+ 
+ // The same settings as the Vulkan build's (nfsmw_nativo_dibujos.cpp): names, types and defaults.
++REXCVAR_DEFINE_INT32(x360_vs_codigo_max_kb, 256, "X360",
++                     "Los dibujos con un vertex shader de mas KB de codigo compilado no se graban (los que el compilador "
++                     "desborda: segundos por dibujo); 0 = todos");
+ REXCVAR_DEFINE_BOOL(nfsmw_nativo_inv_tamano_tex, true, "NFSMW",
+                     "Renderizador nativo (18/09, build 164): los shaders toman 1/tamano de textura de las "
+                     "constantes en vez de preguntarselo a la textura en cada muestreo con desplazamiento")
+@@ -706,17 +709,20 @@
+   if (volcando_) {
+     VolcarPaseAnterior();  // the frame dump: what the pass that ends here left in its targets
+   }
++  EdramCerrarPase();  // the pass that ends here claims the rows it wrote
+   std::array<ImagenDk*, 5> imagenes{};
+   for (uint32_t i = 0; i < 4; ++i) {
+     if (claves[i]) {
+-      imagenes[i] = DestinoColor(uint32_t(claves[i] >> 24) & 0xFFF, uint32_t(claves[i] >> 16) & 0xF, pitch);
++      imagenes[i] = DestinoColor(uint32_t(claves[i] >> 24) & 0xFFF, uint32_t(claves[i] >> 16) & 0xF, pitch,
++                                 uint32_t(claves[i] >> 20) & 0x3);
+       if (!imagenes[i]) {
+         return Rechazar(40, "no hay destino de color");
+       }
+     }
+   }
+   if (claves[4]) {
+-    imagenes[4] = DestinoProfundidad(uint32_t(claves[4] >> 24) & 0xFFF, uint32_t(claves[4] >> 16) & 0x1, pitch);
++    imagenes[4] = DestinoProfundidad(uint32_t(claves[4] >> 24) & 0xFFF, uint32_t(claves[4] >> 16) & 0x1, pitch,
++                                     uint32_t(claves[4] >> 20) & 0x3);
+     if (!imagenes[4]) {
+       return Rechazar(41, "no hay destino de profundidad");
+     }
+@@ -727,8 +733,18 @@
+     if (imagen) {
+       AntesDeCambiarDestino(imagen);  // the front buffer still painted from it gets its copy first
+       RestaurarContenido(*imagen, false);
++    }
++  }
++  // Each view gets what other views of its tiles wrote since it last held them (edram.cpp), all the rows the pass may
++  // draw in: at least 720 (targets are max(720, pitch) tall: a 1280-pitch one has 1280 rows nobody uses).
++  EdramTopes(imagenes);
++  for (ImagenDk* imagen : imagenes) {
++    if (imagen) {
++      EdramPreparar(*imagen, std::min(imagen->alto, std::max(720u, imagen->alto_usado)));
++      imagen->edram_filas = 0;
+     }
+   }
++  z_por_color_pase_ = false;
+   AntesDe3D();
+   // Creating a target records its first clear and forgets the emitted state: the binding comes after.
+   uint32_t ancho = UINT32_MAX, alto = UINT32_MAX;
+@@ -1087,7 +1103,8 @@
+   if (volcando_ && !volcado_escena_hecho_ && ((p.registros[gr::XE_GPU_REG_RB_COLOR_INFO] >> 16) & 0xF) == 12) {
+     volcado_escena_hecho_ = true;
+     const uint32_t info = p.registros[gr::XE_GPU_REG_RB_COLOR_INFO];
+-    if (ImagenDk* escena = DestinoColor(info & 0xFFF, 3, p.registros[gr::XE_GPU_REG_RB_SURFACE_INFO] & 0x3FFF)) {
++    const uint32_t superficie = p.registros[gr::XE_GPU_REG_RB_SURFACE_INFO];
++    if (ImagenDk* escena = DestinoColor(info & 0xFFF, 3, superficie & 0x3FFF, (superficie >> 16) & 0x3)) {
+       HacerBorradoPendiente(*escena);
+       VolcarResuelta(*escena, 0xFEED0000u | (info & 0xFFF), 3);
+       OlvidarEstado();
+@@ -1176,6 +1193,8 @@
+ 
+   // --- Render targets and what can be skipped
+   const uint32_t pitch = r[gr::XE_GPU_REG_RB_SURFACE_INFO] & 0x3FFF;
++  // The MSAA mode in each target's key (bits 20-21; edram.cpp): another view of the same tiles.
++  const uint64_t msaa_clave = uint64_t((r[gr::XE_GPU_REG_RB_SURFACE_INFO] >> 16) & 0x3) << 20;
+   const uint32_t mascara_registro =
+       modo_edram == uint32_t(xenos::EdramMode::kColorDepth) ? r[gr::XE_GPU_REG_RB_COLOR_MASK] : 0;
+   static constexpr uint32_t kInfoColor[4] = {gr::XE_GPU_REG_RB_COLOR_INFO, gr::XE_GPU_REG_RB_COLOR1_INFO,
+@@ -1195,7 +1214,7 @@
+     if (DkImageFormat host; !FormatoDestinoColorDk(formato, host)) {
+       return Rechazar(200 + formato, "formato de destino de color todavia no soportado");
+     }
+-    claves[i] = (uint64_t(1) << 63) | (uint64_t(info & 0xFFF) << 24) | (uint64_t(formato) << 16) | pitch;
++    claves[i] = (uint64_t(1) << 63) | (uint64_t(info & 0xFFF) << 24) | (uint64_t(formato) << 16) | msaa_clave | pitch;
+     mascaras |= mascara << (i * 4);
+     hay_destino = true;
+   }
+@@ -1243,7 +1262,8 @@
+   }
+   if (control_profundidad & 0x3) {  // stencil or z
+     const uint32_t info = r[gr::XE_GPU_REG_RB_DEPTH_INFO];
+-    claves[4] = (uint64_t(1) << 62) | (uint64_t(info & 0xFFF) << 24) | (uint64_t((info >> 16) & 0x1) << 16) | pitch;
++    claves[4] = (uint64_t(1) << 62) | (uint64_t(info & 0xFFF) << 24) | (uint64_t((info >> 16) & 0x1) << 16) |
++                msaa_clave | pitch;
+     hay_destino = true;
+   }
+   if (!hay_destino || !pitch) {
+@@ -1521,6 +1541,38 @@
+     std::memcpy(texturas_previas_.inversos.data(), compartidas + kPalabraInvTamano, sizeof(texturas_previas_.inversos));
+     texturas_previas_.tex0 = {tex0_ancho, tex0_alto, tex0_formato, tex0_sampler};
+   }
++  // The vertex shader's textures: GTA IV's cars read their deformation (DamageSampler, 110 vertex shaders), its light
++  // volumes shadow and light maps. They were never bound: those shaders read an empty slot, the cars lost their doors
++  // and the light volumes came out as screen-sized triangles (draws of a second). Sampler sN of a vertex shader is
++  // fetch constant 16 + N (XenosRecomp, shader_recompiler.cpp).
++  std::array<DkResHandle, 16> texturas_vs{};
++  uint32_t n_texturas_vs = 0;
++  for (const SamplerShader& sampler : p.vs->samplers) {
++    if (sampler.registro >= 16) {
++      continue;
++    }
++    const uint32_t* fetch = r + kRegFetch + (16u + uint32_t(sampler.registro)) * 6;
++    if ((fetch[0] & 0x3) != uint32_t(xenos::FetchConstantType::kTexture)) {
++      continue;
++    }
++    CacheFetch& cache = cache_fetch_[ClaveFetch(fetch) & (cache_fetch_.size() - 1)];
++    if (!(fotograma_ <= cache.valido_hasta && cache.generacion == generacion_texturas_ &&
++          std::memcmp(cache.fetch.data(), fetch, sizeof(cache.fetch)) == 0)) {
++      bool puntual = false;
++      uint32_t ancho = 0, alto = 0;
++      uint64_t valido_hasta = fotograma_;
++      cache.ranura = PrepararTextura(fetch, sampler.tipo, ancho, alto, puntual, valido_hasta);
++      cache.valido_hasta = valido_hasta;
++      cache.sampler = SamplerDe(fetch, puntual);
++      cache.ancho = ancho;
++      cache.alto = alto;
++      cache.fotograma = fotograma_;
++      cache.generacion = generacion_texturas_;
++      std::memcpy(cache.fetch.data(), fetch, sizeof(cache.fetch));
++    }
++    texturas_vs[sampler.registro] = dkMakeTextureHandle(cache.ranura, cache.sampler);
++    n_texturas_vs = std::max<uint32_t>(n_texturas_vs, sampler.registro + 1u);
++  }
+ 
+   cortar_etapa(1);
+   // --- Upload space for everything this draw needs from here on, all in one slot
+@@ -1543,7 +1595,24 @@
+     if (!EmpezarPase(claves, pitch)) {
+       return false;
+     }
++    // A 1x pass whose 8-bit color target (by the registers: its pixel shader may write only oDepth) lies on the depth
++    // target's base: the game writes the depth back from a texture (edram.cpp, EdramZPorColor). Done from the depth
++    // resolve itself; the pass's own draws are not recorded (what they would write is that, through texture formats the
++    // host keeps otherwise).
++    // The depth test is usually off there (the depth is not bound: the pass writes its bits as color), so the depth
++    // target is taken from RB_DEPTH_INFO.
++    const uint32_t info_c0 = r[gr::XE_GPU_REG_RB_COLOR_INFO];
++    const uint32_t info_z = r[gr::XE_GPU_REG_RB_DEPTH_INFO];
++    if (claves[0] && (r[gr::XE_GPU_REG_RB_COLOR_MASK] & 0xF) && ((info_c0 >> 16) & 0xF) == 0 &&
++        (info_c0 & 0xFFF) == (info_z & 0xFFF) && !((r[gr::XE_GPU_REG_RB_SURFACE_INFO] >> 16) & 0x3)) {
++      if (ImagenDk* z = DestinoProfundidad(info_z & 0xFFF, (info_z >> 16) & 0x1, pitch, 0)) {
++        z_por_color_pase_ = EdramZPorColor(*z);
++      }
++    }
+   }
++  if (z_por_color_pase_) {
++    return true;
++  }
+   DkCmdBuf cmd = nucleo_.comandos();
+ 
+   // --- Framing (cached while generacion_encuadre and the pass do not change)
+@@ -1566,6 +1635,16 @@
+     encuadre_generacion_ = p.generacion_encuadre;
+     encuadre_pase_serie_ = g_.pase_serie;
+   }
++  // Diagnostics (x360_edram_compartida): the framing of the first draws into a 2x multisampled target, once.
++  if (((claves[0] >> 20) & 0x3) == 1 && edram_diag_encuadres_ < 6) {
++    ++edram_diag_encuadres_;
++    REXLOG_INFO("[edram] encuadre 2x: viewport {:.1f},{:.1f} {:.1f}x{:.1f}, tijera {},{} {}x{}, pase {}x{}, vacio {}, "
++                "YSCALE {:.1f} YOFFSET {:.1f} ventana {:08X} scissor {:08X}-{:08X}",
++                viewport[0], viewport[1], viewport[2], viewport[3], tijera.x, tijera.y, tijera.width, tijera.height,
++                g_.pase_ancho, g_.pase_alto, vacio, Flotante(r[gr::XE_GPU_REG_PA_CL_VPORT_YSCALE]),
++                Flotante(r[gr::XE_GPU_REG_PA_CL_VPORT_YOFFSET]), r[gr::XE_GPU_REG_PA_SC_WINDOW_OFFSET],
++                r[gr::XE_GPU_REG_PA_SC_WINDOW_SCISSOR_TL], r[gr::XE_GPU_REG_PA_SC_WINDOW_SCISSOR_BR]);
++  }
+   if (vacio) {
+     return true;  // empty viewport or scissor
+   }
+@@ -1576,10 +1655,21 @@
+     for (uint32_t i = 0, indice = 0; i < 4; ++i) {
+       if (ImagenDk* imagen = imagenes_pase_[i]) {
+         CompletarBanda(*imagen, hasta, true, indice++);
++        // The rows this view writes (edram.cpp): those of a target the draw writes to.
++        if ((mascaras >> (i * 4)) & 0xF) {
++          imagen->edram_filas = std::max(imagen->edram_filas, hasta);
++        }
+       }
+     }
+     if (imagenes_pase_[4]) {
+       CompletarBanda(*imagenes_pase_[4], hasta, true, 0);
++      const bool escribe_z = (control_profundidad & 0x2) && (control_profundidad & 0x4);
++      const bool escribe_estencil =
++          (control_profundidad & 0x1) && ((r[gr::XE_GPU_REG_RB_STENCILREFMASK] >> 16) & 0xFF) != 0;
++      if (escribe_z || escribe_estencil) {
++        imagenes_pase_[4]->edram_filas = std::max(imagenes_pase_[4]->edram_filas, hasta);
++      }
++      imagenes_pase_[4]->edram_estencil |= escribe_estencil;
+     }
+   }
+ 
+@@ -1698,6 +1788,22 @@
+   if (!vs || !fs) {
+     return Rechazar(60, "shader sin DKSH");
+   }
++  // A vertex shader the compiler blew up: GTA IV's shadowed spot light volumes (VS n49, n199, n57: a loop the
++  // translator writes as jumps back through its pc switch) compile to 550-700 KB with 255 registers and 65-79 KB of
++  // spill, and each of their draws took 0.8-1.3 s; the frame froze for seconds and the screen flashed black. Not drawn
++  // (those lights are missing) until the translator writes such loops as loops.
++  if (const int32_t tope_kb = REXCVAR_GET(x360_vs_codigo_max_kb); tope_kb > 0) {
++    const auto d = datos_shaders_.find(vs);
++    if (d != datos_shaders_.end() && d->second.bytes_codigo > uint32_t(tope_kb) * 1024u) {
++      if (vs_enormes_.insert(d->second.numero).second) {
++        REXLOG_WARN("[deko3d] VS n{}: {} KB de codigo, {} registros, {} B de scratch: sus dibujos no se graban "
++                    "(x360_vs_codigo_max_kb)",
++                    d->second.numero, d->second.bytes_codigo / 1024, d->second.registros, d->second.scratch);
++      }
++      ++vs_enormes_saltados_;
++      return true;
++    }
++  }
+   nucleo_.InvalidarCodigoSiHaceFalta();  // code copied in the middle of a frame (rex/ui/deko3d/nucleo.h)
+   if (vs != g_.vs || fs != g_.ps) {
+     const DkShader* shaders[2] = {vs, fs};
+@@ -1875,6 +1981,9 @@
+     std::copy(texturas.begin(), texturas.begin() + n_texturas, g_.texturas.begin());
+     g_.n_texturas = std::max(g_.n_texturas, n_texturas);
+   }
++  if (n_texturas_vs) {
++    dkCmdBufBindTextures(cmd, DkStage_Vertex, 0, texturas_vs.data(), n_texturas_vs);
++  }
+   g_.valido = true;
+ 
+   // --- Uploads: vertices, indices and constants (the space was checked above: this slot)
+--- a/cmake/rexglue_switch.cmake
++++ b/cmake/rexglue_switch.cmake
+@@ -267,6 +267,7 @@
+         # geometry. A game feeds it from its ring reader and plugs its effects in through rex::x360::RenderHooks.
+         "${_root}/src/x360/deko/destinos.cpp"
+         "${_root}/src/x360/deko/dibujos.cpp"
++        "${_root}/src/x360/deko/edram.cpp"
+         "${_root}/src/x360/deko/texturas.cpp"
+         "${_root}/src/x360/deko/geometria.cpp")
+     enable_language(C)  # uam has C sources (Mesa's preprocessor)
+--- /dev/null
++++ b/src/x360/deko/edram.cpp
+@@ -0,0 +1,674 @@
++// deko3d renderer: the EDRAM shared by its views (x360_edram_compartida). See render.h.
++//
++// The Xbox 360 draws into 10 MB of EDRAM: 2048 tiles of 80x16 32-bit samples (40x16 of 64 bits). A render target is a
++// view of it: a base tile, a pitch, an MSAA mode and a format. The renderer keeps each view as an image of its own
++// (destinos.cpp), which is enough while a game reads a view only the way it drew it. GTA IV does not:
++//  - it draws its HDR scene at 1280x720 and resolves the same tiles as 640x360 with 4x MSAA, which the hardware turns
++//    into a downsample (each 2x2 averaged into one texel); the luminance chain does it again at 320 -> 160, 80 -> 40;
++//  - it restores the scene's depth as 640x360 4x and tests its lights against it as 1280x720;
++//  - one base is 8-bit color, 7e3 and 32-bit float in turn, and its clears are draws at 640x360 4x.
++// As separate images each of those read an image nobody drew: the lights saw no depth, the downsamples were empty.
++//
++// Here each tile remembers the view that wrote it last and a version. A view about to be drawn or resolved first gets
++// the tiles another view wrote since it last held them: a draw maps each of its samples to the tile and the position
++// it lives at in EDRAM, reads that sample from the writer's image and reinterprets the bits when the formats differ
++// (Xenia's ownership transfers, at one value per pixel: going to more samples per pixel averages them, to fewer
++// replicates them). A view claims the rows its draws and clears wrote when its pass ends. Color and depth are kept
++// apart: a color tile is never read as depth or the other way round.
++
++#include <rex/cvar.h>
++#include <rex/logging.h>
++
++#include <algorithm>
++#include <cstring>
++
++#include <rex/ui/deko3d/compilador.h>
++#include <rex/x360/deko/render.h>
++
++REXCVAR_DECLARE(bool, x360_copias_sin_barrera);
++
++REXCVAR_DEFINE_BOOL(x360_edram_compartida, true, "X360",
++                    "Las vistas de un mismo EDRAM (otro pitch, MSAA o formato sobre las mismas tejas) ven los mismos "
++                    "datos: se transfieren al cambiar de vista, como en el hardware");
++REXCVAR_DEFINE_BOOL(x360_edram_estencil, true, "X360",
++                    "Las transferencias de profundidad entre vistas del EDRAM llevan tambien el stencil (8 pasadas)");
++REXCVAR_DEFINE_BOOL(x360_edram_z_por_pixel, true, "X360",
++                    "La profundidad 2x MSAA pasa a la vista 1x de la misma base y pitch pixel a pixel (GTA IV dibuja su "
++                    "G-buffer 2x entero, sin tiles, y restaura la profundidad para las luces escribiendo sus bits como "
++                    "color sobre la misma EDRAM)");
++REXCVAR_DEFINE_BOOL(x360_edram_z_por_color, true, "X360",
++                    "Un pase con color de 8 bits y profundidad en la misma base escribe la profundidad como color "
++                    "(GTA IV la restaura asi para las luces): la profundidad recibe la ultima resuelta de esa base");
++REXCVAR_DEFINE_BOOL(x360_edram_registro, false, "X360",
++                    "Registra cada transferencia entre vistas del EDRAM (siempre en el fotograma de un volcado)");
++
++namespace rex::x360 {
++namespace {
++
++constexpr uint32_t kTejas = 2048;  // RenderDk::kTejasEdram
++
++struct Geometria {
++  uint32_t sx, sy;        // samples per pixel across and down (2x MSAA: 1x2, 4x: 2x2)
++  uint32_t ancho_teja;    // samples across a tile: 80, 40 for 64-bit formats
++  uint32_t tejas_fila;    // tiles across the view
++};
++
++Geometria GeometriaDe(const ImagenDk& v) {
++  Geometria g;
++  g.sx = v.edram_msaa >= 2 ? 2 : 1;
++  g.sy = v.edram_msaa >= 1 ? 2 : 1;
++  g.ancho_teja = v.edram_bpp == 8 ? 40 : 80;
++  // As Xenia: the pitch in 32-bit tiles, twice that for 64-bit formats.
++  g.tejas_fila = std::max(1u, (v.edram_pitch * g.sx + 79) / 80) * (v.edram_bpp / 4);
++  return g;
++}
++
++// The tiles past the base that the view's first `filas` rows take, up to its limit.
++uint32_t TejasDeFilas(const ImagenDk& v, uint32_t filas) {
++  const Geometria g = GeometriaDe(v);
++  const uint32_t filas_de_tejas = (filas * g.sy + 15) / 16;
++  return std::min({filas_de_tejas * g.tejas_fila, v.edram_tope, kTejas});
++}
++
++// The color target formats as the EDRAM holds them: the aliases are the same bits.
++uint32_t FormatoBase(uint32_t formato) {
++  return formato == 12 ? 3 : formato == 10 ? 2 : formato == 1 ? 0 : formato;
++}
++
++// The color transfer. Uniforms (ivec4): destination and source {base, tiles per row, sx | sy << 4 | tile width << 8,
++// guest format}, then {first tile, tiles, reinterpret, average}. The tiles are absolute (0-2047): the destination pixel
++// is drawn only if one of its samples lies in [first, first + tiles).
++constexpr const char* kFsEdramComun = R"(#version 460
++layout(std140, binding = 0) uniform Transferencia {
++  ivec4 destino;
++  ivec4 origen;
++  ivec4 tejas;
++} t;
++
++// Integer division on this GPU is a float estimate (uam warns of the precision lost): corrected to the exact quotient.
++int Dividir(int a, int b) {
++  int q = int(float(a) / float(b));
++  if (q * b > a) --q;
++  else if ((q + 1) * b <= a) ++q;
++  return q;
++}
++
++// The source pixel that holds this destination sample, or (-1, -1) if the sample is not in the tiles transferred.
++// sx and sy are 1 or 2: shifts.
++ivec2 MuestraOrigen(ivec2 pixel, int i, int j) {
++  int lx = (t.destino.z >> 1) & 1, ly = (t.destino.z >> 5) & 1, ancho = t.destino.z >> 8;
++  int x = (pixel.x << lx) + i, y = (pixel.y << ly) + j;
++  int columna = Dividir(x, ancho);
++  int teja = (t.destino.x + (y >> 4) * t.destino.y + columna) & 2047;
++  if (((teja - t.tejas.x) & 2047) >= t.tejas.y) return ivec2(-1);
++  if (t.tejas.w == 2) return pixel;  // the same pixel (x360_edram_z_por_pixel)
++  int ox = x - columna * ancho, oy = y & 15;
++  int relativa = (teja - t.origen.x) & 2047;
++  int fila = Dividir(relativa, t.origen.y);
++  int olx = (t.origen.z >> 1) & 1, oly = (t.origen.z >> 5) & 1, oancho = t.origen.z >> 8;
++  int fx = (relativa - fila * t.origen.y) * oancho + ox, fy = fila * 16 + oy;
++  return ivec2(fx >> olx, fy >> oly);
++}
++)";
++
++constexpr const char* kFsEdramColor = R"(
++layout(binding = 0) uniform sampler2D fuente;
++layout(location = 0) out vec4 color;
++
++// The 7e3 floats of k_2_10_10_10_FLOAT (DirectXTex, as Xenia's PreClampedFloat32To7e3 and Float7e3To32).
++uint A7e3(float f) {
++  uint u = floatBitsToUint(clamp(f, 0.0, 31.875));
++  uint sesgado = u < 0x3E800000u ? (((u & 0x7FFFFFu) | 0x800000u) >> min(125u - (u >> 23), 24u)) : u - (124u << 23);
++  return ((sesgado + 0x7FFFu + ((sesgado >> 16) & 1u)) >> 16) & 0x3FFu;
++}
++float De7e3(uint f) {
++  f &= 0x3FFu;
++  if (f == 0u) return 0.0;
++  uint m = f & 0x7Fu, e = f >> 7;
++  if (e == 0u) {
++    int msb = findMSB(m);
++    e = uint(1 - (7 - msb));
++    m = (m << uint(7 - msb)) & 0x7Fu;
++  }
++  return uintBitsToFloat(((e + 124u) << 23) | (m << 16));
++}
++
++uint Empaquetar(int f, vec4 v) {
++  if (f == 2) {
++    uvec4 u = uvec4(round(clamp(v, 0.0, 1.0) * vec4(1023.0, 1023.0, 1023.0, 3.0)));
++    return u.r | (u.g << 10) | (u.b << 20) | (u.a << 30);
++  }
++  if (f == 3) {
++    return A7e3(v.r) | (A7e3(v.g) << 10) | (A7e3(v.b) << 20) | (uint(round(clamp(v.a, 0.0, 1.0) * 3.0)) << 30);
++  }
++  if (f == 4) {
++    ivec2 i = ivec2(round(clamp(v.rg * (1.0 / 32.0), -1.0, 1.0) * 32767.0));
++    return (uint(i.x) & 0xFFFFu) | (uint(i.y) << 16);
++  }
++  if (f == 6) return packHalf2x16(v.rg);
++  if (f == 14) return floatBitsToUint(v.r);
++  return packUnorm4x8(v);
++}
++
++vec4 Desempaquetar(int f, uint b) {
++  if (f == 2) {
++    return vec4(float(b & 0x3FFu), float((b >> 10) & 0x3FFu), float((b >> 20) & 0x3FFu), 0.0) / 1023.0 +
++           vec4(0.0, 0.0, 0.0, float(b >> 30) / 3.0);
++  }
++  if (f == 3) return vec4(De7e3(b), De7e3(b >> 10), De7e3(b >> 20), float(b >> 30) / 3.0);
++  if (f == 4) {
++    vec2 c = vec2(float(int(b << 16) >> 16), float(int(b) >> 16)) / 32767.0;
++    return vec4(max(c, vec2(-1.0)) * 32.0, 0.0, 0.0);
++  }
++  // Float targets (16_16_FLOAT, 32_FLOAT) given another format's bits: 0. Read as floats, 7e3 and 8-bit bits are
++  // values up to +-1e34; GTA IV's luminance chain (32_FLOAT over the HDR scene's EDRAM) kept some, its log-average
++  // went to minus thousands, the adapted luminance to 0 and the exposure to white.
++  if (f == 6 || f == 14) return vec4(0.0);
++  return unpackUnorm4x8(b);
++}
++
++void main() {
++  ivec2 pixel = ivec2(gl_FragCoord.xy);
++  int sx = t.destino.z & 15, sy = (t.destino.z >> 4) & 15;
++  vec4 suma = vec4(0.0);
++  int n = 0;
++  for (int j = 0; j < sy; ++j) {
++    for (int i = 0; i < sx; ++i) {
++      ivec2 p = MuestraOrigen(pixel, i, j);
++      if (p.x < 0) continue;
++      vec4 v = texelFetch(fuente, p, 0);
++      if (t.tejas.z == 1) {
++        v = Desempaquetar(t.destino.w, Empaquetar(t.origen.w, v));
++      } else if (t.origen.w == 3) {
++        // A 7e3 target holds what its writes were clamped to; the host image (RGBA16_Float) does not clamp.
++        // NaN compares false (as the resolve's kFsCopia7e3): 0. clamp() would give 31.875 on this GPU, a white pixel.
++        v = vec4(greaterThan(v, vec4(0.0))) * min(v, vec4(31.875, 31.875, 31.875, 1.0));
++      }
++      suma += v;
++      ++n;
++      if (t.tejas.w == 0) break;
++    }
++    if (n > 0 && t.tejas.w == 0) break;
++  }
++  if (n == 0) discard;
++  color = suma / float(n);
++}
++)";
++
++// Depth: the first sample's depth, written with gl_FragDepth. With t.tejas.z = 1 + bit, the stencil instead: the pixel
++// is kept only where that bit of the source's stencil is set (the draw writes that bit with a stencil replace).
++constexpr const char* kFsEdramProfundidad = R"(
++layout(binding = 0) uniform sampler2D fuente;
++layout(binding = 1) uniform usampler2D estencil;
++void main() {
++  ivec2 pixel = ivec2(gl_FragCoord.xy);
++  int sx = t.destino.z & 15, sy = (t.destino.z >> 4) & 15;
++  ivec2 p = ivec2(-1);
++  for (int j = 0; j < sy && p.x < 0; ++j) {
++    for (int i = 0; i < sx && p.x < 0; ++i) {
++      p = MuestraOrigen(pixel, i, j);
++    }
++  }
++  if (p.x < 0) discard;
++  if (t.tejas.z > 0) {
++    // destino.w bit 8: the stencil is not the source's but GTA IV's restore rule, 0xFF where there is depth, 0x80
++    // where there is none (the sky).
++    if ((t.destino.w & 0x100) != 0) {
++      if (texelFetch(fuente, p, 0).r == 0.0) discard;  // the second pass writes 0xFF where there is depth
++    } else if (((texelFetch(estencil, p, 0).r >> uint(t.tejas.z - 1)) & 1u) == 0u) {
++      discard;
++    }
++  }
++  gl_FragDepth = texelFetch(fuente, p, 0).r;
++}
++)";
++
++}  // namespace
++
++bool RenderDk::EdramActiva() const { return REXCVAR_GET(x360_edram_compartida); }
++
++void RenderDk::EdramVista(ImagenDk& imagen, uint32_t base, uint32_t pitch, uint32_t msaa, uint32_t formato) {
++  imagen.edram_base = base & (kTejas - 1);
++  imagen.edram_pitch = pitch;
++  imagen.edram_msaa = msaa & 0x3;
++  imagen.edram_formato = imagen.profundidad ? formato : FormatoBase(formato);
++  imagen.edram_bpp = !imagen.profundidad && (formato == 5 || formato == 7 || formato == 15) ? 8 : 4;
++  imagen.edram_tope = kTejas - imagen.edram_base;
++  imagen.edram_tope_fijo = imagen.edram_tope;
++  imagen.edram_filas = 0;
++  imagen.edram_versiones.assign(kTejas, 0);
++}
++
++// The views bound together cannot overlap: a view holds at most the tiles up to the next base bound with it, in that
++// pass or any before. GTA IV's G-buffer (three 2x MSAA targets 512 tiles apart, a 256-row band each) is drawn whole in
++// one pass (gta4_sin_tiling): its images are 720 rows tall, and without this each would claim the next one's tiles,
++// also in the passes that bind one of them alone (the transfers went round 200 -> 400 -> 600 every pass).
++void RenderDk::EdramTopes(const std::array<ImagenDk*, 5>& imagenes) {
++  for (uint32_t i = 0; i < 5; ++i) {
++    ImagenDk* v = imagenes[i];
++    if (!v || !v->edram_bpp) continue;
++    uint32_t tope = kTejas;
++    for (uint32_t j = 0; j < 5; ++j) {
++      const ImagenDk* o = imagenes[j];
++      if (!o || o == v || !o->edram_bpp || o->profundidad != v->profundidad || o->edram_base <= v->edram_base) continue;
++      tope = std::min(tope, o->edram_base - v->edram_base);
++    }
++    // Nor past the end of the EDRAM: the hardware wraps there, but a target drawn whole (gta4_sin_tiling) at 600 took
++    // 000-3A0 that way, over the first G-buffer target, and they overwrote each other on every pass.
++    tope = std::min(tope, kTejas - v->edram_base);
++    v->edram_tope_fijo = std::min(v->edram_tope_fijo, tope);
++    tope = v->edram_tope_fijo;
++    if (tope != v->edram_tope) {
++      v->edram_tope = tope;
++      v->edram_generacion = UINT32_MAX;  // other tiles: looked at again
++    }
++  }
++}
++
++void RenderDk::EdramPreparar(ImagenDk& vista, uint32_t filas) {
++  if (!EdramActiva() || !vista.edram_bpp || vista.edram_versiones.empty()) return;
++  // Nobody claimed anything since all of it was found up to date: nothing to look at (most pass changes).
++  const uint32_t generacion = vista.profundidad ? generacion_z_ : generacion_color_;
++  if (vista.edram_generacion == generacion) return;
++  auto& tejas = vista.profundidad ? tejas_z_ : tejas_color_;
++  const uint32_t n = TejasDeFilas(vista, std::min(filas, vista.alto));
++  bool preparada = false;
++  for (uint32_t k = 0; k < n;) {
++    const TejaEdram& t = tejas[(vista.edram_base + k) & (kTejas - 1)];
++    if (!t.dueno || t.dueno == &vista || vista.edram_versiones[k] == t.version) {
++      ++k;
++      continue;
++    }
++    ImagenDk* dueno = t.dueno;
++    uint32_t fin = k + 1;
++    while (fin < n) {
++      const TejaEdram& u = tejas[(vista.edram_base + fin) & (kTejas - 1)];
++      if (u.dueno != dueno || vista.edram_versiones[fin] == u.version) break;
++      ++fin;
++    }
++    if (!preparada) {
++      // What the view holds must be its own content before part of it is replaced: a clear asked for earlier, the
++      // content a resolve without copy gave away.
++      preparada = true;
++      RestaurarContenido(vista, true);
++      HacerBorradoPendiente(vista);
++    }
++    // A clear's tiles, all of one claim: a clear of the same rows here (a transfer draw costs 9 for depth).
++    bool una_borrada = t.borrada;
++    for (uint32_t j = k + 1; j < fin && una_borrada; ++j) {
++      const TejaEdram& u = tejas[(vista.edram_base + j) & (kTejas - 1)];
++      una_borrada = u.borrada && u.version == t.version;
++    }
++    if (!una_borrada || !EdramBorrarComo(*dueno, t, vista, k, fin - k)) {
++      EdramTransferir(*dueno, vista, k, fin - k);
++    }
++    for (uint32_t j = k; j < fin; ++j) {
++      vista.edram_versiones[j] = tejas[(vista.edram_base + j) & (kTejas - 1)].version;
++    }
++    k = fin;
++  }
++  if (filas >= std::min(vista.alto, std::max(720u, vista.alto_usado))) {
++    vista.edram_generacion = generacion;
++  }
++}
++
++void RenderDk::EdramReclamar(ImagenDk& vista, uint32_t filas, const float* borrado) {
++  if (!EdramActiva() || !vista.edram_bpp || vista.edram_versiones.empty()) return;
++  auto& tejas = vista.profundidad ? tejas_z_ : tejas_color_;
++  const uint32_t n = TejasDeFilas(vista, std::min(filas, vista.alto));
++  if (!n) return;
++  // Its own claim leaves a view that was up to date still up to date.
++  uint32_t& generacion = vista.profundidad ? generacion_z_ : generacion_color_;
++  const bool al_dia = vista.edram_generacion == generacion;
++  ++generacion;
++  if (al_dia) vista.edram_generacion = generacion;
++  const uint32_t version = ++version_edram_;
++  for (uint32_t k = 0; k < n; ++k) {
++    TejaEdram& t = tejas[(vista.edram_base + k) & (kTejas - 1)];
++    t.dueno = &vista;
++    t.version = version;
++    t.borrada = borrado != nullptr;
++    if (borrado) std::copy(borrado, borrado + 4, t.valor);
++    vista.edram_versiones[k] = version;
++  }
++}
++
++void RenderDk::EdramCerrarPase() {
++  for (ImagenDk* imagen : imagenes_pase_) {
++    if (imagen && imagen->edram_filas) {
++      EdramReclamar(*imagen, imagen->edram_filas);
++      imagen->edram_filas = 0;
++    }
++  }
++}
++
++bool RenderDk::EdramShaders() {
++  if (edram_shaders_) return edram_shaders_ > 0;
++  edram_shaders_ = -1;
++  const deko::Compilador::Resultado c = compilador_.Compilar(false, std::string(kFsEdramComun) + kFsEdramColor);
++  const deko::Compilador::Resultado z = compilador_.Compilar(false, std::string(kFsEdramComun) + kFsEdramProfundidad);
++  if (!c.ok || !z.ok || !nucleo_.CargarShader(fs_edram_color_, c.dksh, "transferencia EDRAM (color)") ||
++      !nucleo_.CargarShader(fs_edram_z_, z.dksh, "transferencia EDRAM (profundidad)")) {
++    REXLOG_ERROR("[edram] no se pudieron compilar las transferencias: {} / {}", c.log, z.log);
++    return false;
++  }
++  edram_shaders_ = 1;
++  return true;
++}
++
++uint32_t RenderDk::VistaEstencil(const ImagenDk& imagen) {
++  constexpr uint16_t kMarca = 0xE5E5;  // a host swizzle no texture has: the key of the stencil views
++  const uint64_t clave = (imagen.serie << 24) ^ kMarca ^ (uint64_t(1) << 63);
++  if (const auto it = vistas_.find(clave); it != vistas_.end()) {
++    return it->second;
++  }
++  const uint32_t ranura = ReservarDescriptorImagen();
++  if (!ranura) return 0;
++  DkImageView v;
++  dkImageViewDefaults(&v, &imagen.imagen);
++  v.dsSource = DkDsSource_Stencil;
++  EscribirDescriptorImagen(ranura, v);
++  vistas_.emplace(clave, ranura);
++  vistas_por_serie_[imagen.serie].push_back(clave);
++  return ranura;
++}
++
++bool RenderDk::EdramTransferir(ImagenDk& origen, ImagenDk& destino, uint32_t desde, uint32_t cuantas) {
++  const Geometria gd = GeometriaDe(destino), go = GeometriaDe(origen);
++  const bool z = destino.profundidad;
++  const bool reinterpretar = !z && origen.edram_formato != destino.edram_formato;
++  // Only between views of the same sample size; 64-bit formats only as themselves.
++  if (origen.edram_bpp != destino.edram_bpp || (reinterpretar && destino.edram_bpp == 8)) {
++    ++edram_sin_soporte_;
++    const uint64_t aviso = (uint64_t(origen.edram_formato) << 8) | destino.edram_formato;
++    if (edram_avisos_.insert(aviso).second) {
++      REXLOG_WARN("[edram] {:03X}: formato {} ({} bits) visto como {} ({} bits): sin transferencia",
++                  destino.edram_base, origen.edram_formato, origen.edram_bpp * 8, destino.edram_formato,
++                  destino.edram_bpp * 8);
++    }
++    return false;
++  }
++  if (!vs_salida_valido_ || !EdramShaders()) return false;
++  // The destination rows those tiles cover, all of its width (the shader keeps the samples in the tiles).
++  const uint32_t filas_teja = 16 / gd.sy;
++  const uint32_t y0 = std::min((desde / gd.tejas_fila) * filas_teja, destino.alto);
++  const uint32_t y1 = std::min(((desde + cuantas - 1) / gd.tejas_fila + 1) * filas_teja, destino.alto);
++  const uint32_t ancho = std::min(destino.ancho, destino.edram_pitch);
++  if (y1 <= y0 || !ancho) return false;
++  // The source rows those tiles cover in it, for its pending work.
++  const uint32_t desde_o = (destino.edram_base + desde - origen.edram_base) & (kTejas - 1);
++  const uint32_t filas_o = std::min(((desde_o + cuantas - 1) / go.tejas_fila + 1) * (16 / go.sy), origen.alto);
++  RestaurarContenido(origen, true);
++  HacerBorradoPendiente(origen);
++  CompletarBanda(origen, filas_o, false, 0);
++  AntesDeCambiarDestino(&destino);
++  CompletarBanda(destino, y1, false, 0);
++
++  // GTA IV (x360_edram_z_por_pixel): its G-buffer's depth is drawn whole at 2x (gta4_sin_tiling) and put back for the
++  // lights at 1x with its bits written as color over the same EDRAM (a draw into c0 = the depth's base, k_8_8_8_8),
++  // which here never reaches the depth. The result of that is the same depth and stencil at the same pixels.
++  const bool por_pixel = z && REXCVAR_GET(x360_edram_z_por_pixel) && origen.edram_msaa == 1 &&
++                         destino.edram_msaa == 0 && origen.edram_base == destino.edram_base &&
++                         origen.edram_pitch == destino.edram_pitch;
++  AsegurarTrabajo();
++  EmitirCieloPendiente();
++  // The same pixels in images of the same format (x360_edram_z_por_pixel, 2x -> 1x): the copy engine moves depth and
++  // stencil in one copy, instead of a depth draw and eight stencil passes.
++  if (por_pixel && !edram_estencil_de_z_ && origen.formato == destino.formato && origen.ancho >= ancho &&
++      origen.alto >= y1) {
++    MarcarGpu(kGpuCopias);
++    AntesDeTransferir();
++    DkImageView vo, vd;
++    dkImageViewDefaults(&vo, &origen.imagen);
++    dkImageViewDefaults(&vd, &destino.imagen);
++    const DkImageRect rect = {0, y0, 0, ancho, y1 - y0, 1};
++    dkCmdBufCopyImage(nucleo_.comandos(), &vo, &rect, &vd, &rect, 0);
++    destino.edram_estencil |= origen.edram_estencil;
++    invalidar_zcull_ = true;
++    borrado_previo_.erase(destino.serie);
++    OlvidarEstado();
++    ++edram_transferencias_;
++    edram_pixeles_ += uint64_t(ancho) * (y1 - y0);
++    return true;
++  }
++  const deko::Subida ubo = Reservar(256, DK_UNIFORM_BUF_ALIGNMENT);
++  if (!ubo) return false;
++  const int32_t u[12] = {int32_t(destino.edram_base), int32_t(gd.tejas_fila),
++                         int32_t(gd.sx | (gd.sy << 4) | (gd.ancho_teja << 8)),
++                         int32_t(destino.edram_formato | (z && edram_estencil_de_z_ ? 0x100u : 0u)),
++                         int32_t(origen.edram_base), int32_t(go.tejas_fila),
++                         int32_t(go.sx | (go.sy << 4) | (go.ancho_teja << 8)), int32_t(origen.edram_formato),
++                         int32_t((destino.edram_base + desde) & (kTejas - 1)), int32_t(cuantas),
++                         reinterpretar ? 1 : 0, por_pixel ? 2 : 1};
++  std::memcpy(ubo.cpu, u, sizeof(u));
++  const uint32_t ranura = VistaDe(origen, 0x688, z ? 0 : 0x688);
++  const bool estencil = z && REXCVAR_GET(x360_edram_estencil);
++  // The stencil bit passes only for a source that ever held a stencil other than 0 (the first draw zeroes it).
++  const bool estencil_bits = estencil && origen.edram_estencil;
++  const uint32_t ranura_estencil = estencil ? VistaEstencil(origen) : 0;
++  DkCmdBuf cmd = nucleo_.comandos();
++  MarcarGpu(kGpuCopias);
++  // What wrote the source (draws, 3D copies, clears; a copy engine transfer needs the full barrier) is done and visible
++  // to the texture units. After other 3D copies only when this one depends on them (RenderDk::CopiaDependeDePendientes).
++  const bool barrera = transferencia_sin_barrera_ || rop_sin_barrera_ || fuerza_barrera_copia_ || invalidar_zcull_ ||
++                       (copia3d_pendiente_ && (!REXCVAR_GET(x360_copias_sin_barrera) ||
++                                               CopiaDependeDePendientes(origen.serie, destino.serie)));
++  if (barrera) {
++    if (transferencia_sin_barrera_) {
++      dkCmdBufBarrier(cmd, DkBarrier_Full, DkInvalidateFlags_Image | DkInvalidateFlags_Zcull);
++      ++barreras_;
++    } else {
++      dkCmdBufBarrier(cmd, DkBarrier_Fragments, DkInvalidateFlags_Image | DkInvalidateFlags_Zcull);
++      ++barreras_fragmentos_;
++    }
++    transferencia_sin_barrera_ = false;
++    rop_sin_barrera_ = false;
++    copia3d_pendiente_ = false;
++    copias3d_escritas_.clear();
++    copias3d_leidas_.clear();
++    fuerza_barrera_copia_ = false;
++    invalidar_zcull_ = false;
++  }
++  DkImageView vista;
++  dkImageViewDefaults(&vista, &destino.imagen);
++  if (z) {
++    dkCmdBufBindRenderTargets(cmd, nullptr, 0, &vista);
++  } else {
++    dkCmdBufBindRenderTarget(cmd, &vista, nullptr);
++  }
++  const DkViewport vp = {0.0f, float(y0), float(ancho), float(y1 - y0), 0.0f, 1.0f};
++  const DkScissor tijera = {0, y0, ancho, y1 - y0};
++  dkCmdBufSetViewports(cmd, 0, &vp, 1);
++  static const DkViewportSwizzle kIdentidad = {DkSwizzle_PositiveX, DkSwizzle_PositiveY, DkSwizzle_PositiveZ,
++                                                DkSwizzle_PositiveW};
++  dkCmdBufSetViewportSwizzles(cmd, 0, &kIdentidad, 1);
++  dkCmdBufSetScissors(cmd, 0, &tijera, 1);
++  DkRasterizerState rs;
++  dkRasterizerStateDefaults(&rs);
++  rs.cullMode = DkFace_None;
++  DkColorState cs;
++  dkColorStateDefaults(&cs);
++  DkColorWriteState cws;
++  dkColorWriteStateDefaults(&cws);
++  if (z) cws.masks = 0;
++  dkCmdBufBindRasterizerState(cmd, &rs);
++  dkCmdBufBindColorState(cmd, &cs);
++  dkCmdBufBindColorWriteState(cmd, &cws);
++  dkCmdBufBindVtxAttribState(cmd, nullptr, 0);
++  dkCmdBufBindVtxBufferState(cmd, nullptr, 0);
++  const DkShader* shaders[2] = {&vs_salida_, z ? &fs_edram_z_ : &fs_edram_color_};
++  dkCmdBufBindShaders(cmd, DkStageFlag_GraphicsMask, shaders, 2);
++  dkCmdBufBindTexture(cmd, DkStage_Fragment, 0, dkMakeTextureHandle(ranura, 0));
++  if (estencil && ranura_estencil) {
++    dkCmdBufBindTexture(cmd, DkStage_Fragment, 1, dkMakeTextureHandle(ranura_estencil, 0));
++  }
++  DkDepthStencilState ds;
++  dkDepthStencilStateDefaults(&ds);
++  ds.depthTestEnable = z;
++  ds.depthWriteEnable = z;
++  ds.depthCompareOp = DkCompareOp_Always;
++  // Depth: the stencil goes to 0 with the depth, then each bit is set where the source has it.
++  ds.stencilTestEnable = estencil && ranura_estencil;
++  ds.stencilFrontCompareOp = ds.stencilBackCompareOp = DkCompareOp_Always;
++  ds.stencilFrontPassOp = ds.stencilBackPassOp = DkStencilOp_Replace;
++  ds.stencilFrontFailOp = ds.stencilBackFailOp = DkStencilOp_Keep;
++  ds.stencilFrontDepthFailOp = ds.stencilBackDepthFailOp = DkStencilOp_Replace;
++  dkCmdBufBindDepthStencilState(cmd, &ds);
++  if (ds.stencilTestEnable) {
++    dkCmdBufSetStencil(cmd, DkFace_FrontAndBack, 0xFF, edram_estencil_de_z_ ? 0x80 : 0x00, 0xFF);
++  }
++  dkCmdBufBindUniformBuffer(cmd, DkStage_Fragment, 0, ubo.gpu, 256);
++  dkCmdBufDraw(cmd, DkPrimitive_Triangles, 3, 1, 0, 0);
++  if (ds.stencilTestEnable && estencil_bits) {
++    destino.edram_estencil = true;
++    ++edram_estencil_pasadas_;
++    ds.depthWriteEnable = false;
++    dkCmdBufBindDepthStencilState(cmd, &ds);
++    // GTA IV's restore rule (edram_estencil_de_z_): 0x80 everywhere from the first pass, then one pass of 0xFF where
++    // there is depth. Otherwise a pass per bit of the source's stencil.
++    const uint32_t pasadas = edram_estencil_de_z_ ? 1 : 8;
++    for (uint32_t bit = 0; bit < pasadas; ++bit) {
++      const deko::Subida b = Reservar(256, DK_UNIFORM_BUF_ALIGNMENT);
++      if (!b) break;
++      int32_t ub[12];
++      std::memcpy(ub, u, sizeof(ub));
++      ub[10] = int32_t(bit + 1);
++      std::memcpy(b.cpu, ub, sizeof(ub));
++      dkCmdBufSetStencil(cmd, DkFace_FrontAndBack, edram_estencil_de_z_ ? 0xFF : uint8_t(1u << bit), 0xFF, 0xFF);
++      dkCmdBufBindUniformBuffer(cmd, DkStage_Fragment, 0, b.gpu, 256);
++      dkCmdBufDraw(cmd, DkPrimitive_Triangles, 3, 1, 0, 0);
++    }
++  }
++  copia3d_pendiente_ = true;
++  AnotarCopia3D(origen.serie, destino.serie);
++  trabajo_3d_sin_barrera_ = true;
++  invalidar_zcull_ |= z;
++  borrado_previo_.erase(destino.serie);  // it holds other values than its last clear now
++  OlvidarEstado();
++  ++edram_transferencias_;
++  edram_pixeles_ += uint64_t(ancho) * (y1 - y0);
++  if (REXCVAR_GET(x360_edram_registro) || volcando_) {  // and in the frame the dump takes (ZL + ZR + Left)
++    REXLOG_INFO("[edram] {} {:03X} f{} {}{} -> {:03X} f{} {}{}: tejas {:03X}+{}, filas {}-{}", z ? "z" : "c",
++                origen.edram_base, origen.edram_formato, origen.edram_pitch,
++                origen.edram_msaa ? (origen.edram_msaa == 1 ? "/2x" : "/4x") : "", destino.edram_base,
++                destino.edram_formato, destino.edram_pitch,
++                destino.edram_msaa ? (destino.edram_msaa == 1 ? "/2x" : "/4x") : "",
++                (destino.edram_base + desde) & (kTejas - 1), cuantas, y0, y1);
++  }
++  return true;
++}
++
++// Tiles another view cleared and nothing wrote since, as a clear of the same rows in this one: what a transfer would
++// copy is that clear's value. Only whole tile rows, a value both views read the same way (the same format, or 0
++// everywhere) and for depth its z and stencil. false: the transfer draw does it.
++bool RenderDk::EdramBorrarComo(const ImagenDk& origen, const TejaEdram& teja, ImagenDk& destino, uint32_t desde,
++                               uint32_t cuantas) {
++  const Geometria gd = GeometriaDe(destino);
++  if (desde % gd.tejas_fila || cuantas % gd.tejas_fila) return false;
++  const bool z = destino.profundidad;
++  const bool ceros = !teja.valor[0] && !teja.valor[1] && !teja.valor[2] && !teja.valor[3];
++  if (!z && !ceros && (origen.edram_formato != destino.edram_formato || origen.edram_bpp != destino.edram_bpp)) {
++    return false;
++  }
++  const uint32_t filas_teja = 16 / gd.sy;
++  const uint32_t y0 = std::min((desde / gd.tejas_fila) * filas_teja, destino.alto);
++  const uint32_t y1 = std::min(((desde + cuantas) / gd.tejas_fila) * filas_teja, destino.alto);
++  const uint32_t ancho = std::min(destino.ancho, destino.edram_pitch);
++  if (y1 <= y0 || !ancho) return true;
++  AntesDeCambiarDestino(&destino);
++  CompletarBanda(destino, y1, false, 0);
++  AsegurarTrabajo();
++  EmitirCieloPendiente();
++  AntesDe3D();
++  MarcarGpu(kGpuBorrados);
++  DkCmdBuf cmd = nucleo_.comandos();
++  DkImageView vista;
++  dkImageViewDefaults(&vista, &destino.imagen);
++  const DkScissor tijera = {0, y0, ancho, y1 - y0};
++  if (z) {
++    dkCmdBufBindRenderTargets(cmd, nullptr, 0, &vista);
++    dkCmdBufSetScissors(cmd, 0, &tijera, 1);
++    const uint8_t estencil = uint8_t(teja.valor[1]);
++    dkCmdBufClearDepthStencil(cmd, true, teja.valor[0], 0xFF, estencil);
++    destino.edram_estencil |= estencil != 0;
++    invalidar_zcull_ = true;
++  } else {
++    dkCmdBufBindRenderTarget(cmd, &vista, nullptr);
++    dkCmdBufSetScissors(cmd, 0, &tijera, 1);
++    dkCmdBufClearColorFloat(cmd, 0, DkColorMask_RGBA, teja.valor[0], teja.valor[1], teja.valor[2], teja.valor[3]);
++  }
++  borrado_previo_.erase(destino.serie);
++  OlvidarEstado();
++  ++edram_borrados_;
++  if (REXCVAR_GET(x360_edram_registro) || volcando_) {
++    REXLOG_INFO("[edram] {} {:03X} f{} {} -> {:03X} f{} {}: tejas {:03X}+{}, filas {}-{}, como borrado", z ? "z" : "c",
++                origen.edram_base, origen.edram_formato, origen.edram_pitch, destino.edram_base, destino.edram_formato,
++                destino.edram_pitch, (destino.edram_base + desde) & (kTejas - 1), cuantas, y0, y1);
++  }
++  return true;
++}
++
++bool RenderDk::EdramZPorColor(ImagenDk& z) {
++  if (!EdramActiva() || !REXCVAR_GET(x360_edram_z_por_color) || !z.edram_bpp) return false;
++  const auto base = z_resuelta_por_base_.find(z.edram_base);
++  const auto it = base == z_resuelta_por_base_.end() ? resueltas_.end() : resueltas_.find(base->second);
++  const char* falta = base == z_resuelta_por_base_.end()  ? "ninguna resuelta de profundidad de esa base"
++                      : it == resueltas_.end()             ? "la resuelta ya no existe"
++                      : !it->second.escrita                ? "la resuelta no esta escrita"
++                      : !it->second.imagen.profundidad     ? "la resuelta no es de profundidad"
++                      : it->second.imagen.ancho != z.edram_pitch ? "la resuelta tiene otro ancho"
++                                                                 : nullptr;
++  if (falta) {
++    if (edram_z_por_color_registrados_ < 8) {
++      ++edram_z_por_color_registrados_;
++      REXLOG_INFO("[edram] profundidad {:03X} ({}) por color: no se restaura, {}", z.edram_base, z.edram_pitch, falta);
++    }
++    return false;
++  }
++  const uint64_t hecho[3] = {z.serie, it->second.imagen.serie, it->second.imagen.version};
++  if (std::equal(hecho, hecho + 3, z_por_color_hecho_)) return true;  // already done for this pass
++  std::copy(hecho, hecho + 3, z_por_color_hecho_);
++  // The texture as a 2x view of the same base and pitch: EdramTransferir copies it pixel for pixel
++  // (x360_edram_z_por_pixel's path), with its stencil.
++  ImagenDk fuente = it->second.imagen;
++  fuente.edram_base = z.edram_base;
++  fuente.edram_pitch = z.edram_pitch;
++  fuente.edram_msaa = 1;
++  fuente.edram_bpp = 4;
++  fuente.edram_formato = z.edram_formato;
++  fuente.edram_estencil = true;
++  fuente.contenido_invalido = false;
++  fuente.borrado_pendiente = false;
++  fuente.banda_sucia = false;
++  const uint32_t filas = std::min(z.alto, fuente.alto);
++  RestaurarContenido(z, true);
++  HacerBorradoPendiente(z);
++  // GTA IV's restore (its pixel shader, ps_b3d105989610e354) writes the stencil as 1.0 where the depth bytes are not 0
++  // and 0.5 where they are: 0xFF on geometry, 0x80 on the sky. Its full-screen sun and ambient light tests that.
++  edram_estencil_de_z_ = true;
++  const bool hecho_ok = EdramTransferir(fuente, z, 0, TejasDeFilas(z, filas));
++  edram_estencil_de_z_ = false;
++  if (!hecho_ok) return false;
++  EdramReclamar(z, filas);
++  z.edram_estencil = true;
++  if (edram_z_por_color_registrados_ < 8) {
++    ++edram_z_por_color_registrados_;
++    REXLOG_INFO("[edram] profundidad {:03X} ({}) restaurada desde la resuelta {:08X} ({}x{})", z.edram_base,
++                z.edram_pitch, base->second, fuente.ancho, fuente.alto);
++  }
++  return true;
++}
++
++// Once per frame (Presentar): every 300 frames, what the transfers cost.
++void RenderDk::EdramFotograma() {
++  if (!EdramActiva() || ++edram_fotogramas_ < 300) return;
++  REXLOG_INFO("[edram] {} fotogramas: {:.1f} transferencias ({:.1f} con stencil) y {:.2f} Mpixeles por fotograma, "
++              "{:.1f} hechas como borrado, {} sin soporte",
++              edram_fotogramas_, double(edram_transferencias_) / edram_fotogramas_,
++              double(edram_estencil_pasadas_) / edram_fotogramas_, double(edram_pixeles_) / edram_fotogramas_ / 1e6,
++              double(edram_borrados_) / edram_fotogramas_, edram_sin_soporte_);
++  edram_fotogramas_ = 0;
++  edram_transferencias_ = edram_pixeles_ = edram_sin_soporte_ = edram_borrados_ = edram_estencil_pasadas_ = 0;
++}
++
++}  // namespace rex::x360

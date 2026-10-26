@@ -1,0 +1,83 @@
+--- a/src/filesystem/devices/stfs_container_file.cpp
++++ b/src/filesystem/devices/stfs_container_file.cpp
+@@ -14,7 +14,10 @@
+ #include <rex/filesystem/devices/stfs_container_file.h>
+ 
+ #include <algorithm>
++#include <array>
+ #include <cmath>
++#include <cstring>
++#include <vector>
+ 
+ #include <rex/math.h>
+ 
+@@ -30,12 +33,56 @@
+ }
+ 
+ // The data files are shared FILE*s of the device, read with a seek then a read: two threads reading at once (the game
+-// streams on several) could each read from where the other one seeked. One read at a time, for every package.
+-static std::mutex g_stfs_read_mutex;
++// streams on several) could each read from where the other one seeked. Each FILE* is read under the lock of its
++// read-ahead window (one of kVentanas, chosen by the FILE*), so reads of different data files no longer wait for each
++// other, as they did behind one lock for every package.
++//
++// GTA IV's Games on Demand package (SVOD) is streamed in 32 KB reads, ~70 % of them right after the previous one; each
++// was a seek and a read on the SD card, 20-30 ms on average with the other streams queued behind the one lock (run61:
++// textures and models arrived when the player was already on them). A window keeps the last 1 MB read from its file:
++// a following read is a copy, and the card sees one read per megabyte. Reads of 512 KB or more go straight through.
++namespace {
++constexpr size_t kVentanas = 8;
++constexpr size_t kTamVentana = size_t(1) << 20;
++constexpr size_t kLecturaDirecta = size_t(512) << 10;
++struct Ventana {
++  std::mutex candado;
++  FILE* archivo = nullptr;
++  uint64_t inicio = 0;
++  size_t tam = 0;
++  std::vector<uint8_t> datos;
++};
++std::array<Ventana, kVentanas> g_ventanas;
+ 
++Ventana& VentanaDe(FILE* archivo) {
++  const uint64_t h = uint64_t(reinterpret_cast<uintptr_t>(archivo)) * 0x9E3779B97F4A7C15ull;
++  return g_ventanas[size_t(h >> 61) % kVentanas];
++}
++
++size_t Leer(FILE* archivo, uint64_t pos, uint8_t* destino, size_t n) {
++  Ventana& v = VentanaDe(archivo);
++  std::lock_guard<std::mutex> lock(v.candado);
++  if (v.archivo == archivo && pos >= v.inicio && pos + n <= v.inicio + v.tam) {
++    std::memcpy(destino, v.datos.data() + (pos - v.inicio), n);
++    return n;
++  }
++  if (n >= kLecturaDirecta) {
++    rex::filesystem::Seek(archivo, int64_t(pos), SEEK_SET);
++    return fread(destino, 1, n, archivo);
++  }
++  v.datos.resize(kTamVentana);
++  rex::filesystem::Seek(archivo, int64_t(pos), SEEK_SET);
++  v.tam = fread(v.datos.data(), 1, kTamVentana, archivo);
++  v.archivo = archivo;
++  v.inicio = pos;
++  const size_t copiados = std::min(n, v.tam);
++  std::memcpy(destino, v.datos.data(), copiados);
++  return copiados;
++}
++}  // namespace
++
+ X_STATUS StfsContainerFile::ReadSync(std::span<uint8_t> buffer, size_t byte_offset,
+                                      size_t* out_bytes_read) {
+-  std::lock_guard<std::mutex> lock(g_stfs_read_mutex);
+   if (byte_offset >= entry_->size()) {
+     return X_STATUS_END_OF_FILE;
+   }
+@@ -57,8 +104,7 @@
+     size_t read_length = std::min(record.length - read_offset, remaining_length);
+ 
+     auto& file = entry_->files()->at(record.file);
+-    rex::filesystem::Seek(file, record.offset + read_offset, SEEK_SET);
+-    auto num_read = fread(p, 1, read_length, file);
++    auto num_read = Leer(file, record.offset + read_offset, p, read_length);
+ 
+     *out_bytes_read += num_read;
+     p += num_read;

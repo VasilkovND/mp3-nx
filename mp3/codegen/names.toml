@@ -1,0 +1,10 @@
+# Names for the functions the Switch code hooks, added to the manifest by tools/codegen.sh (Title Update 6 addresses,
+# disc 1). Each name turns on its hook (CMakeLists.txt defines MP3_TIENE_<name>): GTA IV's hooks (src/) are written for
+# GTA IV's functions and wait here until Max Payne 3's counterpart is found and checked against them. Names carry the
+# mp3_ prefix: the SDK defines __imp__ stubs for many XDK names (D3DDevice_Create*Shader ...).
+#
+# Wanted first, in the order GTA IV needed them (gta4/PORTING.md):
+#   mp3_D3DDevice_BeginTiling          predicated tiling off (src/mp3_tiling.cpp): without it only the first band
+#   mp3_D3DDevice_CreateVertexShader   the shader dump (src/mp3_shader_dump.cpp)
+#   mp3_D3DDevice_CreatePixelShader
+#   mp3_SpinLockAcquire, mp3_D3D_WaitStep, mp3_D3D_QueryFramesInFlight   spin waits that take cores (src/mp3_perf_hooks.cpp)

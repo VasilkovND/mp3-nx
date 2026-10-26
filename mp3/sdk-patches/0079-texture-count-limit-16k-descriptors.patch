@@ -1,0 +1,68 @@
+--- a/src/x360/deko/texturas.cpp
++++ b/src/x360/deko/texturas.cpp
+@@ -38,6 +38,9 @@
+                      "2, 4, 8 o 16 = mas nitido de lado, algo mas de GPU")
+     .range(0, 16)
+     .lifecycle(rex::cvar::Lifecycle::kInitOnly);
++REXCVAR_DEFINE_INT32(x360_texturas_max, 6000, "X360",
++                     "Por encima de tantas texturas en la cache se sueltan las que llevan 120 fotogramas sin usarse, hasta "
++                     "el 75 %: cada una ocupa descriptores de imagen (16384), que se acababan antes que los MB");
+ REXCVAR_DEFINE_INT32(nfsmw_nativo_texturas_mb_max, 512, "NFSMW",
+                      "Renderizador nativo: MB de la cache de texturas antes de soltar las que no se usan desde hace "
+                      "120 fotogramas (hasta quedar en el 75 %)")
+@@ -214,6 +217,11 @@
+   }
+   if (siguiente_descriptor_ < nucleo_.config().descriptores_imagen) {
+     return siguiente_descriptor_++;
++  }
++  // Slot 0 is the empty texture: whatever samples this one is drawn black.
++  if (!sin_descriptores_avisado_) {
++    sin_descriptores_avisado_ = true;
++    REXLOG_WARN("[deko3d] sin descriptores de imagen libres ({} texturas vivas): se usa la textura vacia", texturas_.size());
+   }
+   return 0;
+ }
+@@ -1135,12 +1143,17 @@
+ // addresses: without a limit the cache grew ~20 MB every 40 s of racing (docs/native-renderer.md).
+ void RenderDk::SoltarTexturasSiHaceFalta() {
+   const uint64_t limite = uint64_t(REXCVAR_GET(nfsmw_nativo_texturas_mb_max)) << 20;
+-  if (bytes_texturas_ <= limite) {
++  // Also by count (x360_texturas_max): each texture holds image descriptors, which run out before the megabytes do
++  // (GTA IV: 9230 textures in 216 MB after four minutes, 8192 descriptors).
++  const size_t limite_cantidad = size_t(std::max(REXCVAR_GET(x360_texturas_max), 256));
++  if (bytes_texturas_ <= limite && texturas_.size() <= limite_cantidad) {
+     return;
+   }
+-  const uint64_t objetivo = limite / 4 * 3;
++  const uint64_t objetivo = bytes_texturas_ > limite ? limite / 4 * 3 : bytes_texturas_;
++  const size_t objetivo_cantidad = texturas_.size() > limite_cantidad ? limite_cantidad / 4 * 3 : texturas_.size();
+   uint64_t soltadas = 0, bytes = 0;
+-  for (auto it = texturas_.begin(); it != texturas_.end() && bytes_texturas_ > objetivo;) {
++  for (auto it = texturas_.begin();
++       it != texturas_.end() && (bytes_texturas_ > objetivo || texturas_.size() > objetivo_cantidad);) {
+     TexturaDk& t = it->second;
+     if (t.fotograma != UINT64_MAX && t.fotograma + kFotogramasSinUsoParaSoltar < fotograma_) {
+       bytes_texturas_ -= t.bytes;
+--- a/src/x360/deko/destinos.cpp
++++ b/src/x360/deko/destinos.cpp
+@@ -486,7 +486,9 @@
+   config.kb_previos = 512;
+   config.mb_codigo = 16;
+   config.mb_trozo_imagenes = 32;
+-  config.descriptores_imagen = 8192;
++  // GTA IV keeps 9000+ textures alive after a few minutes in the city (run45): with 8192 slots the new ones got slot 0,
++  // the empty texture, and buildings came out black. 32 bytes each.
++  config.descriptores_imagen = 16384;
+   config.descriptores_sampler = 1024;
+   nucleo_.Crear(proveedor_.dispositivo(), config);
+   nucleo_.al_atascarse = [this](uint64_t trabajo) { VolcarNovedades(trabajo); };
+--- a/include/rex/x360/deko/render.h
++++ b/include/rex/x360/deko/render.h
+@@ -747,6 +747,7 @@
+   std::unordered_map<uint64_t, uint32_t> vistas_;                  // (serie, swizzles) -> descriptor
+   std::unordered_map<uint64_t, std::vector<uint64_t>> vistas_por_serie_;
+   std::vector<uint32_t> descriptores_libres_;
++  bool sin_descriptores_avisado_ = false;
+   std::vector<std::vector<uint32_t>> descriptores_por_liberar_;  // per work slot
+   uint32_t siguiente_descriptor_ = 8;
+   std::unordered_map<uint64_t, uint32_t> samplers_;  // key -> descriptor

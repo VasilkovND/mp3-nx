@@ -1,0 +1,95 @@
+--- a/src/core/threading_switch.h
++++ b/src/core/threading_switch.h
+@@ -166,6 +166,13 @@
+  */
+ bool RexSwitchPinCurrentThreadToCore(int core);
+ 
++/*
++ * Preferred core of the current thread among all of the process's cores (its mask widened to the process's: libnx
++ * creates threads without core 3 even when the process has it). For core 3 when an exheader override gives it to the
++ * process; false (nothing changed) when the process does not have that core.
++ */
++bool RexSwitchPreferProcessCore(int core);
++
+ /* Which core the calling thread is running on right now. It can only be asked about oneself. */
+ int RexSwitchCurrentCore(void);
+ 
+--- a/src/core/threading_switch.cpp
++++ b/src/core/threading_switch.cpp
+@@ -274,6 +274,18 @@
+  * Returns false if the kernel does not accept it (for example if the core is not in the process
+  * mask: that is the "Too few processor cores" error seen when trying to use the fourth core).
+  */
++bool RexSwitchPreferProcessCore(int core) {
++  u64 proceso = 0;
++  if (core < 0 || R_FAILED(svcGetInfo(&proceso, InfoType_CoreMask, CUR_PROCESS_HANDLE, 0)) ||
++      (proceso & (u64(1) << core)) == 0) {
++    return false;
++  }
++  Thread* yo = threadGetSelf();
++  const Handle h = (yo != nullptr) ? yo->handle : CUR_THREAD_HANDLE;
++  return R_SUCCEEDED(svcSetThreadCoreMask(h, core, proceso)) ||
++         R_SUCCEEDED(svcSetThreadCoreMask(CUR_THREAD_HANDLE, core, proceso));
++}
++
+ bool RexSwitchSetCurrentThreadCore(int core) {
+   Thread* yo = threadGetSelf();
+   Handle h = (yo != nullptr) ? yo->handle : CUR_THREAD_HANDLE;
+--- a/src/audio/xma_decoder.cpp
++++ b/src/audio/xma_decoder.cpp
+@@ -21,6 +21,12 @@
+ #include <rex/string/buffer.h>
+ #include <rex/system/function_dispatcher.h>
+ #include <rex/system/thread_state.h>
++#if REX_PLATFORM_SWITCH
++#include "../core/threading_switch.h"
++#endif
++
++REXCVAR_DEFINE_BOOL(audio_hilos_nucleo3, true, "Audio",
++                    "Los hilos XMA Decoder y Audio Worker prefieren el nucleo 3 si el proceso lo tiene");
+ #include <rex/system/xthread.h>
+ 
+ #include <atomic>
+@@ -161,6 +167,13 @@
+   assert_not_null(work_event_);
+   worker_thread_ = system::object_ref<system::XHostThread>(
+       new system::XHostThread(kernel_state, 128 * 1024, 0, [this]() {
++#if REX_PLATFORM_SWITCH
++        // With core 3 in the process (an exheader override), the audio threads prefer it: GTA IV's mixer runs
++        // there, and the XMA decoder took 30 % of the three cores the frame's threads share (run49).
++        if (REXCVAR_GET(audio_hilos_nucleo3)) {
++          RexSwitchPreferProcessCore(3);
++        }
++#endif
+         WorkerThreadMain();
+         return 0;
+       }));
+--- a/src/audio/audio_system.cpp
++++ b/src/audio/audio_system.cpp
+@@ -19,6 +19,12 @@
+ #include <rex/math.h>
+ #include <rex/memory/ring_buffer.h>
+ #include <rex/platform.h>
++#include <rex/cvar.h>
++#if REX_PLATFORM_SWITCH
++#include "../core/threading_switch.h"
++#endif
++
++REXCVAR_DECLARE(bool, audio_hilos_nucleo3);  // xma_decoder.cpp
+ #include <rex/stream.h>
+ #include <rex/string/buffer.h>
+ #include <rex/system/thread_state.h>
+@@ -96,6 +102,13 @@
+   worker_running_ = true;
+   worker_thread_ = system::object_ref<system::XHostThread>(
+       new system::XHostThread(kernel_state, 128 * 1024, 0, [this]() {
++#if REX_PLATFORM_SWITCH
++        // With core 3 in the process (an exheader override), the audio threads prefer it: GTA IV's mixer runs
++        // there, and the XMA decoder took 30 % of the three cores the frame's threads share (run49).
++        if (REXCVAR_GET(audio_hilos_nucleo3)) {
++          RexSwitchPreferProcessCore(3);
++        }
++#endif
+         WorkerThreadMain();
+         return 0;
+       }));

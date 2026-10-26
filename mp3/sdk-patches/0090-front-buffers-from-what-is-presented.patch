@@ -1,0 +1,26 @@
+--- a/src/x360/deko/destinos.cpp
++++ b/src/x360/deko/destinos.cpp
+@@ -2701,13 +2701,22 @@
+     // from an address the Swap's fetch constant does not point at, so the exact lookup finds nothing and the
+     // screen stays black even though a frame was resolved. Show the most-recently written resolved frame
+     // instead. Titles whose frontbuffer base matches a resolve (NFS) find origen above and never reach this.
+-    uint32_t mejor_version = 0;
++    uint32_t mejor_version = 0, base_mejor = 0;
+     for (auto& par : resueltas_) {
+       if (par.second.escrita && par.second.imagen.version >= mejor_version) {
+         mejor_version = par.second.imagen.version;
+         origen = &par.second.imagen;
++        base_mejor = par.first;
+       }
+     }
++    // GTA IV's Swaps do not carry its front buffer in fetch constant 0: the address presented this way is one
++    // (x360_edram_frontal_sin_borrados).
++    if (base_mejor && std::find(frontales_.begin(), frontales_.end(), base_mejor) == frontales_.end()) {
++      std::rotate(frontales_.begin(), frontales_.end() - 1, frontales_.end());
++      frontales_[0] = base_mejor;
++      REXLOG_INFO("[deko3d] frontal presentado sin la direccion del Swap: {:08X} (el Swap dio {:08X})", base_mejor,
++                  base);
++    }
+   }
+   const uint32_t ancho_origen = desde_destino ? frontal_.ancho : (origen ? origen->ancho : 0);
+   const uint32_t alto_origen = desde_destino ? frontal_.alto : (origen ? origen->alto : 0);

@@ -1,0 +1,16 @@
+The shader compiler thread back at priority 0x3B, the lowest a homebrew thread may have: 0x3E failed threadCreate.
+
+--- a/src/ui/deko3d/compilador.cpp
++++ b/src/ui/deko3d/compilador.cpp
+@@ -16,9 +16,8 @@
+ 
+ namespace {
+ constexpr size_t kPila = 8u << 20;
+-// Below the game's threads (0x2C-0x3B): the background compiles of run37 (about 1 s of CPU each, 19 of them) took
+-// 43-48 % of a core for 30 s from the game on three busy cores.
+-constexpr int kPrioridad = 0x3E;
++// The lowest a homebrew thread may have (0x3B; 0x3E failed threadCreate and the game aborted at start, run38).
++constexpr int kPrioridad = 0x3B;
+ 
+ // A shader that uses what the game's do (a UBO, a texture, a dynamic loop), to know at start that uam works here.
+ constexpr char kAutoprueba[] = R"(#version 460

@@ -1,0 +1,47 @@
+--- a/include/rex/x360/xenos.h
++++ b/include/rex/x360/xenos.h
+@@ -82,6 +82,44 @@
+   uint8_t* const destino = t.destino;
+   const uint32_t palabras = t.palabras;
+   const rex::graphics::xenos::Endian orden = t.orden;
++#if defined(__aarch64__)
++  // The loops below compiled to one word per iteration (ldr, rev, str): the hottest instruction of the ring thread
++  // in GTA IV (run44, ~10 % of a core at 3000 draws a frame). 64 bytes per iteration with NEON, the rest as below.
++  {
++    using rex::graphics::xenos::Endian;
++    uint32_t i = 0;
++    const uint32_t bloques = palabras & ~15u;
++    if (orden == Endian::k8in32 || orden == Endian::k8in16 || orden == Endian::k16in32 || orden == Endian::kNone) {
++      for (; i < bloques; i += 16) {
++        uint8x16x4_t v = vld1q_u8_x4(origen + size_t(i) * 4);
++        if (orden == Endian::k8in32) {
++          v.val[0] = vrev32q_u8(v.val[0]);
++          v.val[1] = vrev32q_u8(v.val[1]);
++          v.val[2] = vrev32q_u8(v.val[2]);
++          v.val[3] = vrev32q_u8(v.val[3]);
++        } else if (orden == Endian::k8in16) {
++          v.val[0] = vrev16q_u8(v.val[0]);
++          v.val[1] = vrev16q_u8(v.val[1]);
++          v.val[2] = vrev16q_u8(v.val[2]);
++          v.val[3] = vrev16q_u8(v.val[3]);
++        } else if (orden == Endian::k16in32) {
++          v.val[0] = vreinterpretq_u8_u16(vrev32q_u16(vreinterpretq_u16_u8(v.val[0])));
++          v.val[1] = vreinterpretq_u8_u16(vrev32q_u16(vreinterpretq_u16_u8(v.val[1])));
++          v.val[2] = vreinterpretq_u8_u16(vrev32q_u16(vreinterpretq_u16_u8(v.val[2])));
++          v.val[3] = vreinterpretq_u8_u16(vrev32q_u16(vreinterpretq_u16_u8(v.val[3])));
++        }
++        vst1q_u8_x4(destino + size_t(i) * 4, v);
++      }
++    }
++    for (; i < palabras; ++i) {
++      uint32_t v;
++      std::memcpy(&v, origen + size_t(i) * 4, 4);
++      v = rex::graphics::xenos::GpuSwap(v, orden);
++      std::memcpy(destino + size_t(i) * 4, &v, 4);
++    }
++    return;
++  }
++#endif
+   if (orden == rex::graphics::xenos::Endian::k8in32) {
+     for (uint32_t i = 0; i < palabras; ++i) {
+       uint32_t v;

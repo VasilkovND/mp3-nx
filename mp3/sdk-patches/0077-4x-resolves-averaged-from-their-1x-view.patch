@@ -1,0 +1,199 @@
+--- a/src/x360/deko/destinos.cpp
++++ b/src/x360/deko/destinos.cpp
+@@ -313,7 +313,14 @@
+ } copia;
+ layout(location = 0) out vec4 color;
+ void main() {
+-  color = texelFetch(origen, ivec2(gl_FragCoord.xy) + copia.desplazamiento.xy, 0) * copia.escala;
++  ivec2 p = ivec2(gl_FragCoord.xy) + copia.desplazamiento.xy;
++  if (copia.modos.y == 1) {  // a 4x view's resolve from the 1x view that holds its samples: their average
++    p *= 2;
++    color = (texelFetch(origen, p, 0) + texelFetch(origen, p + ivec2(1, 0), 0) + texelFetch(origen, p + ivec2(0, 1), 0) +
++             texelFetch(origen, p + ivec2(1, 1), 0)) * 0.25 * copia.escala;
++    return;
++  }
++  color = texelFetch(origen, p, 0) * copia.escala;
+ }
+ )";
+ // A color target's EDRAM bits as the color they hold (for a clear given as raw bits).
+@@ -358,12 +365,24 @@
+   vec4 escala;
+ } copia;
+ layout(location = 0) out vec4 color;
++vec4 Limitado(vec4 t, vec4 tope) {
++  return vec4(greaterThan(t, vec4(0.0))) * min(t, tope);  // NaN compares false: 0
++}
+ void main() {
+-  vec4 t = texelFetch(origen, ivec2(gl_FragCoord.xy) + copia.desplazamiento.xy, 0);
++  ivec2 p = ivec2(gl_FragCoord.xy) + copia.desplazamiento.xy;
+   // modos.x = 1: a k_32_FLOAT target, finite and not negative but without the 7e3 ceiling.
+   vec4 tope = copia.modos.x == 1 ? vec4(3.0e38) : vec4(31.875, 31.875, 31.875, 1.0);
+   // Clamped in EDRAM units, then the resolve's exponent bias (Gears of War 2: scene x 8 in EDRAM, resolved with -3).
+-  color = vec4(greaterThan(t, vec4(0.0))) * min(t, tope) * copia.escala;  // NaN compares false: 0
++  // modos.y = 1: a 4x view's resolve from the 1x view that holds its samples: each clamped (as EDRAM keeps them), then
++  // averaged.
++  if (copia.modos.y == 1) {
++    p *= 2;
++    color = (Limitado(texelFetch(origen, p, 0), tope) + Limitado(texelFetch(origen, p + ivec2(1, 0), 0), tope) +
++             Limitado(texelFetch(origen, p + ivec2(0, 1), 0), tope) +
++             Limitado(texelFetch(origen, p + ivec2(1, 1), 0), tope)) * 0.25 * copia.escala;
++    return;
++  }
++  color = Limitado(texelFetch(origen, p, 0), tope) * copia.escala;
+ }
+ )";
+ // The same copy with each channel's TextureSign applied: 1 reads the 8-bit value as signed, 2 as biased (2x - 1).
+@@ -794,7 +813,7 @@
+ 
+ bool RenderDk::Copiar3D(const ImagenDk& origen, uint32_t x0, uint32_t y0, uint32_t ancho, uint32_t alto,
+                         ImagenDk& destino, uint32_t dx, uint32_t dy, const int32_t* modos_signo, bool limitar_7e3,
+-                        float escala, bool solo_finito) {
++                        float escala, bool solo_finito, bool reducir2x2) {
+   const bool z = destino.profundidad;
+   limitar_7e3 = limitar_7e3 && !z && !modos_signo && fs_copia_7e3_valido_;
+   if (!vs_salida_valido_ || !(z ? fs_copia_profundidad_valido_ : fs_copia_color_valido_) ||
+@@ -812,7 +831,7 @@
+   if (modos_signo) {
+     std::memcpy(ubo.cpu + sizeof(desplazamiento), modos_signo, 4 * sizeof(int32_t));
+   } else {
+-    const int32_t modos[4] = {solo_finito ? 1 : 0, 0, 0, 0};
++    const int32_t modos[4] = {solo_finito ? 1 : 0, reducir2x2 ? 1 : 0, 0, 0};
+     std::memcpy(ubo.cpu + sizeof(desplazamiento), modos, sizeof(modos));
+   }
+   const float escalas[4] = {escala, escala, escala, escala};
+@@ -1401,7 +1420,10 @@
+     REXLOG_INFO("[edram-diag] resolve desde {} ({},{})-({},{}) -> {:08X}{}{}", Vista(*destino_render), x0, y0, x1, y1,
+                 reg.rb_copy_dest_base, copiar ? "" : " (sin copia)", borrar_color ? ", borra el color" : "");
+   }
+-  if (copiar) {
++  // A 4x view whose samples one 1x view holds is resolved from it (x360_edram_reduccion_directa), not prepared.
++  ImagenDk* reducida = copiar && y1 > 0 && x0 >= 0 && y0 >= 0 ? EdramVistaReducible(*destino_render, uint32_t(y1))
++                                                              : nullptr;
++  if (copiar && !reducida) {
+     EdramPreparar(*destino_render, uint32_t(y1));  // another view of these tiles may have drawn them since
+   }
+   DkCmdBuf cmd = nucleo_.comandos();
+@@ -1486,6 +1508,17 @@
+                            !encoger &&
+                            !se_lee && x0 == 0 && y0 == 0 && dx == 0 && dy == 0 && ancho == resuelta->imagen.ancho &&
+                            alto == resuelta->imagen.alto;
++      // The copy engine paths and the lazy front buffer read the 4x view itself: it is prepared after all.
++      if (reducida && (encoger || se_lee || frontal)) {
++        EdramPreparar(*destino_render, uint32_t(y1));
++        reducida = nullptr;
++      }
++      if (reducida) {
++        RestaurarContenido(*reducida, true);
++        HacerBorradoPendiente(*reducida);
++        CompletarBanda(*reducida, std::min(reducida->alto, 2 * uint32_t(y1)), false, 0);
++        ++resolves_reducidos_;
++      }
+       // What the resolve reads must be there: the useful area grows to it, a pending clear is done, the band too.
+       if (y1 > 0) {
+         destino_render->alto_usado =
+@@ -1512,14 +1545,15 @@
+         // back: GTA IV's luminance chain is mostly such small resolves (80x45 down to the 8x1 exposure).
+         const bool sanear_f14 = formato_color == 14 && REXCVAR_GET(x360_f14_sanear);
+         if (encoger || (se_lee && sesgo_exp == 0 && !sanear_f14) ||
+-            !Copiar3D(*destino_render, uint32_t(x0), uint32_t(y0), ancho, alto, resuelta->imagen, dx, dy, nullptr,
++            !Copiar3D(reducida ? *reducida : *destino_render, uint32_t(x0), uint32_t(y0), ancho, alto, resuelta->imagen,
++                      dx, dy, nullptr,
+                       formato_color == 3 || formato_color == 12 ||
+                           (formato_color == 14 && REXCVAR_GET(x360_f14_sanear)),
+                       escala_exp,
+                       // k_32_FLOAT: only NaN, infinities and negatives out. Capped at 7e3's 31.875 (run39), a bright
+                       // scene's luminance (up to 63 and more) read low, the exposure came out too high and the frame
+                       // bleached.
+-                      formato_color == 14)) {
++                      formato_color == 14, reducida != nullptr)) {
+           MarcarGpu(kGpuCopias);
+           PerfilCopia(encoger ? "motor de copias encogida" : "motor de copias", destino_render, &resuelta->imagen,
+                       ancho, alto);
+@@ -2822,15 +2856,16 @@
+       "[deko3d] por fotograma: GPU sombras {:.2f} ms, escena {:.2f}, reflejo {:.2f}, 320 {:.2f}, menores {:.2f}, copias "
+       "{:.2f}, borrados {:.2f}, resto {:.2f}, escena sin profundidad {:.2f}, GPU parada entre trabajos {:.2f}; el anillo "
+       "espero a la GPU {:.2f} ms; borrados saltados {:.1f}; dibujos con Z temprana {:.0f}; ZCULL invalidado por otra prueba {:.1f}; stencil de transferencias aplazado "
+-      "{} (hecho {}, descartado {}), pases ampliados {}, pases sin transferir {} y dibujos con alfa a cobertura {} "
+-      "en total",
++      "{} (hecho {}, descartado {}), pases ampliados {}, pases sin transferir {}, resolves 4x promediados de su vista 1x {} y "
++      "dibujos con alfa a cobertura {} en total",
+       ms(kGpuSombras), ms(kGpuEscena), ms(kGpuReflejo), ms(kGpu320), ms(kGpuMenores), ms(kGpuCopias), ms(kGpuBorrados),
+       ms(kGpuOtros), ms(kGpuEscenaSinProfundidad), ms(kGpuHuecoEntreTrabajos),
+       double(nucleo_.NsEsperandoValla() - informe_espera_ns_) / 1e6 / fotogramas,
+       double(borrados_saltados_ - informe_saltados_) / fotogramas,
+       double(dibujos_z_temprana_ - informe_z_temprana_) / fotogramas,
+       double(zcull_invalidaciones_ - informe_zcull_) / fotogramas, estencil_aplazados_, estencil_ejecutados_,
+-      estencil_descartados_, pases_ampliados_, pases_sin_transferir_, dibujos_alfa_a_cobertura_);
++      estencil_descartados_, pases_ampliados_, pases_sin_transferir_, resolves_reducidos_,
++      dibujos_alfa_a_cobertura_);
+   const auto us = [&](uint32_t e) { return dibujos ? double(ns_etapas_[e] - informe_etapas_[e]) / double(dibujos) / 1e3 : 0.0; };
+   static constexpr const char* kFasesSm[3] = {"mirando", "APLICANDO", "apagada"};
+   X360_INFORME(
+--- a/src/x360/deko/edram.cpp
++++ b/src/x360/deko/edram.cpp
+@@ -47,6 +47,10 @@
+ REXCVAR_DEFINE_BOOL(x360_edram_z_por_color, true, "X360",
+                     "Un pase con color de 8 bits y profundidad en la misma base escribe la profundidad como color "
+                     "(GTA IV la restaura asi para las luces): la profundidad recibe la ultima resuelta de esa base");
++REXCVAR_DEFINE_BOOL(x360_edram_reduccion_directa, true, "X360",
++                    "Un resolve desde una vista 4x cuyas tejas tiene una vista 1x del doble de pitch (GTA IV reduce su "
++                    "escena a 640x360 asi) promedia 2x2 texeles de esa vista, como el resolve de la Xenos promedia las "
++                    "muestras, en vez de transferir a la vista 4x una de cada cuatro");
+ REXCVAR_DEFINE_BOOL(x360_edram_estencil_perezoso, true, "X360",
+                     "Las pasadas de stencil de una transferencia de profundidad hecha al empezar un pase esperan: se "
+                     "hacen antes del primer dibujo del pase que usa el stencil o si el pase escribe la vista; si no, la "
+@@ -354,7 +358,31 @@
+     t.borrada = borrado != nullptr;
+     if (borrado) std::copy(borrado, borrado + 4, t.valor);
+     vista.edram_versiones[k] = version;
++  }
++}
++
++// A 4x view resolved from tiles that one 1x view of the same base, format and twice the pitch holds, all of them
++// current (x360_edram_reduccion_directa): that view, whose 2x2 pixels are the 4x view's samples, or nullptr. GTA IV
++// halves its scene that way (the 1280x720 target read as 640x360 4x and resolved): the resolve averages the 2x2 texels
++// straight from it, as the Xenos resolve averages the samples, instead of a transfer that kept one of the four.
++ImagenDk* RenderDk::EdramVistaReducible(const ImagenDk& vista, uint32_t filas) {
++  if (!EdramActiva() || !REXCVAR_GET(x360_edram_reduccion_directa) || vista.profundidad || vista.edram_msaa != 2 ||
++      vista.edram_bpp != 4 || vista.edram_versiones.empty()) {
++    return nullptr;
+   }
++  const uint32_t n = TejasDeFilas(vista, std::min(filas, vista.alto));
++  ImagenDk* dueno = nullptr;
++  for (uint32_t k = 0; k < n; ++k) {
++    ImagenDk* d = tejas_color_[(vista.edram_base + k) & (kTejas - 1)].dueno;
++    if (!d || (dueno && d != dueno)) return nullptr;
++    dueno = d;
++  }
++  if (!dueno || dueno == &vista || dueno->edram_msaa != 0 || dueno->edram_base != vista.edram_base ||
++      dueno->edram_pitch != 2 * vista.edram_pitch || dueno->edram_formato != vista.edram_formato ||
++      dueno->formato != vista.formato || dueno->alto < 2 * std::min(filas, vista.alto)) {
++    return nullptr;
++  }
++  return dueno;
+ }
+ 
+ void RenderDk::EdramCerrarPase() {
+--- a/include/rex/x360/deko/render.h
++++ b/include/rex/x360/deko/render.h
+@@ -272,7 +272,9 @@
+   bool Copiar3D(const ImagenDk& origen, uint32_t x0, uint32_t y0, uint32_t ancho, uint32_t alto, ImagenDk& destino,
+                 uint32_t dx, uint32_t dy, const int32_t* modos_signo = nullptr, bool limitar_7e3 = false,
+                 float escala = 1.0f,  // 2^copy_dest_exp_bias (RB_COPY_DEST_INFO bits 16-21)
+-                bool solo_finito = false);  // limitar_7e3 without the 31.875 ceiling (k_32_FLOAT)
++                bool solo_finito = false,   // limitar_7e3 without the 31.875 ceiling (k_32_FLOAT)
++                bool reducir2x2 = false);   // each destination texel the average of 2x2 source texels (x0, y0 halved)
++  ImagenDk* EdramVistaReducible(const ImagenDk& vista, uint32_t filas);
+   bool rop_sin_barrera_ = true;
+   bool copia3d_pendiente_ = false;
+   // The 3D copies since the last barrier: the images they wrote and read (series). Another copy needs a barrier only
+@@ -600,7 +602,8 @@
+   bool dibujo_usa_estencil_ = false;  // the draw that begins the pass tests or writes the stencil: no deferring
+   uint64_t dibujos_alfa_a_cobertura_ = 0;
+   bool dibujo_opaco_completo_ = false;  // the draw that begins the pass paints its color targets whole (x360_edram_saltar_muertas)
+-  uint64_t pases_sin_transferir_ = 0;  // draws with alpha to coverage, drawn with an alpha test (x360_alfa_a_cobertura)
++  uint64_t pases_sin_transferir_ = 0;
++  uint64_t resolves_reducidos_ = 0;  // 4x resolves averaged from their 1x view (x360_edram_reduccion_directa)  // draws with alpha to coverage, drawn with an alpha test (x360_alfa_a_cobertura)
+   // The DKSH of a library shader for that specialization value (masked) and, for a vertex shader, the
+   // interpolators it keeps. nullptr if it cannot be had (logged once).
+   // `variante_ps` (pixel shaders): kVariante* flags (nfsmw_dk_dibujos.cpp), part of the DKSH cache key; 0 is the

@@ -1,0 +1,51 @@
+--- a/src/x360/deko/destinos.cpp
++++ b/src/x360/deko/destinos.cpp
+@@ -29,6 +29,9 @@
+ #include <rex/x360/deko/render.h>
+ 
+ REXCVAR_DECLARE(bool, nfsmw_dk_tiles_en_pantalla);
++REXCVAR_DEFINE_INT32(nfsmw_dk_volcado_pase_desde, 0, "NFSMW", "Volcado de un fotograma: primer pase cuyos destinos se vuelcan");
++REXCVAR_DEFINE_INT32(nfsmw_dk_volcado_pase_hasta, 100000, "NFSMW", "Volcado de un fotograma: ultimo pase cuyos destinos se vuelcan");
++REXCVAR_DEFINE_BOOL(nfsmw_dk_volcado_resueltas, true, "NFSMW", "Volcado de un fotograma: tambien las texturas resueltas");
+ #include <rex/x360/xenos.h>
+ 
+ // Settings of the renderer that the game hooks also read (nfsmw_nativo_ganchos.cpp). The Vulkan build defines them
+@@ -1407,7 +1410,7 @@
+           }
+         }
+         if (volcando_) {
+-          VolcarResuelta(resuelta->imagen, base_resuelta, resuelta->formato_guest);
++          if (REXCVAR_GET(nfsmw_dk_volcado_resueltas)) VolcarResuelta(resuelta->imagen, base_resuelta, resuelta->formato_guest);
+         }
+         if (encoger) {
+           LeerResuelta(reg, resuelta->imagen, x0, y0, dx, dy, cabe_ancho, cabe_alto);
+@@ -1734,7 +1737,7 @@
+   SombraMinimoResueltaEscrita(base);
+   ++copias_;
+   if (volcando_) {
+-    VolcarResuelta(resuelta->imagen, base, resuelta->formato_guest);
++    if (REXCVAR_GET(nfsmw_dk_volcado_resueltas)) VolcarResuelta(resuelta->imagen, base, resuelta->formato_guest);
+   }
+   OlvidarEstado();
+ }
+@@ -2883,6 +2886,9 @@
+ 
+ void RenderDk::VolcarPaseAnterior() {
+   const uint32_t pase = volcado_pases_++;
++  if (int32_t(pase) < REXCVAR_GET(nfsmw_dk_volcado_pase_desde) || int32_t(pase) > REXCVAR_GET(nfsmw_dk_volcado_pase_hasta)) {
++    return;
++  }
+   for (uint32_t i = 0; i < 5; ++i) {
+     const ImagenDk* imagen = imagenes_pase_[i];
+     if (!imagen || !claves_pase_previo_[i]) continue;
+@@ -2952,7 +2958,9 @@
+           break;
+         case DkImageFormat_Z24S8:
+           t[0] = float(v & 0xFFFFFF);  // normalized below by the image's range
+-          t[3] = float(v >> 24) / 255.0f;
++          // The stencil in the _alfa image: 0 black, any other value at least a quarter grey.
++          t[3] = (v >> 24) ? 0.25f + float(v >> 24) / 340.0f : 0.0f;
++          alfa = true;
+           break;
+         default:
+           break;

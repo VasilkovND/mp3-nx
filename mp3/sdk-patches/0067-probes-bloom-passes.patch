@@ -1,0 +1,36 @@
+Diagnostic frame: texel probes at three points of the bloom and downsample passes (PS n119, n851, n1089, n642, n490),
+the target after the draw and the first texture at the same relative points.
+
+--- a/src/x360/deko/dibujos.cpp
++++ b/src/x360/deko/dibujos.cpp
+@@ -2459,6 +2459,30 @@
+       SondarTexel(*imagenes_pase_[0], tijera.x, tijera.y,
+                   fmt::format("tras el dibujo del PS n{} ({}x{} en {},{})", ps->numero, tijera.width, tijera.height,
+                               tijera.x, tijera.y));
++    }
++    // The bloom and downsample passes (run37: the 320x180 copy of a bright scene came out nearly black): the target at
++    // three points of the scissor right after the draw, and the first texture at the same relative points.
++    if (edram_diag_ && ps && imagenes_pase_[0] && tijera.width > 8 &&
++        (ps->numero == 119 || ps->numero == 851 || ps->numero == 1089 || ps->numero == 642 || ps->numero == 490)) {
++      static constexpr float kPuntos[3][2] = {{0.5f, 0.5f}, {0.25f, 0.75f}, {0.75f, 0.3f}};
++      const ImagenDk* sonda_textura0_ = nullptr;
++      if (!ps->samplers.empty() && ps->samplers[0].registro < 32) {
++        const uint32_t* f0 = r + kRegFetch + uint32_t(ps->samplers[0].registro) * 6;
++        sonda_textura0_ = TexturaResuelta(((f0[1] >> 12) << 12) & 0x1FFFFFFF, (f0[2] & 0x1FFF) + 1,
++                                          ((f0[2] >> 13) & 0x1FFF) + 1);
++      }
++      for (const auto& pt : kPuntos) {
++        const uint32_t x = tijera.x + uint32_t(float(tijera.width) * pt[0]);
++        const uint32_t y = tijera.y + uint32_t(float(tijera.height) * pt[1]);
++        SondarTexel(*imagenes_pase_[0], x, y, fmt::format("PS n{} destino ({},{})", ps->numero, x, y));
++        if (sonda_textura0_) {
++          const uint32_t tx = uint32_t(float(sonda_textura0_->ancho) * pt[0]);
++          const uint32_t ty = uint32_t(float(sonda_textura0_->alto) * pt[1]);
++          SondarTexel(*sonda_textura0_, tx, ty,
++                      fmt::format("PS n{} textura 0 ({}x{}) en ({},{})", ps->numero, sonda_textura0_->ancho,
++                                  sonda_textura0_->alto, tx, ty));
++        }
++      }
+     }
+   }
+   // Black scene diagnostics: the first draw of each pixel shader into a k_2_10_10_10_FLOAT target (Gears of War 2's

@@ -1,0 +1,59 @@
+k_32_FLOAT resolves keep NaN, infinities and negatives out but no longer cap at 7e3's 31.875: a bright scene's
+luminance read low and the exposure bleached the frame.
+
+--- a/include/rex/x360/deko/render.h
++++ b/include/rex/x360/deko/render.h
+@@ -253,7 +253,8 @@
+   // modos_signo (4 ints, per destination channel): 0 copy, 1 signed 8-bit, 2 biased (2x - 1); nullptr: plain copy.
+   bool Copiar3D(const ImagenDk& origen, uint32_t x0, uint32_t y0, uint32_t ancho, uint32_t alto, ImagenDk& destino,
+                 uint32_t dx, uint32_t dy, const int32_t* modos_signo = nullptr, bool limitar_7e3 = false,
+-                float escala = 1.0f);  // 2^copy_dest_exp_bias (RB_COPY_DEST_INFO bits 16-21)
++                float escala = 1.0f,  // 2^copy_dest_exp_bias (RB_COPY_DEST_INFO bits 16-21)
++                bool solo_finito = false);  // limitar_7e3 without the 31.875 ceiling (k_32_FLOAT)
+   bool rop_sin_barrera_ = true;
+   bool copia3d_pendiente_ = false;
+   // The 3D copies since the last barrier: the images they wrote and read (series). Another copy needs a barrier only
+--- a/src/x360/deko/destinos.cpp
++++ b/src/x360/deko/destinos.cpp
+@@ -360,7 +360,8 @@
+ layout(location = 0) out vec4 color;
+ void main() {
+   vec4 t = texelFetch(origen, ivec2(gl_FragCoord.xy) + copia.desplazamiento.xy, 0);
+-  vec4 tope = vec4(31.875, 31.875, 31.875, 1.0);
++  // modos.x = 1: a k_32_FLOAT target, finite and not negative but without the 7e3 ceiling.
++  vec4 tope = copia.modos.x == 1 ? vec4(3.0e38) : vec4(31.875, 31.875, 31.875, 1.0);
+   // Clamped in EDRAM units, then the resolve's exponent bias (Gears of War 2: scene x 8 in EDRAM, resolved with -3).
+   color = vec4(greaterThan(t, vec4(0.0))) * min(t, tope) * copia.escala;  // NaN compares false: 0
+ }
+@@ -779,7 +780,7 @@
+ 
+ bool RenderDk::Copiar3D(const ImagenDk& origen, uint32_t x0, uint32_t y0, uint32_t ancho, uint32_t alto,
+                         ImagenDk& destino, uint32_t dx, uint32_t dy, const int32_t* modos_signo, bool limitar_7e3,
+-                        float escala) {
++                        float escala, bool solo_finito) {
+   const bool z = destino.profundidad;
+   limitar_7e3 = limitar_7e3 && !z && !modos_signo && fs_copia_7e3_valido_;
+   if (!vs_salida_valido_ || !(z ? fs_copia_profundidad_valido_ : fs_copia_color_valido_) ||
+@@ -796,6 +797,9 @@
+   std::memcpy(ubo.cpu, desplazamiento, sizeof(desplazamiento));
+   if (modos_signo) {
+     std::memcpy(ubo.cpu + sizeof(desplazamiento), modos_signo, 4 * sizeof(int32_t));
++  } else {
++    const int32_t modos[4] = {solo_finito ? 1 : 0, 0, 0, 0};
++    std::memcpy(ubo.cpu + sizeof(desplazamiento), modos, sizeof(modos));
+   }
+   const float escalas[4] = {escala, escala, escala, escala};
+   std::memcpy(ubo.cpu + 32, escalas, sizeof(escalas));
+@@ -1497,7 +1501,11 @@
+             !Copiar3D(*destino_render, uint32_t(x0), uint32_t(y0), ancho, alto, resuelta->imagen, dx, dy, nullptr,
+                       formato_color == 3 || formato_color == 12 ||
+                           (formato_color == 14 && REXCVAR_GET(x360_f14_sanear)),
+-                      escala_exp)) {
++                      escala_exp,
++                      // k_32_FLOAT: only NaN, infinities and negatives out. Capped at 7e3's 31.875 (run39), a bright
++                      // scene's luminance (up to 63 and more) read low, the exposure came out too high and the frame
++                      // bleached.
++                      formato_color == 14)) {
+           MarcarGpu(kGpuCopias);
+           PerfilCopia(encoger ? "motor de copias encogida" : "motor de copias", destino_render, &resuelta->imagen,
+                       ancho, alto);

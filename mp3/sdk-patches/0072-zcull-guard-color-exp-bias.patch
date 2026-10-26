@@ -1,0 +1,134 @@
+--- a/src/x360/deko/dibujos.cpp
++++ b/src/x360/deko/dibujos.cpp
+@@ -37,6 +37,14 @@
+                      "Los dibujos con un vertex shader de mas KB de codigo compilado no se graban (los que el compilador "
+                      "desborda: segundos por dibujo); 0 = todos");
+ REXCVAR_DECLARE(bool, x360_volcado_en_vivo);  // destinos.cpp
++REXCVAR_DEFINE_BOOL(x360_sesgo_exp_color, true, "X360",
++                    "Aplica el color_exp_bias de RB_COLOR_INFO: el pixel shader escala lo que escribe en cada destino por "
++                    "2^sesgo (GTA IV acumula las luces en la escena 7e3 a x0.5 y la resuelve a x2)");
++REXCVAR_DEFINE_BOOL(x360_zcull_guardia, true, "X360",
++                    "Invalida el ZCULL de la profundidad enlazada cuando un dibujo prueba la profundidad en la otra "
++                    "direccion (menor contra mayor) o el stencil con otra funcion, referencia o mascara que el anterior: "
++                    "con datos de ZCULL de la otra direccion la GPU descarta o deja pasar bloques de 4x8 pixeles enteros "
++                    "(los cuadritos de GTA IV en los bordes, despues de las luces y las sombras)");
+ 
+ REXCVAR_DEFINE_BOOL(nfsmw_nativo_inv_tamano_tex, true, "NFSMW",
+                     "Renderizador nativo (18/09, build 164): los shaders toman 1/tamano de textura de las "
+@@ -1799,6 +1807,22 @@
+   // vertex -vmin for indices; the index offset for auto-indexed draws), so SV_VertexID counts from it, and the vertex
+   // shaders that read the Xenos vertex index (r0.x: Dead Space 2's particles) add it back.
+   compartidas[122] = vmin;
++  // g_SesgosExpColor (byte 492): each bound target's color_exp_bias (RB_COLORn_INFO bits 20-25), a signed byte per
++  // target; the pixel shader scales its outputs by 2^bias (x360_sesgo_exp_color).
++  if (REXCVAR_GET(x360_sesgo_exp_color)) {
++    uint32_t sesgos = 0;
++    for (uint32_t i = 0; i < 4; ++i) {
++      if (!claves[i]) continue;
++      const uint32_t info = r[kInfoColor[i]];
++      const int32_t sesgo = int32_t(info << 6) >> 26;
++      sesgos |= uint32_t(uint8_t(int8_t(sesgo))) << (8 * i);
++      if (sesgo && sesgos_vistos_destino_.insert((sesgo << 8) | int32_t((info >> 16) & 0xF)).second) {
++        REXLOG_INFO("[deko3d] destino de color con exp bias {} (x{}) formato {}", sesgo, std::ldexp(1.0f, sesgo),
++                    (info >> 16) & 0xF);
++      }
++    }
++    compartidas[123] = sesgos;
++  }
+ 
+   // --- The deferred sky (nfsmw_nativo_cielo_aplazado; the Vulkan path's criteria, explained there). The dome is the
+   // sky's pixel shader, opaque, testing depth without writing it, no stencil, 480 indices, the first draw of the
+@@ -1978,6 +2002,39 @@
+         g_.stencil[1] = dorso;
+       }
+     }
++    // ZCULL keeps, per 4x8-pixel tile of the bound depth, the depth range and the stencil it saw, for the test of the
++    // draws that built it. GTA IV fills its G-buffer testing greater-or-equal (and its stencil volumes too), then draws
++    // the light and shadow volumes testing less, and the stencil with a function and a reference of their own: on that
++    // data the GPU culled or kept whole tiles wrongly, the 4x8 squares on edges and window frames. A draw that tests the
++    // other way, or the stencil otherwise, starts from invalidated data (no culling until the next clear of that depth).
++    if (claves[4] && imagenes_pase_[4] && REXCVAR_GET(x360_zcull_guardia)) {
++      uint64_t clave = 0;
++      if (ds.depthTestEnable) {
++        const DkCompareOp op = ds.depthCompareOp;
++        clave = (op == DkCompareOp_Less || op == DkCompareOp_Lequal)       ? 1u
++                : (op == DkCompareOp_Greater || op == DkCompareOp_Gequal) ? 2u
++                                                                          : 0u;
++      }
++      if (ds.stencilTestEnable &&
++          (ds.stencilFrontCompareOp != DkCompareOp_Always || ds.stencilBackCompareOp != DkCompareOp_Always)) {
++        const uint32_t frente = r[gr::XE_GPU_REG_RB_STENCILREFMASK] & 0xFFFF;  // ref and compare mask
++        const uint32_t dorso = ((control_profundidad >> 7) & 0x1) ? r[gr::XE_GPU_REG_RB_STENCILREFMASK_BF] & 0xFFFF
++                                                                  : frente;
++        clave |= (uint64_t(ds.stencilFrontCompareOp) << 2) | (uint64_t(ds.stencilBackCompareOp) << 6) |
++                 (uint64_t(frente) << 10) | (uint64_t(dorso) << 26) | (1ull << 42);
++      }
++      if (zcull_serie_ != imagenes_pase_[4]->serie) {
++        zcull_serie_ = imagenes_pase_[4]->serie;  // deko3d dropped the data of another depth target when binding this
++        zcull_clave_ = 0;
++      }
++      if (clave) {
++        if (zcull_clave_ && clave != zcull_clave_) {
++          dkCmdBufBarrier(cmd, DkBarrier_None, DkInvalidateFlags_Zcull);
++          ++zcull_invalidaciones_;
++        }
++        zcull_clave_ = clave;
++      }
++    }
+     if (!g_.valido || !Iguales(ds, g_.profundidad)) {
+       dkCmdBufBindDepthStencilState(cmd, &ds);
+       g_.profundidad = ds;
+--- a/src/x360/deko/destinos.cpp
++++ b/src/x360/deko/destinos.cpp
+@@ -2757,6 +2757,7 @@
+     informe_espera_ns_ = nucleo_.NsEsperandoValla();
+     informe_saltados_ = borrados_saltados_;
+     informe_z_temprana_ = dibujos_z_temprana_;
++    informe_zcull_ = zcull_invalidaciones_;
+     informe_categorias_ = gpu_categorias_ns_;
+     informe_etapas_ = ns_etapas_;
+     informe_dedupe_bytes_ = dedupe_.bytes_ahorrados();
+@@ -2820,12 +2821,13 @@
+   X360_INFORME(
+       "[deko3d] por fotograma: GPU sombras {:.2f} ms, escena {:.2f}, reflejo {:.2f}, 320 {:.2f}, menores {:.2f}, copias "
+       "{:.2f}, borrados {:.2f}, resto {:.2f}, escena sin profundidad {:.2f}, GPU parada entre trabajos {:.2f}; el anillo "
+-      "espero a la GPU {:.2f} ms; borrados saltados {:.1f}; dibujos con Z temprana {:.0f}",
++      "espero a la GPU {:.2f} ms; borrados saltados {:.1f}; dibujos con Z temprana {:.0f}; ZCULL invalidado por otra prueba {:.1f}",
+       ms(kGpuSombras), ms(kGpuEscena), ms(kGpuReflejo), ms(kGpu320), ms(kGpuMenores), ms(kGpuCopias), ms(kGpuBorrados),
+       ms(kGpuOtros), ms(kGpuEscenaSinProfundidad), ms(kGpuHuecoEntreTrabajos),
+       double(nucleo_.NsEsperandoValla() - informe_espera_ns_) / 1e6 / fotogramas,
+       double(borrados_saltados_ - informe_saltados_) / fotogramas,
+-      double(dibujos_z_temprana_ - informe_z_temprana_) / fotogramas);
++      double(dibujos_z_temprana_ - informe_z_temprana_) / fotogramas,
++      double(zcull_invalidaciones_ - informe_zcull_) / fotogramas);
+   const auto us = [&](uint32_t e) { return dibujos ? double(ns_etapas_[e] - informe_etapas_[e]) / double(dibujos) / 1e3 : 0.0; };
+   static constexpr const char* kFasesSm[3] = {"mirando", "APLICANDO", "apagada"};
+   X360_INFORME(
+--- a/include/rex/x360/deko/render.h
++++ b/include/rex/x360/deko/render.h
+@@ -245,6 +245,9 @@
+   // A depth target's content changed behind the GPU's ZCULL data (a swap of images, a restore by copy): the next 3D
+   // work invalidates it first (HowToDeko3d.md, section 6, item 6: deko3d only drops it when another address is bound).
+   bool invalidar_zcull_ = false;
++  // x360_zcull_guardia (dibujos.cpp): the depth target and the test (direction, stencil function, reference and mask)
++  // the ZCULL data was last built for; a draw with another test invalidates it first.
++  uint64_t zcull_serie_ = 0, zcull_clave_ = 0, zcull_invalidaciones_ = 0;
+   // Copies on the 3D engine (Copiar3D): a resolve as a draw that reads the source with texelFetch and writes the
+   // destination as a render target (depth through gl_FragDepth). The 3D engine is several times faster than the copy
+   // engine (0.78 ms per Mpixel), keeps compressed images compressed, and orders against draws with Fragments barriers
+@@ -291,6 +294,7 @@
+                   const ImagenDk& resuelta, uint32_t base, uint32_t dx, uint32_t dy);
+   const ImagenDk* ZComoColorDe(uint32_t base, const ImagenDk& resuelta) const;
+   std::set<int32_t> sesgos_vistos_copia_;  // exponent biases of color resolves already logged
++  std::set<int32_t> sesgos_vistos_destino_;  // (bias, format) of render targets already logged
+   bool fs_copia_7e3_valido_ = false;
+   // A resolved texture sampled with signed or biased components (TextureSign 1 or 2): the GPU applies them while
+   // fetching, the host image holds the unsigned values, so a converted copy is sampled instead (texturas.cpp).
+@@ -964,6 +968,7 @@
+   uint64_t informe_subidas_ = 0, informe_bytes_subidos_ = 0, informe_ns_grabando_ = 0, informe_lecturas_ = 0;
+   uint64_t informe_gpu_ns_ = 0, informe_gpu_trabajos_ = 0, informe_espera_ns_ = 0, informe_saltados_ = 0;
+   uint64_t informe_z_temprana_ = 0;
++  uint64_t informe_zcull_ = 0;
+   std::array<uint64_t, kGpuCategorias> informe_categorias_{};
+ };
+ 

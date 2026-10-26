@@ -1,0 +1,129 @@
+Diagnostic frame: the texel a draw into an area of 8x8 or less wrote, and both ends of a resolve that small, read back
+and logged. No half-pixel shift for a viewport of one or two pixels.
+
+--- a/include/rex/x360/deko/render.h
++++ b/include/rex/x360/deko/render.h
+@@ -445,7 +445,19 @@
+   bool edram_diag_primer_dibujo_ = false;
+   uint32_t diag_instantaneas_ = 0;
+   std::vector<std::pair<uint32_t, uint32_t>> volcado_en_vivo_;  // base, guest format (x360_volcado_en_vivo)
+-  void AnotarVolcado(const ImagenDk& imagen, uint32_t base, uint32_t formato_guest);  // x360_diag_instantanea: the live snapshots written so far
++  void AnotarVolcado(const ImagenDk& imagen, uint32_t base, uint32_t formato_guest);
++  // Diagnostic frame: one texel copied right after a draw into a tiny area (or a tiny resolve) and logged when the
++  // frame ends (GTA IV's 1x1 luminance passes read back 0 though AdaptedLumMin is 11-17).
++  DkMemBlock sonda_bloque_ = nullptr;
++  uint8_t* sonda_cpu_ = nullptr;
++  DkGpuAddr sonda_gpu_ = 0;
++  struct SondaTexel {
++    std::string que;
++    DkImageFormat formato;
++  };
++  std::vector<SondaTexel> sondas_texel_;
++  void SondarTexel(const ImagenDk& imagen, uint32_t x, uint32_t y, std::string que);
++  void LeerSondasTexel();  // x360_diag_instantanea: the live snapshots written so far
+   void InstantaneaDiagnostico();
+   uint64_t edram_diag_contador_ = 0;
+   bool EdramRegistrando() const;
+--- a/src/x360/deko/destinos.cpp
++++ b/src/x360/deko/destinos.cpp
+@@ -1528,6 +1528,10 @@
+         }
+         if (volcando_) {
+           AnotarVolcado(resuelta->imagen, base_resuelta, resuelta->formato_guest);
++        }
++        if (edram_diag_ && ancho <= 8 && alto <= 8) {
++          SondarTexel(*destino_render, uint32_t(x0), uint32_t(y0), fmt::format("origen del resolve a {:08X}", base_resuelta));
++          SondarTexel(resuelta->imagen, dx, dy, fmt::format("resuelta {:08X}", base_resuelta));
+         }
+         if (encoger) {
+           LeerResuelta(reg, resuelta->imagen, x0, y0, dx, dy, cabe_ancho, cabe_alto);
+@@ -2451,6 +2455,7 @@
+ }
+ 
+ bool RenderDk::Presentar(rex::ui::Presenter* presentador, const TexturaSwap& swap, uint32_t ancho, uint32_t alto) {
++  LeerSondasTexel();
+   InstantaneaDiagnostico();  // before EdramFotograma, which ends the diagnostic frame
+   EdramFotograma();
+   if (volcando_) {
+@@ -3150,6 +3155,56 @@
+ // A resolved texture for the frame dump: copied at once (with the copy engine and its barrier, as before), or with
+ // x360_volcado_en_vivo at the frame's end, as the frame left it, so the dump frame is drawn like any other (run31's
+ // black quarter and empty luminance chain were not in the dumps).
++void RenderDk::SondarTexel(const ImagenDk& imagen, uint32_t x, uint32_t y, std::string que) {
++  if (sondas_texel_.size() >= 64 || x >= imagen.ancho || y >= imagen.alto) return;
++  if (!sonda_bloque_) {
++    sonda_bloque_ = nucleo_.CrearBloqueLectura(64 * 16, "sondas de un texel");
++    if (!sonda_bloque_) return;
++    sonda_cpu_ = static_cast<uint8_t*>(dkMemBlockGetCpuAddr(sonda_bloque_));
++    sonda_gpu_ = dkMemBlockGetGpuAddr(sonda_bloque_);
++  }
++  const uint32_t bpp = imagen.formato == DkImageFormat_RGBA16_Float || imagen.formato == DkImageFormat_RG32_Float ? 8
++                       : imagen.formato == DkImageFormat_RGBA32_Float                                             ? 16
++                                                                                                                  : 4;
++  AntesDeTransferir();
++  const DkImageView vista = VistaCompleta(imagen.imagen);
++  const DkImageRect rect = {x, y, 0, 1, 1, 1};
++  const DkCopyBuf destino = {sonda_gpu_ + DkGpuAddr(sondas_texel_.size()) * 16, bpp, bpp};
++  dkCmdBufCopyImageToBuffer(nucleo_.comandos(), &vista, &rect, &destino, 0);
++  sondas_texel_.push_back({std::move(que), imagen.formato});
++}
++
++void RenderDk::LeerSondasTexel() {
++  if (sondas_texel_.empty()) return;
++  CerrarTrabajo();
++  proveedor_.dispositivo().EsperarInactiva();
++  dkMemBlockFlushCpuCache(sonda_bloque_, 0, 64 * 16);
++  for (size_t i = 0; i < sondas_texel_.size(); ++i) {
++    const uint8_t* p = sonda_cpu_ + i * 16;
++    std::string v;
++    if (sondas_texel_[i].formato == DkImageFormat_R32_Float) {
++      float f;
++      std::memcpy(&f, p, 4);
++      v = fmt::format("{:g}", f);
++    } else if (sondas_texel_[i].formato == DkImageFormat_RGBA16_Float) {
++      uint16_t hs[4];
++      std::memcpy(hs, p, 8);
++      for (uint16_t hh : hs) {
++        const uint32_t e = (hh >> 10) & 0x1F, m = hh & 0x3FF;
++        const float f = (hh & 0x8000 ? -1.0f : 1.0f) *
++                        (e == 0 ? std::ldexp(float(m), -24) : e == 31 ? INFINITY : std::ldexp(float(m | 0x400), int(e) - 25));
++        v += fmt::format("{:g} ", f);
++      }
++    } else {
++      uint32_t w;
++      std::memcpy(&w, p, 4);
++      v = fmt::format("{:08X}", w);
++    }
++    REXLOG_INFO("[edram-diag] texel {}: {}", sondas_texel_[i].que, v);
++  }
++  sondas_texel_.clear();
++}
++
+ void RenderDk::AnotarVolcado(const ImagenDk& imagen, uint32_t base, uint32_t formato_guest) {
+   if (!REXCVAR_GET(nfsmw_dk_volcado_resueltas)) return;
+   if (!REXCVAR_GET(x360_volcado_en_vivo)) {
+--- a/src/x360/deko/dibujos.cpp
++++ b/src/x360/deko/dibujos.cpp
+@@ -1785,7 +1785,9 @@
+     // Half a pixel less 1/256: exactly half put the pixel center of a 1x1 viewport on the clipped quad's corner, and the
+     // GPU left it unfilled. GTA IV reduces its luminance to 1x1 (PS n71, then the adaptation n108): those draws never
+     // wrote, the adapted luminance stayed 0 and the tonemap burned the frame white.
+-    const float kMedio = 1.0f - 1.0f / 128.0f;
++    // None at all for a viewport of one or two pixels: the quad (-1..1, its texture coordinates carry the half texel)
++    // covers the pixel center outright.
++    const float kMedio = std::max(viewport[2], std::abs(viewport[3])) <= 2.0f ? 0.0f : 1.0f - 1.0f / 128.0f;
+     const float medio[2] = {kMedio / viewport[2], -kMedio / std::abs(viewport[3])};
+     std::memcpy(&compartidas[66], medio, sizeof(medio));
+   }
+@@ -2453,6 +2455,11 @@
+       REXLOG_INFO("[deko3d] perfil GPU: constantes del PS n{} en su primera prueba de variantes:{}", ps->numero, c);
+     }
+     ++dibujos_en_pase_;
++    if (edram_diag_ && ps && imagenes_pase_[0] && tijera.width <= 8 && tijera.height <= 8) {
++      SondarTexel(*imagenes_pase_[0], tijera.x, tijera.y,
++                  fmt::format("tras el dibujo del PS n{} ({}x{} en {},{})", ps->numero, tijera.width, tijera.height,
++                              tijera.x, tijera.y));
++    }
+   }
+   // Black scene diagnostics: the first draw of each pixel shader into a k_2_10_10_10_FLOAT target (Gears of War 2's
+   // scene), 48 shaders at most: its constants c0-c15 and whether each texture's base and mips hold anything in guest

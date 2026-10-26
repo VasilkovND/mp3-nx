@@ -1,0 +1,90 @@
+--- a/include/rex/x360/deko/render.h
++++ b/include/rex/x360/deko/render.h
+@@ -294,7 +294,11 @@
+     uint32_t offset = 0, ancho = 0, alto = 0, bpp = 0, base = 0, formato_guest = 0;
+     DkImageFormat formato = DkImageFormat_None;
+   };
+-  void VolcarResuelta(const ImagenDk& imagen, uint32_t base, uint32_t formato_guest);
++  void VolcarResuelta(const ImagenDk& imagen, uint32_t base, uint32_t formato_guest, uint32_t alto_max = 0);
++  // The frame dump also takes each pass's targets when the next pass binds others (dibujos.cpp, EmpezarPase): what
++  // the pass left there, before any resolve. Named F<pass><slot>: slot 0-3 color, 4 depth.
++  void VolcarPaseAnterior();
++  uint32_t volcado_pases_ = 0;
+   void TerminarVolcado();
+   bool volcado_pedido_ = false, volcando_ = false;
+   // The dumped frame also gets the scene as the base pass left it (before the first light, k_2_10_10_10_FLOAT_AS_16_
+--- a/src/x360/deko/destinos.cpp
++++ b/src/x360/deko/destinos.cpp
+@@ -369,7 +369,7 @@
+ constexpr uint32_t kRampaExacta = 1, kRampaGraduacion = 2, kRampaFxaa = 4;
+ constexpr uint32_t kBytesUboRampa = 4 * 16;  // mezcla, efectos, desplazamiento, inverso (the ramp is a texture)
+ 
+-constexpr uint32_t kBytesVolcado = 48u << 20;  // the frame dump's read-back block (PedirVolcado)
++constexpr uint32_t kBytesVolcado = 96u << 20;  // the frame dump's read-back block (PedirVolcado)
+ 
+ float MedioAFloat(uint16_t h) {
+   const uint32_t signo = uint32_t(h >> 15) << 31, exponente = (h >> 10) & 0x1F, mantisa = h & 0x3FF;
+@@ -2271,6 +2271,7 @@
+       volcado_usados_ = 0;
+       volcado_.clear();
+       volcado_escena_hecho_ = false;
++      volcado_pases_ = 0;
+       REXLOG_INFO("[deko3d] volcado: el proximo fotograma, cada textura resuelta a la SD");
+     }
+   }
+@@ -2849,7 +2850,7 @@
+ 
+ // ---- The frame dump (PedirVolcado)
+ 
+-void RenderDk::VolcarResuelta(const ImagenDk& imagen, uint32_t base, uint32_t formato_guest) {
++void RenderDk::VolcarResuelta(const ImagenDk& imagen, uint32_t base, uint32_t formato_guest, uint32_t alto_max) {
+   uint32_t bpp = 0;
+   switch (imagen.formato) {
+     case DkImageFormat_RGBA8_Unorm:
+@@ -2866,19 +2867,30 @@
+     default:
+       return;
+   }
+-  const uint32_t bytes = imagen.ancho * imagen.alto * bpp;
+-  if (volcado_.size() >= 64 || volcado_usados_ + bytes > kBytesVolcado) {
++  const uint32_t alto = alto_max ? std::min(imagen.alto, alto_max) : imagen.alto;
++  const uint32_t bytes = imagen.ancho * alto * bpp;
++  if (volcado_.size() >= 200 || volcado_usados_ + bytes > kBytesVolcado) {
+     return;
+   }
+   AntesDeTransferir();
+   const DkImageView vista = VistaCompleta(imagen.imagen);
+-  const DkImageRect rect = {0, 0, 0, imagen.ancho, imagen.alto, 1};
++  const DkImageRect rect = {0, 0, 0, imagen.ancho, alto, 1};
+   const DkCopyBuf destino = {volcado_gpu_ + volcado_usados_, imagen.ancho * bpp, bytes};
+   dkCmdBufCopyImageToBuffer(nucleo_.comandos(), &vista, &rect, &destino, 0);
+-  volcado_.push_back({volcado_usados_, imagen.ancho, imagen.alto, bpp, base, formato_guest, imagen.formato});
++  volcado_.push_back({volcado_usados_, imagen.ancho, alto, bpp, base, formato_guest, imagen.formato});
+   volcado_usados_ += (bytes + 255) & ~255u;
+ }
+ 
++void RenderDk::VolcarPaseAnterior() {
++  const uint32_t pase = volcado_pases_++;
++  for (uint32_t i = 0; i < 5; ++i) {
++    const ImagenDk* imagen = imagenes_pase_[i];
++    if (!imagen || !claves_pase_previo_[i]) continue;
++    const uint32_t formato = uint32_t(claves_pase_previo_[i] >> 16) & 0xF;
++    VolcarResuelta(*imagen, 0xF0000000u | ((pase & 0xFFFu) << 4) | i, formato, 736);
++  }
++}
++
+ void RenderDk::TerminarVolcado() {
+   volcando_ = false;
+   CerrarTrabajo();
+--- a/src/x360/deko/dibujos.cpp
++++ b/src/x360/deko/dibujos.cpp
+@@ -703,6 +703,9 @@
+ 
+ bool RenderDk::EmpezarPase(const uint64_t claves[5], uint32_t pitch) {
+   EmitirCieloPendiente();  // the deferred sky belongs to the pass that ends here
++  if (volcando_) {
++    VolcarPaseAnterior();  // the frame dump: what the pass that ends here left in its targets
++  }
+   std::array<ImagenDk*, 5> imagenes{};
+   for (uint32_t i = 0; i < 4; ++i) {
+     if (claves[i]) {

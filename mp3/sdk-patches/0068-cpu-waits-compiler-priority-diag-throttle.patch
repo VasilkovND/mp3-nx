@@ -1,0 +1,99 @@
+CPU: events wake their waiters after the mutex is let go; WaitMultiple polls with a growing sleep (50 us to 1 ms);
+the background shader compiler below the game's threads (0x3E); at most 3 diagnostic frames a session, the GPU
+profile every 60 s.
+
+--- a/src/ui/deko3d/compilador.cpp
++++ b/src/ui/deko3d/compilador.cpp
+@@ -16,7 +16,9 @@
+ 
+ namespace {
+ constexpr size_t kPila = 8u << 20;
+-constexpr int kPrioridad = 0x3B;
++// Below the game's threads (0x2C-0x3B): the background compiles of run37 (about 1 s of CPU each, 19 of them) took
++// 43-48 % of a core for 30 s from the game on three busy cores.
++constexpr int kPrioridad = 0x3E;
+ 
+ // A shader that uses what the game's do (a UBO, a texture, a dynamic loop), to know at start that uam works here.
+ constexpr char kAutoprueba[] = R"(#version 460
+--- a/src/x360/deko/edram.cpp
++++ b/src/x360/deko/edram.cpp
+@@ -32,7 +32,10 @@
+ REXCVAR_DEFINE_BOOL(x360_edram_compartida, true, "X360",
+                     "Las vistas de un mismo EDRAM (otro pitch, MSAA o formato sobre las mismas tejas) ven los mismos "
+                     "datos: se transfieren al cambiar de vista, como en el hardware");
+-REXCVAR_DEFINE_INT32(x360_edram_diag_cada, 300, "X360",
++REXCVAR_DEFINE_INT32(x360_edram_diag_veces, 3, "X360",
++                     "Fotogramas de diagnostico como mucho por sesion (cada uno escribe ~1500 lineas al log y para el "
++                     "juego 1-2 s)");
++REXCVAR_DEFINE_INT32(x360_edram_diag_cada, 1200, "X360",
+                      "Un fotograma de cada N (no el del volcado) registra sus pases, las filas que dibuja cada vista, "
+                      "cada reclamo, transferencia y resolve ([edram-diag]); 0 = nunca");
+ REXCVAR_DEFINE_BOOL(x360_edram_estencil, true, "X360",
+@@ -705,7 +708,8 @@
+   // The next frame is the diagnostic one (this is called as a frame ends).
+   const int32_t cada = REXCVAR_GET(x360_edram_diag_cada);
+   if (edram_diag_) REXLOG_INFO("[edram-diag] fin del fotograma");
+-  edram_diag_ = cada > 0 && EdramActiva() && !volcando_ && ++edram_diag_contador_ % uint64_t(cada) == 0;
++  edram_diag_ = cada > 0 && EdramActiva() && !volcando_ && ++edram_diag_contador_ % uint64_t(cada) == 0 &&
++                edram_diag_contador_ / uint64_t(cada) <= uint64_t(std::max(REXCVAR_GET(x360_edram_diag_veces), 0));
+   if (edram_diag_) REXLOG_INFO("[edram-diag] fotograma {} empieza", edram_diag_contador_);
+   if (!EdramActiva() || ++edram_fotogramas_ < 300) return;
+   REXLOG_INFO("[edram] {} fotogramas: {:.1f} transferencias ({:.1f} con stencil) y {:.2f} Mpixeles por fotograma, "
+--- a/src/x360/deko/destinos.cpp
++++ b/src/x360/deko/destinos.cpp
+@@ -130,7 +130,7 @@
+                       "0672E000,06732000,06733000,06734000,03EFD000,03EFB000,03EFC000,06665000,07538000,078D0000,"
+                       "07C68000",
+                       "X360", "Las bases de las texturas resueltas de la instantanea de diagnostico");
+-REXCVAR_DEFINE_INT32(nfsmw_dk_perfil_gpu_s, 20, "NFSMW",
++REXCVAR_DEFINE_INT32(nfsmw_dk_perfil_gpu_s, 60, "NFSMW",
+                      "deko3d: cada cuantos segundos se mide un fotograma dibujo a dibujo en la GPU (una marca de tiempo "
+                      "antes y despues de cada dibujo; ese fotograma va algo mas lento) para el informe de pases y "
+                      "shaders mas caros. 0 = nunca");
+--- a/src/core/threading_posix.cpp
++++ b/src/core/threading_posix.cpp
+@@ -408,6 +408,9 @@
+     // Reuse the allocation between polls; clear() releases the locks, not the memory.
+     std::vector<std::unique_lock<std::mutex>> locks;
+     locks.reserve(handles.size());
++    // The poll's sleep grows 50 us, 100, 200 ... up to 1 ms: a wait that ends soon is not held a whole millisecond
++    // (GTA IV's main thread spent ~8 % of its time in these 1 ms sleeps), a long one does not wake more often.
++    uint32_t vueltas = 0;
+     while (true) {
+       size_t first_signaled = std::numeric_limits<size_t>::max();
+       bool condition_met = false;
+@@ -499,15 +502,16 @@
+         return std::make_pair<WaitResult, size_t>(WaitResult::kTimeout, 0);
+       }
+ 
++      const auto paso = std::chrono::microseconds(std::min<uint32_t>(50u << std::min<uint32_t>(vueltas++, 5u), 1000u));
+       if (timeout == std::chrono::milliseconds::max()) {
+-        std::this_thread::sleep_for(std::chrono::milliseconds(1));
++        std::this_thread::sleep_for(paso);
+       } else {
+         // In microseconds. In milliseconds, the remainder of a short wait was
+         // truncated to 0 and sleep_for(0) does not sleep: the alertable wait asks
+         // for 1 ms slices, so WaitAny spun for its whole timeout. On Switch the
+         // audio thread (0x2B) ate a whole core this way.
+         auto remaining = std::chrono::duration_cast<std::chrono::microseconds>(end_time - now);
+-        auto sleep_time = std::min(remaining, std::chrono::microseconds(1000));
++        auto sleep_time = std::min(remaining, paso);
+         std::this_thread::sleep_for(sleep_time);
+       }
+     }
+@@ -538,9 +542,13 @@
+       : signal_(initial_state), manual_reset_(manual_reset) {}
+   virtual ~PosixCondition() = default;
+ 
++  // Woken after the mutex is let go, as the semaphore's Release: under it every waiter woke into a mutex still held
++  // (GTA IV run37: the main thread blocked ~36 % of its time on these internal mutexes with the three cores busy).
+   bool Signal() override {
+-    auto lock = std::unique_lock<std::mutex>(mutex_);
+-    signal_ = true;
++    {
++      auto lock = std::unique_lock<std::mutex>(mutex_);
++      signal_ = true;
++    }
+     cond_.notify_all();
+     return true;
+   }

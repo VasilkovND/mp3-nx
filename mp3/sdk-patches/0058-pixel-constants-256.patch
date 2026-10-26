@@ -1,0 +1,38 @@
+deko3d renderer: all 256 pixel shader constants (GTA IV's GPU particles read up to c230); g_InputRemap only for
+the 16 locations it has.
+
+--- a/include/rex/x360/deko/render.h
++++ b/include/rex/x360/deko/render.h
+@@ -868,7 +868,7 @@
+   uint64_t bloques_trabajo_ = UINT64_MAX;
+   DkGpuAddr bloque_vs_ = 0, bloque_ps_ = 0, bloque_compartidas_ = 0;
+   std::array<uint32_t, 1024> sombra_vs_{};  // 256 registers
+-  std::array<uint32_t, 896> sombra_ps_{};   // 224 registers
++  std::array<uint32_t, 1024> sombra_ps_{};  // 256 registers
+   std::array<uint32_t, 128> sombra_compartidas_{};
+   uint64_t bloque_vs_generacion_ = UINT64_MAX, bloque_ps_generacion_ = UINT64_MAX;
+   uint32_t bloque_vs_cubierto_ = 0, bloque_ps_cubierto_ = 0;  // bytes compared at that generation
+--- a/src/x360/deko/dibujos.cpp
++++ b/src/x360/deko/dibujos.cpp
+@@ -137,7 +137,9 @@
+ constexpr uint32_t kPalabraInvTamano = 90;
+ constexpr uint32_t kMaxVerticesPorDibujo = uint32_t(1) << 20;
+ constexpr uint32_t kUboBytesVs = 256 * 16;
+-constexpr uint32_t kUboBytesPs = 224 * 16;
++// All 256 of Xenos: GTA IV's GPU particle pixel shaders read up to c230. The translated shaders still declare 224
++// unless they read above them (DS_PS_REGISTROS, shader_common.h), so their SPIR-V and DKSH cache keys stay the same.
++constexpr uint32_t kUboBytesPs = 256 * 16;
+ constexpr uint32_t kUboBytesCompartidas = 31 * 16;
+ constexpr uint32_t kTodasLasSalidas = ~0u;
+ 
+@@ -603,7 +605,9 @@
+           {enlace, uint32_t(offset), formato == 36 ? 1u : formato == 37 ? 2u : formato == 57 ? 3u : 4u});
+     }
+     entrada.n_atributos = std::max(entrada.n_atributos, uint32_t(ubicacion) + 1);
+-    entrada.remapeos[uint32_t(ubicacion)] = CodigoRemapeo(original, d1 & 0xFFF);
++    // g_InputRemap has 16: the translator reads the locations above them without a remap.
++    if (ubicacion < int32_t(entrada.remapeos.size()))
++      entrada.remapeos[uint32_t(ubicacion)] = CodigoRemapeo(original, d1 & 0xFFF);
+     entrada.lista.push_back({uint32_t(ubicacion), enlace, uint32_t(offset)});
+     ubicaciones_usadas |= uint32_t(1) << ubicacion;
+   }

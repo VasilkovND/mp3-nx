@@ -1,0 +1,83 @@
+--- a/src/x360/deko/dibujos.cpp
++++ b/src/x360/deko/dibujos.cpp
+@@ -76,6 +76,9 @@
+                     "Renderizador nativo (20/09): en los dibujos que prueban la profundidad pero NO la "
+                     "escriben (humo, particulas, cristales, calcomanias), declarar EarlyFragmentTests en el "
+                     "pixel shader para que la GPU pruebe la profundidad ANTES de sombrear en vez de despues");
++REXCVAR_DEFINE_BOOL(nfsmw_dk_tiles_en_pantalla, false, "NFSMW",
++                    "deko3d: los tiles que el juego hace con el desplazamiento de ventana se dibujan y se resuelven en su "
++                    "posicion de pantalla (imagenes EDRAM de tamano completo), sin desplazarlos al origen");
+ REXCVAR_DEFINE_BOOL(nfsmw_nativo_cielo_aplazado, true, "NFSMW",
+                     "Renderizador nativo (22/09): aplazar el dibujo del cielo hasta despues de los opacos "
+                     "del mismo pase, en vez de dibujarlo el primero sobre un Z-buffer vacio. Es un solo "
+@@ -624,7 +627,11 @@
+   const uint32_t ventana = r[gr::XE_GPU_REG_PA_SC_WINDOW_OFFSET];
+   const int32_t ventana_x = int32_t((ventana & 0x7FFF) << 17) >> 17;
+   const int32_t ventana_y = int32_t(((ventana >> 16) & 0x7FFF) << 17) >> 17;
+-  if ((modo_sc >> 16) & 0x1) {
++  // nfsmw_dk_tiles_en_pantalla: a frame the game tiles itself (GTA IV's G-buffer in bands of 256 rows) is drawn at
++  // its screen position, without the window offset: the EDRAM images here are full size, and the bands moved to the
++  // top (a viewport starting at y = -256) came out empty. Its resolves read from there too (destinos.cpp).
++  const bool en_pantalla = REXCVAR_GET(nfsmw_dk_tiles_en_pantalla);
++  if (((modo_sc >> 16) & 0x1) && !en_pantalla) {
+     centro_x += float(ventana_x);
+     centro_y += float(ventana_y);
+   }
+@@ -669,7 +676,7 @@
+   const uint32_t br = r[gr::XE_GPU_REG_PA_SC_WINDOW_SCISSOR_BR];
+   int32_t x0 = int32_t(tl & 0x3FFF), y0 = int32_t((tl >> 16) & 0x3FFF);
+   int32_t x1 = int32_t(br & 0x3FFF), y1 = int32_t((br >> 16) & 0x3FFF);
+-  if (!((tl >> 31) & 0x1)) {
++  if (!((tl >> 31) & 0x1) && !en_pantalla) {
+     x0 += ventana_x;
+     y0 += ventana_y;
+     x1 += ventana_x;
+--- a/src/x360/deko/destinos.cpp
++++ b/src/x360/deko/destinos.cpp
+@@ -27,6 +27,8 @@
+ #include <rex/ui/deko3d/compilador.h>
+ #include <rex/ui/deko3d/presentador.h>
+ #include <rex/x360/deko/render.h>
++
++REXCVAR_DECLARE(bool, nfsmw_dk_tiles_en_pantalla);
+ #include <rex/x360/xenos.h>
+ 
+ // Settings of the renderer that the game hooks also read (nfsmw_nativo_ganchos.cpp). The Vulkan build defines them
+@@ -1162,6 +1164,21 @@
+ }
+ 
+ // The copy rectangle, as the Vulkan path computes it (nfsmw_nativo_destinos.cpp, Rectangulo).
++
++namespace {
++// nfsmw_dk_tiles_en_pantalla (dibujos.cpp): the tile was drawn at its screen position, so the resolve reads there; its
++// rectangle (made tile-local by the window offset, Rectangulo) goes back by that offset. The destination keeps it.
++void RectanguloEnPantalla(const rex::x360::RegistrosCopia& reg, int32_t& x0, int32_t& y0, int32_t& x1, int32_t& y1) {
++  if (!REXCVAR_GET(nfsmw_dk_tiles_en_pantalla) || !((reg.pa_su_sc_mode_cntl >> 16) & 0x1)) return;
++  const int32_t wx = int32_t((reg.pa_sc_window_offset & 0x7FFF) << 17) >> 17;
++  const int32_t wy = int32_t(((reg.pa_sc_window_offset >> 16) & 0x7FFF) << 17) >> 17;
++  x0 -= wx;
++  x1 -= wx;
++  y0 -= wy;
++  y1 -= wy;
++}
++}  // namespace
++
+ bool RenderDk::Rectangulo(const RegistrosCopia& reg, uint32_t pitch, int32_t& x0, int32_t& y0, int32_t& x1,
+                           int32_t& y1) {
+   const uint32_t tipo = reg.fetch_vertices[0] & 0x3;
+@@ -1306,6 +1323,7 @@
+                                    (info_destino >> 24) & 0x1, false);
+       }
+     }
++    RectanguloEnPantalla(reg, x0, y0, x1, y1);
+     if (resuelta) {
+       const uint32_t pedido_ancho = std::min(uint32_t(x1 - x0), destino_render->ancho - uint32_t(x0));
+       const uint32_t pedido_alto = std::min(uint32_t(y1 - y0), destino_render->alto - uint32_t(y0));
+@@ -1669,6 +1687,7 @@
+   if (!resuelta) {
+     return;
+   }
++  RectanguloEnPantalla(reg, x0, y0, x1, y1);
+   const uint32_t ancho = std::min({uint32_t(x1 - x0), profundidad->ancho - uint32_t(x0), resuelta->imagen.ancho - dx});
+   const uint32_t alto = std::min({uint32_t(y1 - y0), profundidad->alto - uint32_t(y0), resuelta->imagen.alto - dy});
+   if (!ancho || !alto || uint32_t(x0) >= profundidad->ancho || uint32_t(y0) >= profundidad->alto ||

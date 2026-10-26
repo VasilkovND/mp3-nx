@@ -1,0 +1,56 @@
+--- a/src/filesystem/devices/stfs_container_file.cpp
++++ b/src/filesystem/devices/stfs_container_file.cpp
+@@ -39,17 +39,21 @@
+ //
+ // GTA IV's Games on Demand package (SVOD) is streamed in 32 KB reads, ~70 % of them right after the previous one; each
+ // was a seek and a read on the SD card, 20-30 ms on average with the other streams queued behind the one lock (run61:
+-// textures and models arrived when the player was already on them). A window keeps the last 1 MB read from its file:
+-// a following read is a copy, and the card sees one read per megabyte. Reads of 512 KB or more go straight through.
++// textures and models arrived when the player was already on them). A window keeps the last block read from its file:
++// a following read is a copy, and the card sees one read per megabyte. A read that does not continue the previous one
++// fills a 64 KB window instead (run62: a 1 MB window for every 20-byte header read made loading slower). Reads of
++// 512 KB or more go straight through.
+ namespace {
+ constexpr size_t kVentanas = 8;
+-constexpr size_t kTamVentana = size_t(1) << 20;
++constexpr size_t kTamVentana = size_t(1) << 20;     // sequential reads
++constexpr size_t kTamVentanaSuelta = size_t(64) << 10;  // a read elsewhere
+ constexpr size_t kLecturaDirecta = size_t(512) << 10;
+ struct Ventana {
+   std::mutex candado;
+   FILE* archivo = nullptr;
+   uint64_t inicio = 0;
+   size_t tam = 0;
++  uint64_t fin_anterior = 0;  // where the last read of `archivo` ended
+   std::vector<uint8_t> datos;
+ };
+ std::array<Ventana, kVentanas> g_ventanas;
+@@ -62,19 +66,25 @@
+ size_t Leer(FILE* archivo, uint64_t pos, uint8_t* destino, size_t n) {
+   Ventana& v = VentanaDe(archivo);
+   std::lock_guard<std::mutex> lock(v.candado);
++  const bool seguida = v.archivo == archivo && pos == v.fin_anterior;
+   if (v.archivo == archivo && pos >= v.inicio && pos + n <= v.inicio + v.tam) {
+     std::memcpy(destino, v.datos.data() + (pos - v.inicio), n);
++    v.fin_anterior = pos + n;
+     return n;
+   }
+   if (n >= kLecturaDirecta) {
+     rex::filesystem::Seek(archivo, int64_t(pos), SEEK_SET);
+-    return fread(destino, 1, n, archivo);
++    const size_t leidos = fread(destino, 1, n, archivo);
++    if (v.archivo == archivo) v.fin_anterior = pos + leidos;
++    return leidos;
+   }
+-  v.datos.resize(kTamVentana);
++  const size_t ventana = std::max(n, seguida ? kTamVentana : kTamVentanaSuelta);
++  v.datos.resize(std::max(v.datos.size(), ventana));
+   rex::filesystem::Seek(archivo, int64_t(pos), SEEK_SET);
+-  v.tam = fread(v.datos.data(), 1, kTamVentana, archivo);
++  v.tam = fread(v.datos.data(), 1, ventana, archivo);
+   v.archivo = archivo;
+   v.inicio = pos;
++  v.fin_anterior = pos + std::min(n, v.tam);
+   const size_t copiados = std::min(n, v.tam);
+   std::memcpy(destino, v.datos.data(), copiados);
+   return copiados;

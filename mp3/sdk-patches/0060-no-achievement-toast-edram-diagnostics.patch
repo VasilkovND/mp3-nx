@@ -1,0 +1,191 @@
+No achievement toast by default (its UI-thread painting put the deko3d queue in error in GTA IV); one ordinary frame
+in x360_edram_diag_cada logs the EDRAM views' passes, claims, preparations and resolves ([edram-diag]).
+
+--- a/src/ui/rex_app.cpp
++++ b/src/ui/rex_app.cpp
+@@ -62,6 +62,11 @@
+ #include <filesystem>
+ #include <string_view>
+ 
++// The achievement toast is an ImGui dialog: with it the presenter paints from the UI thread while the game's GPU thread
++// records too. GTA IV on the deko3d renderer: the first achievement (2026-10-24) put the GPU queue in error 35 ms later
++// and the game aborted. Off: an achievement is only logged.
++REXCVAR_DEFINE_BOOL(logros_aviso_en_pantalla, false, "UI",
++                    "Muestra el aviso de logro (dialogo ImGui, pinta desde el hilo de la interfaz); false = solo el log");
+ REXCVAR_DEFINE_STRING(gpu_plugin, "", "GPU",
+                       "GPU emulation plugin to load at startup (e.g. 'xenos'); empty disables "
+                       "GPU emulation")
+@@ -479,6 +484,9 @@
+       achievement_notification_listener_ = achievements().RegisterNotificationCallback(
+           [this](const rex::system::AchievementEvent& event) {
+             rex::system::AchievementEvent copia = event;
++            if (!REXCVAR_GET(logros_aviso_en_pantalla)) {
++              return;  // logged by the achievement manager ("Achievement unlocked")
++            }
+             app_context().CallInUIThreadDeferred([this, copia]() {
+               if (!achievement_notification_) {
+                 achievement_notification_ = std::shared_ptr<ui::AchievementNotificationDialog>(
+--- a/include/rex/x360/deko/render.h
++++ b/include/rex/x360/deko/render.h
+@@ -438,6 +438,14 @@
+   // The last depth resolve from each EDRAM base: the texture's address (CopiarProfundidad), for EdramZPorColor.
+   std::unordered_map<uint32_t, uint32_t> z_resuelta_por_base_;
+   uint32_t edram_z_por_color_registrados_ = 0;
++  // x360_edram_diag_cada: one ordinary frame in that many logs its passes, the rows each view drew, every claim,
++  // transfer and resolve ("[edram-diag]"), with each view's identity (Vista). Not the dump frame: that one behaves
++  // differently.
++  bool edram_diag_ = false;
++  bool edram_diag_primer_dibujo_ = false;
++  uint64_t edram_diag_contador_ = 0;
++  bool EdramRegistrando() const;
++  static std::string Vista(const ImagenDk& v);
+   // A pass that binds an 8-bit color target and a depth target on the same base and pitch: the game writes depth and
+   // stencil bits as color over the depth's EDRAM (GTA IV puts its G-buffer's depth back that way for the lights). The
+   // depth gets that base's last depth resolve instead, depth and stencil.
+--- a/src/x360/deko/destinos.cpp
++++ b/src/x360/deko/destinos.cpp
+@@ -1365,6 +1365,10 @@
+   ImagenDk* destino_render = DestinoColor(info_color & 0xFFF, formato_color, pitch, msaa);
+   if (!destino_render) {
+     return false;
++  }
++  if (edram_diag_) {
++    REXLOG_INFO("[edram-diag] resolve desde {} ({},{})-({},{}) -> {:08X}{}{}", Vista(*destino_render), x0, y0, x1, y1,
++                reg.rb_copy_dest_base, copiar ? "" : " (sin copia)", borrar_color ? ", borra el color" : "");
+   }
+   if (copiar) {
+     EdramPreparar(*destino_render, uint32_t(y1));  // another view of these tiles may have drawn them since
+--- a/src/x360/deko/dibujos.cpp
++++ b/src/x360/deko/dibujos.cpp
+@@ -803,6 +803,14 @@
+     g_.valido = false;  // the scissor is the clear's: this draw emits all of its state again
+   }
+   imagenes_pase_ = imagenes;
++  edram_diag_primer_dibujo_ = true;
++  if (edram_diag_) {
++    std::string t;
++    for (ImagenDk* imagen : imagenes) {
++      if (imagen) t += " " + Vista(*imagen);
++    }
++    REXLOG_INFO("[edram-diag] pase {} ({}x{}, pitch {}):{}", serie_imagenes_ + 1, ancho, alto, pitch, t);
++  }
+   // A new pass for the deferred sky's "first draw of the pass" only when the targets change, not when the same ones
+   // are bound again after a copy.
+   if (borrar_z || std::memcmp(claves_pase_previo_, claves, sizeof(claves_pase_previo_)) != 0) {
+@@ -1615,6 +1623,7 @@
+     }
+   }
+   if (z_por_color_pase_) {
++    if (edram_diag_) REXLOG_INFO("[edram-diag] dibujo del pase de profundidad por color: no se graba");
+     return true;
+   }
+   DkCmdBuf cmd = nucleo_.comandos();
+@@ -1650,12 +1659,22 @@
+                 r[gr::XE_GPU_REG_PA_SC_WINDOW_SCISSOR_TL], r[gr::XE_GPU_REG_PA_SC_WINDOW_SCISSOR_BR]);
+   }
+   if (vacio) {
++    if (edram_diag_) {
++      REXLOG_INFO("[edram-diag] dibujo sin dibujar (encuadre vacio {}) en el pase {}", vacio, g_.pase_serie);
++    }
+     return true;  // empty viewport or scissor
+   }
+   // The useful area of the bound targets: nothing is drawn below the scissor. If this draw reaches rows the last
+   // clear of a target left as they were, they are cleared first (nfsmw_dk_borrar_area_util).
+   {
+     const uint32_t hasta = tijera.y + tijera.height;
++    if (edram_diag_ && edram_diag_primer_dibujo_) {
++      edram_diag_primer_dibujo_ = false;
++      REXLOG_INFO("[edram-diag] primer dibujo del pase {}: tijera {},{} {}x{}, mascaras {:04X}, c0 {}, VS n{} PS n{}",
++                  g_.pase_serie, tijera.x, tijera.y, tijera.width, tijera.height, mascaras,
++                  imagenes_pase_[0] ? Vista(*imagenes_pase_[0]) : std::string("-"), p.vs ? int64_t(p.vs->numero) : -1,
++                  ps ? int64_t(ps->numero) : -1);
++    }
+     for (uint32_t i = 0, indice = 0; i < 4; ++i) {
+       if (ImagenDk* imagen = imagenes_pase_[i]) {
+         CompletarBanda(*imagen, hasta, true, indice++);
+--- a/src/x360/deko/edram.cpp
++++ b/src/x360/deko/edram.cpp
+@@ -30,6 +30,9 @@
+ REXCVAR_DEFINE_BOOL(x360_edram_compartida, true, "X360",
+                     "Las vistas de un mismo EDRAM (otro pitch, MSAA o formato sobre las mismas tejas) ven los mismos "
+                     "datos: se transfieren al cambiar de vista, como en el hardware");
++REXCVAR_DEFINE_INT32(x360_edram_diag_cada, 300, "X360",
++                     "Un fotograma de cada N (no el del volcado) registra sus pases, las filas que dibuja cada vista, "
++                     "cada reclamo, transferencia y resolve ([edram-diag]); 0 = nunca");
+ REXCVAR_DEFINE_BOOL(x360_edram_estencil, true, "X360",
+                     "Las transferencias de profundidad entre vistas del EDRAM llevan tambien el stencil (8 pasadas)");
+ REXCVAR_DEFINE_BOOL(x360_edram_z_por_pixel, true, "X360",
+@@ -292,6 +295,10 @@
+       preparada = true;
+       RestaurarContenido(vista, true);
+       HacerBorradoPendiente(vista);
++    }
++    if (edram_diag_) {
++      REXLOG_INFO("[edram-diag] preparar {} (filas {}): tejas {}-{} de {} (version {}, la vista tenia {})", Vista(vista),
++                  filas, k, fin - 1, Vista(*dueno), t.version, vista.edram_versiones[k]);
+     }
+     // A clear's tiles, all of one claim: a clear of the same rows here (a transfer draw costs 9 for depth).
+     bool una_borrada = t.borrada;
+@@ -323,6 +330,10 @@
+   ++generacion;
+   if (al_dia) vista.edram_generacion = generacion;
+   const uint32_t version = ++version_edram_;
++  if (edram_diag_) {
++    REXLOG_INFO("[edram-diag] reclamo {}: filas {}, tejas {:03X}+{}, version {}{}", Vista(vista), filas,
++                vista.edram_base, n, version, borrado ? " (borrado)" : "");
++  }
+   for (uint32_t k = 0; k < n; ++k) {
+     TejaEdram& t = tejas[(vista.edram_base + k) & (kTejas - 1)];
+     t.dueno = &vista;
+@@ -334,6 +345,13 @@
+ }
+ 
+ void RenderDk::EdramCerrarPase() {
++  if (edram_diag_) {
++    std::string t;
++    for (ImagenDk* imagen : imagenes_pase_) {
++      if (imagen) t += fmt::format(" [{} filas {}]", Vista(*imagen), imagen->edram_filas);
++    }
++    REXLOG_INFO("[edram-diag] cierre del pase:{}", t);
++  }
+   for (ImagenDk* imagen : imagenes_pase_) {
+     if (imagen && imagen->edram_filas) {
+       EdramReclamar(*imagen, imagen->edram_filas);
+@@ -558,7 +576,7 @@
+   OlvidarEstado();
+   ++edram_transferencias_;
+   edram_pixeles_ += uint64_t(ancho) * (y1 - y0);
+-  if (REXCVAR_GET(x360_edram_registro) || volcando_) {  // and in the frame the dump takes (ZL + ZR + Left)
++  if (EdramRegistrando()) {  // and in the frame the dump takes (ZL + ZR + Left), and the diagnostic one
+     REXLOG_INFO("[edram] {} {:03X} f{} {}{} -> {:03X} f{} {}{}: tejas {:03X}+{}, filas {}-{}", z ? "z" : "c",
+                 origen.edram_base, origen.edram_formato, origen.edram_pitch,
+                 origen.edram_msaa ? (origen.edram_msaa == 1 ? "/2x" : "/4x") : "", destino.edram_base,
+@@ -612,7 +630,7 @@
+   borrado_previo_.erase(destino.serie);
+   OlvidarEstado();
+   ++edram_borrados_;
+-  if (REXCVAR_GET(x360_edram_registro) || volcando_) {
++  if (EdramRegistrando()) {
+     REXLOG_INFO("[edram] {} {:03X} f{} {} -> {:03X} f{} {}: tejas {:03X}+{}, filas {}-{}, como borrado", z ? "z" : "c",
+                 origen.edram_base, origen.edram_formato, origen.edram_pitch, destino.edram_base, destino.edram_formato,
+                 destino.edram_pitch, (destino.edram_base + desde) & (kTejas - 1), cuantas, y0, y1);
+@@ -674,7 +692,19 @@
+ }
+ 
+ // Once per frame (Presentar): every 300 frames, what the transfers cost.
++bool RenderDk::EdramRegistrando() const { return edram_diag_ || volcando_ || REXCVAR_GET(x360_edram_registro); }
++
++std::string RenderDk::Vista(const ImagenDk& v) {
++  return fmt::format("{}{:03X} f{} {}{} #{}", v.profundidad ? "z" : "c", v.edram_base, v.edram_formato, v.edram_pitch,
++                     v.edram_msaa ? (v.edram_msaa == 1 ? "/2x" : "/4x") : "", v.serie);
++}
++
+ void RenderDk::EdramFotograma() {
++  // The next frame is the diagnostic one (this is called as a frame ends).
++  const int32_t cada = REXCVAR_GET(x360_edram_diag_cada);
++  if (edram_diag_) REXLOG_INFO("[edram-diag] fin del fotograma");
++  edram_diag_ = cada > 0 && EdramActiva() && !volcando_ && ++edram_diag_contador_ % uint64_t(cada) == 0;
++  if (edram_diag_) REXLOG_INFO("[edram-diag] fotograma {} empieza", edram_diag_contador_);
+   if (!EdramActiva() || ++edram_fotogramas_ < 300) return;
+   REXLOG_INFO("[edram] {} fotogramas: {:.1f} transferencias ({:.1f} con stencil) y {:.2f} Mpixeles por fotograma, "
+               "{:.1f} hechas como borrado, {} sin soporte",

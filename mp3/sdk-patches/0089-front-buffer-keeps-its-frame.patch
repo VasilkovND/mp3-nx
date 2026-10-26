@@ -1,0 +1,112 @@
+--- a/src/x360/deko/destinos.cpp
++++ b/src/x360/deko/destinos.cpp
+@@ -121,6 +121,11 @@
+ REXCVAR_DEFINE_BOOL(x360_volcado_en_vivo, true, "X360",
+                     "El volcado (ZL + ZR + Left) copia las texturas resueltas al terminar el fotograma, como quedaron, sin "
+                     "una barrera en cada resolve: el fotograma se dibuja como cualquier otro");
++REXCVAR_DEFINE_BOOL(x360_edram_frontal_sin_borrados, true, "X360",
++                    "Un resolve a un frontal (una direccion de Swap) no recibe los borrados que la vista de otra base "
++                    "reclamo sobre sus tejas: GTA IV, con el telefono abierto, borra toda la EDRAM de la base 000 "
++                    "despues de componer el fotograma en 2D0 y antes de resolverlo (sin teselado las tejas coinciden) y "
++                    "las 560 filas de arriba salian negras");
+ REXCVAR_DEFINE_STRING(x360_ab_estados, "", "X360",
+                       "Medida A/B en una sola prueba: estados separados por ';', cada uno 'nombre:valor de prueba:valor "
+                       "normal'. Cada informe de 10 s pasa al siguiente (el 0 es todo como esta) y el log dice que estado "
+@@ -1438,8 +1443,12 @@
+   // A 4x view whose samples one 1x view holds is resolved from it (x360_edram_reduccion_directa), not prepared.
+   ImagenDk* reducida = copiar && y1 > 0 && x0 >= 0 && y0 >= 0 ? EdramVistaReducible(*destino_render, uint32_t(y1))
+                                                               : nullptr;
++  // A resolve to a front buffer: the frame keeps what it drew over another base's whole-EDRAM clear.
++  const uint32_t destino_copia = reg.rb_copy_dest_base & 0x1FFFFFFF;
++  const bool a_frontal = copiar && REXCVAR_GET(x360_edram_frontal_sin_borrados) &&
++                         std::find(frontales_.begin(), frontales_.end(), destino_copia) != frontales_.end();
+   if (copiar && !reducida) {
+-    EdramPreparar(*destino_render, uint32_t(y1));  // another view of these tiles may have drawn them since
++    EdramPreparar(*destino_render, uint32_t(y1), a_frontal);  // another view of these tiles may have drawn them since
+   }
+   DkCmdBuf cmd = nucleo_.comandos();
+   if (copiar) {
+@@ -1525,7 +1534,7 @@
+                            alto == resuelta->imagen.alto;
+       // The copy engine paths and the lazy front buffer read the 4x view itself: it is prepared after all.
+       if (reducida && (encoger || se_lee || frontal)) {
+-        EdramPreparar(*destino_render, uint32_t(y1));
++        EdramPreparar(*destino_render, uint32_t(y1), a_frontal);
+         reducida = nullptr;
+       }
+       if (reducida) {
+@@ -2680,6 +2689,10 @@
+   bool llamada = false;
+   const uint32_t base = (swap.dword[1] & 0xFFFFF000) & 0x1FFFFFFF;
+   ultimo_frontal_ = base;  // nfsmw_nativo_frontal_perezoso: the next resolve here may go to the Swap directly
++  if (base && std::find(frontales_.begin(), frontales_.end(), base) == frontales_.end()) {
++    std::rotate(frontales_.begin(), frontales_.end() - 1, frontales_.end());
++    frontales_[0] = base;
++  }
+   // The front buffer is still in its render target (and the texture was not written): painted from there.
+   const bool desde_destino = frontal_.pendiente && frontal_.base == base;
+   const ImagenDk* origen = desde_destino ? frontal_.destino : TexturaResuelta(base);
+@@ -2879,8 +2892,8 @@
+       "[deko3d] por fotograma: GPU sombras {:.2f} ms, escena {:.2f}, reflejo {:.2f}, 320 {:.2f}, menores {:.2f}, copias "
+       "{:.2f}, borrados {:.2f}, resto {:.2f}, escena sin profundidad {:.2f}, GPU parada entre trabajos {:.2f}; el anillo "
+       "espero a la GPU {:.2f} ms; borrados saltados {:.1f}; dibujos con Z temprana {:.0f}; ZCULL invalidado por otra prueba {:.1f}; stencil de transferencias aplazado "
+-      "{} (hecho {}, descartado {}), pases ampliados {}, pases sin transferir {}, resolves 4x promediados de su vista 1x {} y "
+-      "dibujos con alfa a cobertura {} en total",
++      "{} (hecho {}, descartado {}), pases ampliados {}, pases sin transferir {}, resolves 4x promediados de su vista 1x {}, "
++      "dibujos con alfa a cobertura {} y borrados de otra base dejados fuera de un frontal {} en total",
+       ms(kGpuSombras), ms(kGpuEscena), ms(kGpuReflejo), ms(kGpu320), ms(kGpuMenores), ms(kGpuCopias), ms(kGpuBorrados),
+       ms(kGpuOtros), ms(kGpuEscenaSinProfundidad), ms(kGpuHuecoEntreTrabajos),
+       double(nucleo_.NsEsperandoValla() - informe_espera_ns_) / 1e6 / fotogramas,
+@@ -2888,7 +2901,7 @@
+       double(dibujos_z_temprana_ - informe_z_temprana_) / fotogramas,
+       double(zcull_invalidaciones_ - informe_zcull_) / fotogramas, estencil_aplazados_, estencil_ejecutados_,
+       estencil_descartados_, pases_ampliados_, pases_sin_transferir_, resolves_reducidos_,
+-      dibujos_alfa_a_cobertura_);
++      dibujos_alfa_a_cobertura_, borrados_ajenos_saltados_);
+   // Frame pacing: an even 20 fps and one that alternates 35 and 65 ms have the same average. A stutter is a frame
+   // more than 1.5 times (and twice) the interval's median.
+   if (!intervalos_us_.empty()) {
+--- a/src/x360/deko/edram.cpp
++++ b/src/x360/deko/edram.cpp
+@@ -285,7 +285,7 @@
+   }
+ }
+ 
+-void RenderDk::EdramPreparar(ImagenDk& vista, uint32_t filas) {
++void RenderDk::EdramPreparar(ImagenDk& vista, uint32_t filas, bool sin_borrados_ajenos) {
+   if (!EdramActiva() || !vista.edram_bpp || vista.edram_versiones.empty()) return;
+   // Nobody claimed anything since all of it was found up to date: nothing to look at (most pass changes).
+   const uint32_t generacion = vista.profundidad ? generacion_z_ : generacion_color_;
+@@ -323,7 +323,9 @@
+       const TejaEdram& u = tejas[(vista.edram_base + j) & (kTejas - 1)];
+       una_borrada = u.borrada && u.version == t.version;
+     }
+-    if (!una_borrada || !EdramBorrarComo(*dueno, t, vista, k, fin - k)) {
++    if (una_borrada && sin_borrados_ajenos && dueno->edram_base != vista.edram_base) {
++      ++borrados_ajenos_saltados_;  // the frame being resolved keeps what it drew
++    } else if (!una_borrada || !EdramBorrarComo(*dueno, t, vista, k, fin - k)) {
+       EdramTransferir(*dueno, vista, k, fin - k);
+     }
+     for (uint32_t j = k; j < fin; ++j) {
+--- a/include/rex/x360/deko/render.h
++++ b/include/rex/x360/deko/render.h
+@@ -410,6 +410,8 @@
+     uint32_t ancho = 0, alto = 0;
+   } frontal_;
+   uint32_t ultimo_frontal_ = 0;       // the front buffer of the last Swap
++  std::array<uint32_t, 4> frontales_{};  // the Swaps' front buffers seen (the game rotates them)
++  uint64_t borrados_ajenos_saltados_ = 0;
+   uint32_t frontal_obsoleta_ = 0;     // painted from its target: the texture itself was not written
+   bool frontal_apagado_ = false;      // a late read showed up: copies from then on
+   uint64_t frontales_ahorrados_ = 0, frontales_copiados_ = 0, bandas_completadas_ = 0;
+@@ -447,7 +449,9 @@
+   // The limits of the views bound in one pass (EmpezarPase).
+   void EdramTopes(const std::array<ImagenDk*, 5>& imagenes);
+   // Before a view is drawn or read in its first `filas` rows: the tiles other views wrote since are brought in.
+-  void EdramPreparar(ImagenDk& vista, uint32_t filas);
++  // sin_borrados_ajenos: a resolve to a front buffer leaves out the clears another base's view claimed over this
++  // view's tiles (x360_edram_frontal_sin_borrados).
++  void EdramPreparar(ImagenDk& vista, uint32_t filas, bool sin_borrados_ajenos = false);
+   // The view wrote its first `filas` rows (a clear, a pass): its tiles are its own.
+   void EdramReclamar(ImagenDk& vista, uint32_t filas, const float* borrado = nullptr);
+   bool EdramBorrarComo(const ImagenDk& origen, const TejaEdram& teja, ImagenDk& destino, uint32_t desde,

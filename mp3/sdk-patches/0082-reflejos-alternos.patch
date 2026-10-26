@@ -1,0 +1,106 @@
+--- a/src/x360/deko/dibujos.cpp
++++ b/src/x360/deko/dibujos.cpp
+@@ -41,6 +41,10 @@
+                     "Un pase cuyo primer dibujo pinta todos sus destinos de color enteros y opacos (un cuadrado a "
+                     "pantalla completa sin mezcla, prueba ni descarte) no recibe lo que otras vistas tienen en esas "
+                     "tejas: GTA IV convierte su mapa de sombras a R32F sobre tejas de la escena (3 ms de transferencias)");
++REXCVAR_DEFINE_BOOL(x360_reflejos_alternos, true, "X360",
++                    "Los pases de reflejo (color 7e3 en vistas 4x de hasta 320 de ancho, con profundidad: el reflejo de "
++                    "GTA IV y sus mapas de entorno) se dibujan y resuelven solo en los fotogramas pares; en los impares "
++                    "las texturas resueltas guardan las del anterior (sus borrados si se hacen)");
+ REXCVAR_DEFINE_BOOL(x360_alfa_a_cobertura, true, "X360",
+                     "Alpha to coverage (RB_COLORCONTROL bit 4) como prueba de alfa >= 0.5, como Xenia con una muestra: "
+                     "las hojas de los arboles y los cables de los puentes de GTA IV salian como tarjetas enteras");
+@@ -1342,6 +1346,31 @@
+   if (!hay_destino || !pitch) {
+     return true;  // writes nothing visible
+   }
++  // Reflection passes every other frame (x360_reflejos_alternos): on odd frames their draws are not recorded and the
++  // views are noted so their resolves are skipped too (Copiar); the resolved textures keep the previous frame's.
++  if ((fotograma_ & 1) && claves[4] && ((msaa_clave >> 20) == 2) && pitch <= 320 && mascaras &&
++      REXCVAR_GET(x360_reflejos_alternos)) {
++    bool reflejo = true;
++    for (uint32_t i = 0; i < 4 && reflejo; ++i) {
++      const uint32_t formato = uint32_t(claves[i] >> 16) & 0xF;
++      reflejo = !claves[i] || formato == 3 || formato == 12;  // 7e3 (the luminance chain's 4x views are k_32_FLOAT)
++    }
++    if (reflejo) {
++      if (reflejos_fotograma_ != fotograma_) {
++        reflejos_fotograma_ = fotograma_;
++        vistas_reflejo_saltadas_.clear();
++      }
++      for (uint32_t i = 0; i < 4; ++i) {
++        const uint64_t vista = claves[i] & ~(uint64_t(1) << 63);
++        if (claves[i] && std::find(vistas_reflejo_saltadas_.begin(), vistas_reflejo_saltadas_.end(), vista) ==
++                             vistas_reflejo_saltadas_.end()) {
++          vistas_reflejo_saltadas_.push_back(vista);
++        }
++      }
++      ++dibujos_reflejo_saltados_;
++      return true;
++    }
++  }
+   const bool destino_sombras = pitch >= 1600 && claves[4] && !claves[0] && !claves[1] && !claves[2] && !claves[3];
+ 
+   // --- Depth bias (GetPreferredFacePolygonOffset and command_processor.cpp's scale, as the Vulkan backend)
+--- a/src/x360/deko/destinos.cpp
++++ b/src/x360/deko/destinos.cpp
+@@ -1394,7 +1394,7 @@
+   const uint32_t origen = control & 0x7;
+   bool borrar_color = (control >> 8) & 0x1;
+   const uint32_t comando = (control >> 20) & 0x3;
+-  const bool copiar =
++  bool copiar =
+       comando == uint32_t(xenos::CopyCommand::kRaw) || comando == uint32_t(xenos::CopyCommand::kConvert);
+   const uint32_t pitch = reg.rb_surface_info & 0x3FFF;
+   if (origen >= xenos::kMaxColorRenderTargets) {
+@@ -1418,6 +1418,17 @@
+     return false;
+   }
+   const uint32_t msaa = (reg.rb_surface_info >> 16) & 0x3;
++  // A reflection view whose draws this frame skipped (x360_reflejos_alternos): no copy, the texture keeps the previous
++  // frame's; its clears are done.
++  if (copiar && reflejos_fotograma_ == fotograma_ && !vistas_reflejo_saltadas_.empty()) {
++    const uint64_t vista = (uint64_t(info_color & 0xFFF) << 24) | (uint64_t(formato_color) << 16) |
++                           (uint64_t(msaa) << 20) | pitch;
++    if (std::find(vistas_reflejo_saltadas_.begin(), vistas_reflejo_saltadas_.end(), vista) !=
++        vistas_reflejo_saltadas_.end()) {
++      copiar = false;
++      ++resolves_reflejo_saltados_;
++    }
++  }
+   ImagenDk* destino_render = DestinoColor(info_color & 0xFFF, formato_color, pitch, msaa);
+   if (!destino_render) {
+     return false;
+@@ -2862,8 +2873,8 @@
+       "[deko3d] por fotograma: GPU sombras {:.2f} ms, escena {:.2f}, reflejo {:.2f}, 320 {:.2f}, menores {:.2f}, copias "
+       "{:.2f}, borrados {:.2f}, resto {:.2f}, escena sin profundidad {:.2f}, GPU parada entre trabajos {:.2f}; el anillo "
+       "espero a la GPU {:.2f} ms; borrados saltados {:.1f}; dibujos con Z temprana {:.0f}; ZCULL invalidado por otra prueba {:.1f}; stencil de transferencias aplazado "
+-      "{} (hecho {}, descartado {}), pases ampliados {}, pases sin transferir {}, resolves 4x promediados de su vista 1x {} y "
+-      "dibujos con alfa a cobertura {} en total",
++      "{} (hecho {}, descartado {}), pases ampliados {}, pases sin transferir {}, resolves 4x promediados de su vista 1x {}, "
++      "dibujos con alfa a cobertura {}, reflejos saltados en fotogramas impares {} dibujos y {} resolves en total",
+       ms(kGpuSombras), ms(kGpuEscena), ms(kGpuReflejo), ms(kGpu320), ms(kGpuMenores), ms(kGpuCopias), ms(kGpuBorrados),
+       ms(kGpuOtros), ms(kGpuEscenaSinProfundidad), ms(kGpuHuecoEntreTrabajos),
+       double(nucleo_.NsEsperandoValla() - informe_espera_ns_) / 1e6 / fotogramas,
+@@ -2871,7 +2882,7 @@
+       double(dibujos_z_temprana_ - informe_z_temprana_) / fotogramas,
+       double(zcull_invalidaciones_ - informe_zcull_) / fotogramas, estencil_aplazados_, estencil_ejecutados_,
+       estencil_descartados_, pases_ampliados_, pases_sin_transferir_, resolves_reducidos_,
+-      dibujos_alfa_a_cobertura_);
++      dibujos_alfa_a_cobertura_, dibujos_reflejo_saltados_, resolves_reflejo_saltados_);
+   // A/B measurement in one run (x360_ab_estados): the interval that just ended had state ab_estado_ (0 = all settings
+   // as configured); the next one gets the next state. The report lines above are that interval's.
+   if (const std::string estados = REXCVAR_GET(x360_ab_estados); !estados.empty()) {
+--- a/include/rex/x360/deko/render.h
++++ b/include/rex/x360/deko/render.h
+@@ -603,6 +603,9 @@
+   uint64_t dibujos_alfa_a_cobertura_ = 0;
+   bool dibujo_opaco_completo_ = false;  // the draw that begins the pass paints its color targets whole (x360_edram_saltar_muertas)
+   uint64_t pases_sin_transferir_ = 0;
++  // Reflection passes every other frame (x360_reflejos_alternos): the views whose draws this odd frame skipped.
++  uint64_t reflejos_fotograma_ = 0, dibujos_reflejo_saltados_ = 0, resolves_reflejo_saltados_ = 0;
++  std::vector<uint64_t> vistas_reflejo_saltadas_;
+   uint64_t resolves_reducidos_ = 0;  // 4x resolves averaged from their 1x view (x360_edram_reduccion_directa)  // draws with alpha to coverage, drawn with an alpha test (x360_alfa_a_cobertura)
+   // The DKSH of a library shader for that specialization value (masked) and, for a vertex shader, the
+   // interpolators it keeps. nullptr if it cannot be had (logged once).

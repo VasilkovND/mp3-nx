@@ -1,0 +1,102 @@
+--- a/src/x360/deko/destinos.cpp
++++ b/src/x360/deko/destinos.cpp
+@@ -998,6 +998,45 @@
+   ImagenDk& nueva = profundidades_.emplace(clave, imagen).first->second;
+   PrepararDestino(nueva);
+   return &nueva;
++}
++
++namespace {
++// Bytes per texel of the formats resolves write (texture formats).
++uint32_t BytesTexelResuelta(uint32_t formato) {
++  switch (formato) {
++    case 26:  // k_16_16_16_16
++    case 32:  // k_16_16_16_16_FLOAT
++    case 37:  // k_32_32_FLOAT
++      return 8;
++    case 38:  // k_32_32_32_32_FLOAT
++      return 16;
++    default:
++      return 4;
++  }
++}
++}  // namespace
++
++// GTA IV renders its G-buffer in bands it tiles itself (1280x256 then 1280x464 through the same EDRAM) and resolves
++// each band into the same texture, the second one with the copy base moved down 256 rows (the destination height
++// 464). Textures here are images keyed by base, so the second band went into a 1280x464 texture the game never samples,
++// and the lower two thirds of every G-buffer texture stayed black. A copy base that lies a whole number of rows into a
++// resolved texture of the same width and format is that texture, from that row.
++RenderDk::Resuelta* RenderDk::ResueltaDeBanda(uint32_t base, uint32_t ancho, uint32_t pitch, uint32_t formato,
++                                              uint32_t& filas) {
++  filas = 0;
++  if (resueltas_.count(base)) return nullptr;
++  const uint32_t bytes_fila = pitch * BytesTexelResuelta(formato);
++  if (!bytes_fila) return nullptr;
++  for (auto& [b, r] : resueltas_) {
++    if (b >= base || r.formato_guest != formato || r.imagen.ancho != ancho) continue;
++    const uint32_t delta = base - b;
++    if (delta % (bytes_fila * 32) != 0) continue;  // whole rows of 32-texel tiles
++    const uint32_t f = delta / bytes_fila;
++    if (f == 0 || f >= r.imagen.alto) continue;
++    filas = f;
++    return &r;
++  }
++  return nullptr;
+ }
+ 
+ RenderDk::Resuelta* RenderDk::ObtenerResuelta(uint32_t base, uint32_t ancho, uint32_t alto, uint32_t formato,
+@@ -1255,8 +1294,17 @@
+       const uint32_t ancho_resolve = uint32_t(x1 - x0);
+       const uint32_t ancho_textura =
+           x0 == 0 && ancho_resolve < pitch_destino && ancho_resolve + 32 > pitch_destino ? ancho_resolve : pitch_destino;
+-      resuelta = ObtenerResuelta(base & 0x1FFFFFFF, ancho_textura, alto_destino, formato_destino,
+-                                 (info_destino >> 24) & 0x1, false);
++      uint32_t filas_banda = 0;
++      resuelta = capa ? nullptr : ResueltaDeBanda(base & 0x1FFFFFFF, ancho_textura, pitch_destino, formato_destino, filas_banda);
++      if (resuelta) {
++        dy += filas_banda;
++        for (auto& [b, r] : resueltas_) {
++          if (&r == resuelta) base_resuelta = b;
++        }
++      } else {
++        resuelta = ObtenerResuelta(base & 0x1FFFFFFF, ancho_textura, alto_destino, formato_destino,
++                                   (info_destino >> 24) & 0x1, false);
++      }
+     }
+     if (resuelta) {
+       const uint32_t pedido_ancho = std::min(uint32_t(x1 - x0), destino_render->ancho - uint32_t(x0));
+@@ -1605,13 +1653,19 @@
+   // At its own position in the texture at the copy's base, as for color (Copiar).
+   const uint32_t base = reg.rb_copy_dest_base & 0x1FFFFFFF;
+   const uint32_t dx = uint32_t(x0);
+-  const uint32_t dy = uint32_t(y0);
++  uint32_t dy = uint32_t(y0);
+   const uint32_t formato_textura = ((info >> 16) & 0x1) ? 23 : 22;  // k_24_8_FLOAT : k_24_8
+   // Its width as for color (the pitch is padded to 32 texels; see Copiar).
+   const uint32_t ancho_resolve = uint32_t(x1 - x0);
+   const uint32_t ancho_textura =
+       x0 == 0 && ancho_resolve < pitch_destino && ancho_resolve + 32 > pitch_destino ? ancho_resolve : pitch_destino;
+-  Resuelta* resuelta = ObtenerResuelta(base, ancho_textura, alto_destino, formato_textura, false, true);
++  uint32_t filas_banda = 0;  // a band of a texture resolved before (ResueltaDeBanda)
++  Resuelta* resuelta = ResueltaDeBanda(base, ancho_textura, pitch_destino, formato_textura, filas_banda);
++  if (resuelta) {
++    dy += filas_banda;
++  } else {
++    resuelta = ObtenerResuelta(base, ancho_textura, alto_destino, formato_textura, false, true);
++  }
+   if (!resuelta) {
+     return;
+   }
+--- a/include/rex/x360/deko/render.h
++++ b/include/rex/x360/deko/render.h
+@@ -306,6 +306,9 @@
+   DkGpuAddr volcado_gpu_ = 0;
+   uint32_t volcado_usados_ = 0, volcados_ = 0;
+   std::vector<EntradaVolcado> volcado_;
++  // A copy whose base lies whole rows into a resolved texture of the same width and format (a band of a frame the
++  // game tiles itself): that texture, and the rows it starts at (destinos.cpp).
++  Resuelta* ResueltaDeBanda(uint32_t base, uint32_t ancho, uint32_t pitch, uint32_t formato, uint32_t& filas);
+   Resuelta* ObtenerResuelta(uint32_t base, uint32_t ancho, uint32_t alto, uint32_t formato, bool intercambio_rb,
+                             bool profundidad);
+   bool CrearImagen(ImagenDk& imagen, DkImageType tipo, DkImageFormat formato, uint32_t ancho, uint32_t alto,

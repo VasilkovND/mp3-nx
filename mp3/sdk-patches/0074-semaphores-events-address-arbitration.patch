@@ -1,0 +1,338 @@
+--- a/src/core/threading_posix.cpp
++++ b/src/core/threading_posix.cpp
+@@ -35,6 +35,13 @@
+ // Horizon has no sys/syscall.h. The shim provides affinity, priority, cpu_set_t
+ // and the thread id. See core/threading_switch.h.
+ #include "threading_switch.h"
++// Address arbitration for the semaphores (below). Only these headers: switch.h drags typedefs (Thread, Mutex, Event)
++// that collide with rex::thread.
++extern "C" {  // switch.h's own wrapping, which these headers alone do not have
++#include <switch/types.h>
++#include <switch/arm/counter.h>
++#include <switch/kernel/svc.h>
++}
+ #else
+ #include <sys/syscall.h>
+ #endif
+@@ -312,6 +319,20 @@
+ }
+ #endif  // __APPLE__
+ 
++#if defined(__SWITCH__)
++// WaitMultiple polls its objects. A Signal or Release of an event or a semaphore bumps this generation and, if a poll
++// is sleeping, wakes it through the kernel's address arbitration: a job thread waiting on its semaphore and its quit
++// event starts when the job is released, not at the end of a 50 us - 1 ms sleep.
++static std::atomic<int32_t> g_generacion_sondeo{0};
++static std::atomic<int32_t> g_sondeos_durmiendo{0};
++inline void DespertarSondeos() {
++  g_generacion_sondeo.fetch_add(1, std::memory_order_acq_rel);
++  if (g_sondeos_durmiendo.load(std::memory_order_acquire) > 0) {
++    svcSignalToAddress(&g_generacion_sondeo, SignalType_Signal, 0, -1);
++  }
++}
++#endif
++
+ class PosixConditionBase {
+  public:
+   PosixConditionBase() {
+@@ -332,7 +353,17 @@
+   virtual ~PosixConditionBase() = default;
+   virtual bool Signal() = 0;
+ 
+-  WaitResult Wait(std::chrono::milliseconds timeout) {
++  // WaitMultiple, with the object's internal mutex held: takes the object if it is signaled. A semaphore without the
++  // mutex (Switch) can lose its count to a lock-free waiter between signaled() and the taking: then false.
++  virtual bool TryAcquire() {
++    if (!signaled()) return false;
++    post_execution();
++    return true;
++  }
++  // Gives back what TryAcquire took (a WaitAll that could not take all of them), with the mutex held.
++  virtual void Undo() {}
++
++  virtual WaitResult Wait(std::chrono::milliseconds timeout) {
+     bool executed;
+     auto predicate = [this] { return this->signaled(); };
+ #if defined(__SWITCH__)
+@@ -412,6 +443,9 @@
+     // (GTA IV's main thread spent ~8 % of its time in these 1 ms sleeps), a long one does not wake more often.
+     uint32_t vueltas = 0;
+     while (true) {
++#if defined(__SWITCH__)
++      const int32_t generacion = g_generacion_sondeo.load(std::memory_order_acquire);  // before looking
++#endif
+       size_t first_signaled = std::numeric_limits<size_t>::max();
+       bool condition_met = false;
+       bool all_locked = true;
+@@ -485,14 +519,22 @@
+       }
+ 
+       if (condition_met) {
++        bool tomados = true;
+         if (wait_all) {
+-          for (size_t i = 0; i < handles.size(); ++i) {
+-            handles[i]->post_execution();
++          size_t i = 0;
++          for (; i < handles.size(); ++i) {
++            if (!handles[i]->TryAcquire()) break;
+           }
++          if (i < handles.size()) {
++            while (i-- > 0) handles[i]->Undo();
++            tomados = false;
++          }
+         } else {
+-          handles[first_signaled]->post_execution();
++          tomados = handles[first_signaled]->TryAcquire();
+         }
+-        return std::make_pair(WaitResult::kSuccess, first_signaled);
++        if (tomados) {
++          return std::make_pair(WaitResult::kSuccess, first_signaled);
++        }
+       }
+ 
+       locks.clear();
+@@ -503,6 +545,20 @@
+       }
+ 
+       const auto paso = std::chrono::microseconds(std::min<uint32_t>(50u << std::min<uint32_t>(vueltas++, 5u), 1000u));
++#if defined(__SWITCH__)
++      {
++        // Until an event or semaphore is signaled since the look above (then at once), or the poll step.
++        auto espera = paso;
++        if (timeout != std::chrono::milliseconds::max()) {
++          espera = std::min(espera, std::chrono::duration_cast<std::chrono::microseconds>(end_time - now));
++        }
++        g_sondeos_durmiendo.fetch_add(1, std::memory_order_acq_rel);
++        svcWaitForAddress(&g_generacion_sondeo, ArbitrationType_WaitIfEqual, generacion,
++                          int64_t(std::chrono::nanoseconds(espera).count()));
++        g_sondeos_durmiendo.fetch_sub(1, std::memory_order_acq_rel);
++        continue;
++      }
++#endif
+       if (timeout == std::chrono::milliseconds::max()) {
+         std::this_thread::sleep_for(paso);
+       } else {
+@@ -539,15 +595,67 @@
+ class PosixCondition<Event> : public PosixConditionBase {
+  public:
+   PosixCondition(bool manual_reset, bool initial_state)
+-      : signal_(initial_state), manual_reset_(manual_reset) {}
++      : signal_(initial_state ? 1 : 0), manual_reset_(manual_reset) {}
+   virtual ~PosixCondition() = default;
+ 
++#if defined(__SWITCH__)
++  // Switch: as the semaphore below, an atomic state and the kernel's address arbitration instead of the mutex and the
++  // condition variable (KeSetEvent was 4 % of GTA IV's main thread, blocked behind WaitMultiple's pollers).
++  bool Signal() override {
++    signal_.store(1, std::memory_order_release);
++    // An auto-reset event lets one waiter through; the others would only find it taken.
++    svcSignalToAddress(&signal_, SignalType_Signal, 0, manual_reset_ ? -1 : 1);
++    DespertarSondeos();
++    return true;
++  }
++
++  void Reset() { signal_.store(0, std::memory_order_release); }
++
++  WaitResult Wait(std::chrono::milliseconds timeout) override {
++    const bool sin_fin = timeout == std::chrono::milliseconds::max();
++    const uint64_t fin = sin_fin ? 0
++                                 : armGetSystemTick() +
++                                       armNsToTicks(uint64_t(std::chrono::nanoseconds(timeout).count()));
++    while (true) {
++      if (TryAcquire()) {
++        return WaitResult::kSuccess;
++      }
++      int64_t espera = -1;
++      if (!sin_fin) {
++        const uint64_t ahora = armGetSystemTick();
++        if (ahora >= fin) {
++          return WaitResult::kTimeout;
++        }
++        espera = int64_t(armTicksToNs(fin - ahora));
++      }
++      // Sleeps only while the state is still 0 (checked by the kernel), until a Signal or the timeout.
++      svcWaitForAddress(&signal_, ArbitrationType_WaitIfEqual, 0, espera);
++    }
++  }
++
++  bool TryAcquire() override {
++    if (manual_reset_) {
++      return signal_.load(std::memory_order_acquire) != 0;
++    }
++    int32_t uno = 1;
++    return signal_.compare_exchange_strong(uno, 0, std::memory_order_acq_rel, std::memory_order_relaxed);
++  }
++
++  void Undo() override {
++    if (!manual_reset_) Signal();
++  }
++
++ private:
++  inline bool signaled() const override { return signal_.load(std::memory_order_acquire) != 0; }
++  inline void post_execution() override { TryAcquire(); }
++  std::atomic<int32_t> signal_;
++#else
+   // Woken after the mutex is let go, as the semaphore's Release: under it every waiter woke into a mutex still held
+   // (GTA IV run37: the main thread blocked ~36 % of its time on these internal mutexes with the three cores busy).
+   bool Signal() override {
+     {
+       auto lock = std::unique_lock<std::mutex>(mutex_);
+-      signal_ = true;
++      signal_ = 1;
+     }
+     cond_.notify_all();
+     return true;
+@@ -555,17 +663,22 @@
+ 
+   void Reset() {
+     auto lock = std::unique_lock<std::mutex>(mutex_);
+-    signal_ = false;
++    signal_ = 0;
+   }
+ 
++  void Undo() override {
++    if (!manual_reset_) signal_ = 1;
++  }
++
+  private:
+-  inline bool signaled() const override { return signal_; }
++  inline bool signaled() const override { return signal_ != 0; }
+   inline void post_execution() override {
+     if (!manual_reset_) {
+-      signal_ = false;
++      signal_ = 0;
+     }
+   }
+-  bool signal_;
++  int32_t signal_;
++#endif
+   const bool manual_reset_;
+ };
+ 
+@@ -573,24 +686,83 @@
+ class PosixCondition<Semaphore> : public PosixConditionBase {
+  public:
+   PosixCondition(uint32_t initial_count, uint32_t maximum_count)
+-      : count_(initial_count), maximum_count_(maximum_count) {}
++      : count_(int32_t(initial_count)), maximum_count_(maximum_count) {}
+ 
+   bool Signal() override { return Release(1, nullptr); }
+ 
+-  // Switch: one waiter woken per count released, after the mutex is let go. With notify_all under the lock, every
+-  // waiter woke, queued on the mutex (still held by the releasing thread) and all but one went back to sleep, and a
+-  // successful wait woke all of them again. GTA IV's main thread spent 61 % of its time blocked in NtReleaseSemaphore
+-  // behind its four job threads that way, on three cores.
++#if defined(__SWITCH__)
++  // Switch: the count is an atomic and the waits are the kernel's address arbitration, with no mutex. With the
++  // mutex, GTA IV's main thread spent 25 % of its time blocked in NtReleaseSemaphore (run42): the job threads poll
++  // their semaphores in WaitMultiple holding that mutex, and on three busy cores the holder could be preempted for a
++  // whole time slice. A release is now a compare-and-swap and a signal to the address; a waiter sleeps in the kernel
++  // only while the count is below 1, checked by the kernel under its own lock, so no release is missed.
+   bool Release(uint32_t release_count, int* out_previous_count) {
++    int32_t c = count_.load(std::memory_order_relaxed);
++    do {
++      if (release_count > maximum_count_ - uint32_t(c)) {
++        return false;
++      }
++    } while (!count_.compare_exchange_weak(c, c + int32_t(release_count), std::memory_order_acq_rel,
++                                           std::memory_order_relaxed));
++    if (out_previous_count) {
++      *out_previous_count = c;
++    }
++    svcSignalToAddress(&count_, SignalType_Signal, 0, int32_t(release_count));
++    DespertarSondeos();
++    return true;
++  }
++
++  WaitResult Wait(std::chrono::milliseconds timeout) override {
++    const bool sin_fin = timeout == std::chrono::milliseconds::max();
++    const uint64_t fin = sin_fin ? 0
++                                 : armGetSystemTick() +
++                                       armNsToTicks(uint64_t(std::chrono::nanoseconds(timeout).count()));
++    while (true) {
++      if (TryAcquire()) {
++        return WaitResult::kSuccess;
++      }
++      int64_t espera = -1;
++      if (!sin_fin) {
++        const uint64_t ahora = armGetSystemTick();
++        if (ahora >= fin) {
++          return WaitResult::kTimeout;
++        }
++        espera = int64_t(armTicksToNs(fin - ahora));
++      }
++      // Returns at once if the count is no longer below 1, when a release signals, or at the timeout.
++      svcWaitForAddress(&count_, ArbitrationType_WaitIfLessThan, 1, espera);
++    }
++  }
++
++  bool TryAcquire() override {
++    int32_t c = count_.load(std::memory_order_relaxed);
++    while (c > 0) {
++      if (count_.compare_exchange_weak(c, c - 1, std::memory_order_acq_rel, std::memory_order_relaxed)) {
++        return true;
++      }
++    }
++    return false;
++  }
++
++  void Undo() override { Release(1, nullptr); }
++
++ private:
++  inline bool signaled() const override { return count_.load(std::memory_order_acquire) > 0; }
++  inline void post_execution() override { TryAcquire(); }
++  std::atomic<int32_t> count_;
++#else
++  // One waiter woken per count released, after the mutex is let go. With notify_all under the lock, every waiter
++  // woke, queued on the mutex (still held by the releasing thread) and all but one went back to sleep.
++  bool Release(uint32_t release_count, int* out_previous_count) {
+     {
+       auto lock = std::unique_lock<std::mutex>(mutex_);
+-      if (release_count > maximum_count_ - count_) {
++      if (release_count > maximum_count_ - uint32_t(count_)) {
+         return false;
+       }
+       if (out_previous_count) {
+         *out_previous_count = count_;
+       }
+-      count_ += release_count;
++      count_ += int32_t(release_count);
+     }
+     if (release_count == 1) {
+       cond_.notify_one();
+@@ -600,11 +772,14 @@
+     return true;
+   }
+ 
++  void Undo() override { count_++; }
++
+  private:
+   inline bool signaled() const override { return count_ > 0; }
+   // Taking one count cannot make the semaphore signaled for anyone else: nobody to wake.
+   inline void post_execution() override { count_--; }
+-  uint32_t count_;
++  int32_t count_;
++#endif
+   const uint32_t maximum_count_;
+ };
+ 
+@@ -643,6 +818,9 @@
+     count_++;
+     owner_ = std::this_thread::get_id();
+   }
++
++ public:
++  void Undo() override { count_--; }
+   uint32_t count_;
+   std::thread::id owner_;
+ };
+@@ -711,6 +889,9 @@
+   }
+ 
+  private:
++  void Undo() override {
++    if (!manual_reset_) signal_ = true;
++  }
+   inline bool signaled() const override { return signal_; }
+   inline void post_execution() override {
+     if (!manual_reset_) {

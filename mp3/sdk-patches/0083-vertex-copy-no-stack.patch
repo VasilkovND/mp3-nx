@@ -1,0 +1,51 @@
+--- a/include/rex/x360/xenos.h
++++ b/include/rex/x360/xenos.h
+@@ -90,25 +90,30 @@
+     uint32_t i = 0;
+     const uint32_t bloques = palabras & ~15u;
+     if (orden == Endian::k8in32 || orden == Endian::k8in16 || orden == Endian::k16in32 || orden == Endian::kNone) {
+-      for (; i < bloques; i += 16) {
+-        uint8x16x4_t v = vld1q_u8_x4(origen + size_t(i) * 4);
+-        if (orden == Endian::k8in32) {
+-          v.val[0] = vrev32q_u8(v.val[0]);
+-          v.val[1] = vrev32q_u8(v.val[1]);
+-          v.val[2] = vrev32q_u8(v.val[2]);
+-          v.val[3] = vrev32q_u8(v.val[3]);
+-        } else if (orden == Endian::k8in16) {
+-          v.val[0] = vrev16q_u8(v.val[0]);
+-          v.val[1] = vrev16q_u8(v.val[1]);
+-          v.val[2] = vrev16q_u8(v.val[2]);
+-          v.val[3] = vrev16q_u8(v.val[3]);
+-        } else if (orden == Endian::k16in32) {
+-          v.val[0] = vreinterpretq_u8_u16(vrev32q_u16(vreinterpretq_u16_u8(v.val[0])));
+-          v.val[1] = vreinterpretq_u8_u16(vrev32q_u16(vreinterpretq_u16_u8(v.val[1])));
+-          v.val[2] = vreinterpretq_u8_u16(vrev32q_u16(vreinterpretq_u16_u8(v.val[2])));
+-          v.val[3] = vreinterpretq_u8_u16(vrev32q_u16(vreinterpretq_u16_u8(v.val[3])));
++      // Four separate registers: as a uint8x16x4_t GCC moved every block through the stack (two stores and two loads
++      // per 32 bytes, run50: a quarter of RenderDk::Dibujar's samples on that loop).
++      const auto copiar = [&](auto girar) {
++        for (; i < bloques; i += 16) {
++          const uint8_t* o = origen + size_t(i) * 4;
++          uint8_t* d = destino + size_t(i) * 4;
++          const uint8x16_t v0 = girar(vld1q_u8(o));
++          const uint8x16_t v1 = girar(vld1q_u8(o + 16));
++          const uint8x16_t v2 = girar(vld1q_u8(o + 32));
++          const uint8x16_t v3 = girar(vld1q_u8(o + 48));
++          vst1q_u8(d, v0);
++          vst1q_u8(d + 16, v1);
++          vst1q_u8(d + 32, v2);
++          vst1q_u8(d + 48, v3);
+         }
+-        vst1q_u8_x4(destino + size_t(i) * 4, v);
++      };
++      if (orden == Endian::k8in32) {
++        copiar([](uint8x16_t v) { return vrev32q_u8(v); });
++      } else if (orden == Endian::k8in16) {
++        copiar([](uint8x16_t v) { return vrev16q_u8(v); });
++      } else if (orden == Endian::k16in32) {
++        copiar([](uint8x16_t v) { return vreinterpretq_u8_u16(vrev32q_u16(vreinterpretq_u16_u8(v))); });
++      } else {
++        copiar([](uint8x16_t v) { return v; });
+       }
+     }
+     for (; i < palabras; ++i) {

@@ -1,0 +1,49 @@
+--- a/src/x360/deko/destinos.cpp
++++ b/src/x360/deko/destinos.cpp
+@@ -31,6 +31,9 @@
+ REXCVAR_DECLARE(bool, nfsmw_dk_tiles_en_pantalla);
+ REXCVAR_DEFINE_INT32(nfsmw_dk_volcado_pase_desde, 0, "NFSMW", "Volcado de un fotograma: primer pase cuyos destinos se vuelcan");
+ REXCVAR_DEFINE_INT32(nfsmw_dk_volcado_pase_hasta, 100000, "NFSMW", "Volcado de un fotograma: ultimo pase cuyos destinos se vuelcan");
++REXCVAR_DEFINE_INT32(nfsmw_dk_volcado_pase_base, -1, "NFSMW", "Volcado de un fotograma: solo los pases con c0 en esta base EDRAM (-1 = todos)");
++REXCVAR_DEFINE_INT32(nfsmw_dk_volcado_pase_cada, 1, "NFSMW", "Volcado de un fotograma: uno de cada N pases de esa base");
++REXCVAR_DEFINE_BOOL(nfsmw_dk_volcado_pase_z, true, "NFSMW", "Volcado de un fotograma: tambien la profundidad de cada pase");
+ REXCVAR_DEFINE_BOOL(nfsmw_dk_volcado_resueltas, true, "NFSMW", "Volcado de un fotograma: tambien las texturas resueltas");
+ #include <rex/x360/xenos.h>
+ 
+@@ -2275,6 +2278,7 @@
+       volcado_.clear();
+       volcado_escena_hecho_ = false;
+       volcado_pases_ = 0;
++      volcado_pases_base_ = 0;
+       REXLOG_INFO("[deko3d] volcado: el proximo fotograma, cada textura resuelta a la SD");
+     }
+   }
+@@ -2888,10 +2892,18 @@
+   const uint32_t pase = volcado_pases_++;
+   if (int32_t(pase) < REXCVAR_GET(nfsmw_dk_volcado_pase_desde) || int32_t(pase) > REXCVAR_GET(nfsmw_dk_volcado_pase_hasta)) {
+     return;
++  }
++  // Only the passes drawing into one EDRAM base (nfsmw_dk_volcado_pase_base, -1 = any), one in every N of them.
++  const int32_t solo_base = REXCVAR_GET(nfsmw_dk_volcado_pase_base);
++  if (solo_base >= 0) {
++    if (!claves_pase_previo_[0] || int32_t((claves_pase_previo_[0] >> 24) & 0xFFF) != solo_base) return;
++    const int32_t cada = std::max(REXCVAR_GET(nfsmw_dk_volcado_pase_cada), 1);
++    if (volcado_pases_base_++ % uint32_t(cada) != 0) return;
+   }
+   for (uint32_t i = 0; i < 5; ++i) {
+     const ImagenDk* imagen = imagenes_pase_[i];
+     if (!imagen || !claves_pase_previo_[i]) continue;
++    if (i == 4 && !REXCVAR_GET(nfsmw_dk_volcado_pase_z)) continue;
+     const uint32_t formato = uint32_t(claves_pase_previo_[i] >> 16) & 0xF;
+     VolcarResuelta(*imagen, 0xF0000000u | ((pase & 0xFFFu) << 4) | i, formato, 736);
+   }
+--- a/include/rex/x360/deko/render.h
++++ b/include/rex/x360/deko/render.h
+@@ -299,6 +299,7 @@
+   // the pass left there, before any resolve. Named F<pass><slot>: slot 0-3 color, 4 depth.
+   void VolcarPaseAnterior();
+   uint32_t volcado_pases_ = 0;
++  uint32_t volcado_pases_base_ = 0;
+   void TerminarVolcado();
+   bool volcado_pedido_ = false, volcando_ = false;
+   // The dumped frame also gets the scene as the base pass left it (before the first light, k_2_10_10_10_FLOAT_AS_16_

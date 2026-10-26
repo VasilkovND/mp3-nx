@@ -1,0 +1,20 @@
+A resolve larger than its texture is shrunk only for a scaled scene (both directions, a texture of 64x64 or more); the
+Xenos resolves 8x8 blocks and copies what fits, and GTA IV's 8x8 resolves into its 8x1 luminance were averaged to 0.
+
+--- a/src/x360/deko/destinos.cpp
++++ b/src/x360/deko/destinos.cpp
+@@ -1446,8 +1446,12 @@
+       const uint32_t alto = std::min(pedido_alto, cabe_alto);
+       // A scene larger than its resolved texture (an internal resolution above the front buffer's) is shrunk with
+       // a linear blit, as the Vulkan path does; otherwise it is copied texel for texel.
+-      const bool encoger = cabe_ancho && cabe_alto &&
+-                           (pedido_ancho * 4 >= cabe_ancho * 5 || pedido_alto * 4 >= cabe_alto * 5);
++      // Only a scaled scene: larger in both directions and into a texture of some size. The Xenos resolves in 8x8
++      // blocks and copies what fits: GTA IV resolves an 8x8 rectangle into its 8x1 luminance textures (and 8x8 into
++      // 8x5), and the shrink averaged row 0, its only value, with the 7 empty rows below: the adapted luminance came
++      // out 0 and the tonemap burned the frame white outdoors and black indoors.
++      const bool encoger = cabe_ancho >= 64 && cabe_alto >= 64 && pedido_ancho * 4 >= cabe_ancho * 5 &&
++                           pedido_alto * 4 >= cabe_alto * 5;
+       // nfsmw_nativo_frontal_perezoso: the whole scene to the front buffer of the last Swap, not read back.
+       const int32_t maximo_lectura = REXCVAR_GET(nfsmw_nativo_leer_resueltas_texels);
+       const bool se_lee = maximo_lectura > 0 && uint64_t(ancho) * alto <= uint64_t(maximo_lectura);

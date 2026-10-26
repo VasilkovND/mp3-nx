@@ -1,0 +1,74 @@
+Vertex buffers under 4 KB are always copied: neither the work's dedupe (by guest address) nor the geometry store (no
+rehash within an epoch) see GTA IV rewriting each post-processing pass's quad in place; the diagnostic frame logs
+those quads and whether the old copy would have been bound.
+
+--- a/src/x360/deko/dibujos.cpp
++++ b/src/x360/deko/dibujos.cpp
+@@ -2077,7 +2077,7 @@
+       for (const EntradaVerticesDk::AEntero& c : entrada->a_entero) {
+         if (c.enlace == b) modo ^= (uint64_t(c.offset) << 24) ^ (uint64_t(c.n) << 40);
+       }
+-      if (geometria_.activo()) {
++      if (geometria_.activo() && origen.bytes >= 4096) {
+         const deko::AlmacenGeometria::Resultado en_almacen = geometria_.Buscar(
+             origen.datos, origen.bytes, modo, origen.bytes,
+             [&](uint8_t* destino, uint32_t&, uint32_t&) { convertir(destino); });
+@@ -2090,7 +2090,7 @@
+       const uint64_t direccion = uint64_t(reinterpret_cast<uintptr_t>(origen.datos));
+       const uint32_t orden_dedupe = uint32_t(origen.orden) | 0x100u | (zancada << 12);
+       uint64_t ya = 0;
+-      if (dedupe_.Buscar(direccion, origen.bytes, orden_dedupe, ya)) {
++      if (origen.bytes >= 4096 && dedupe_.Buscar(direccion, origen.bytes, orden_dedupe, ya)) {
+         bufers[b] = {DkGpuAddr(ya), origen.bytes};
+         continue;
+       }
+@@ -2103,8 +2103,9 @@
+       bufers[b] = {s.gpu, origen.bytes};
+       continue;
+     }
+-    // Kept from an earlier frame with the same content (or kept now, the second time it is seen unchanged).
+-    if (geometria_.activo()) {
++    // Kept from an earlier frame with the same content (or kept now, the second time it is seen unchanged). Not the
++    // small ones: within an epoch a range already checked is not hashed again, and the full-screen quads change in place.
++    if (geometria_.activo() && origen.bytes >= 4096) {
+       const deko::AlmacenGeometria::Resultado en_almacen = geometria_.Buscar(
+           origen.datos, origen.bytes, uint64_t(origen.orden), origen.bytes, [&](uint8_t* destino, uint32_t&, uint32_t&) {
+             CopiarVertices(TrabajoCopia{origen.datos, destino, origen.bytes / 4, origen.orden});
+@@ -2115,10 +2116,35 @@
+         continue;
+       }
+     }
+-    // The same guest range in the same order already copied in this work slot: bound again, not copied.
++    // The same guest range in the same order already copied in this work slot: bound again, not copied. Not the small
++    // ones (under 4 KB): GTA IV writes each post-processing pass's full-screen quad (4 vertices, 144 bytes) where the
++    // previous one was, with no fence in between, and the bound copy was the previous pass's quad. Copying them costs
++    // nothing.
+     const uint64_t direccion = uint64_t(reinterpret_cast<uintptr_t>(origen.datos));
+     uint64_t ya = 0;
+-    if (dedupe_.Buscar(direccion, origen.bytes, uint32_t(origen.orden), ya)) {
++    const bool pequeno = origen.bytes < 4096;
++    const bool habria_reusado = dedupe_.Buscar(direccion, origen.bytes, uint32_t(origen.orden), ya);
++    if (edram_diag_ && ps && b == 0 &&
++        (ps->numero == 71 || ps->numero == 108 || ps->numero == 119 || ps->numero == 851 || ps->numero == 828 ||
++         ps->numero == 490)) {
++      std::string t;
++      const uint32_t zancada = entrada->enlaces[b].zancada;
++      const uint32_t n_v = zancada ? std::min<uint32_t>(origen.bytes / zancada, 4) : 0;
++      for (uint32_t v = 0; v < n_v; ++v) {
++        float q[9] = {};
++        const uint32_t palabras = std::min<uint32_t>(zancada / 4, 9);
++        for (uint32_t k = 0; k < palabras; ++k) {
++          uint32_t w;
++          std::memcpy(&w, origen.datos + size_t(v) * zancada + k * 4, 4);
++          w = origen.orden == xenos::Endian::k8in32 ? __builtin_bswap32(w) : w;
++          std::memcpy(&q[k], &w, 4);
++        }
++        t += fmt::format(" v{}=({:g} {:g} {:g} | {:g} {:g})", v, q[0], q[1], q[2], q[7], q[8]);
++      }
++      REXLOG_INFO("[edram-diag] vertices del PS n{}: {} bytes en {:X}, la copia anterior {}{}", ps->numero, origen.bytes,
++                  direccion & 0xFFFFFFFF, habria_reusado ? "SE HABRIA REUSADO" : "no estaba", t);
++    }
++    if (habria_reusado && !pequeno) {
+       bufers[b] = {DkGpuAddr(ya), origen.bytes};
+       continue;
+     }

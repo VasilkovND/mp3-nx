@@ -1,0 +1,10 @@
+# mp3-nx 1.0
+# Face buttons by position, as on an Xbox pad (the bottom button acts as A). false = by letter.
+input_xbox_layout = true
+# No automatic texture dumps or frame traces.
+mp3_auto_volcados_max = 0
+mp3_trazas_max = 0
+# The profiler's stack sampling off (about 8 % faster). true = on, for performance logs.
+mp3_perfil_pilas = false
+# The FPS counter at start (ZL + ZR + Up toggles it).
+mp3_fps_al_arrancar = true

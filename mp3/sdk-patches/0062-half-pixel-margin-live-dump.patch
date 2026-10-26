@@ -1,0 +1,118 @@
+D3D pixel centers: half a pixel less 1/256, so a 1x1 viewport's pixel is filled (GTA IV's luminance reduction to 1x1
+never wrote: exposure 0, the frame burned white). The frame dump copies the resolved textures at the frame's end
+(x360_volcado_en_vivo), so the dumped frame is drawn as any other.
+
+--- a/include/rex/x360/deko/render.h
++++ b/include/rex/x360/deko/render.h
+@@ -443,7 +443,9 @@
+   // differently.
+   bool edram_diag_ = false;
+   bool edram_diag_primer_dibujo_ = false;
+-  uint32_t diag_instantaneas_ = 0;  // x360_diag_instantanea: the live snapshots written so far
++  uint32_t diag_instantaneas_ = 0;
++  std::vector<std::pair<uint32_t, uint32_t>> volcado_en_vivo_;  // base, guest format (x360_volcado_en_vivo)
++  void AnotarVolcado(const ImagenDk& imagen, uint32_t base, uint32_t formato_guest);  // x360_diag_instantanea: the live snapshots written so far
+   void InstantaneaDiagnostico();
+   uint64_t edram_diag_contador_ = 0;
+   bool EdramRegistrando() const;
+--- a/src/x360/deko/destinos.cpp
++++ b/src/x360/deko/destinos.cpp
+@@ -118,6 +118,9 @@
+                      "texturas). Si un fotograma no cabe se envia y sigue en la siguiente ranura")
+     .range(8, 128)
+     .lifecycle(rex::cvar::Lifecycle::kInitOnly);
++REXCVAR_DEFINE_BOOL(x360_volcado_en_vivo, true, "X360",
++                    "El volcado (ZL + ZR + Left) copia las texturas resueltas al terminar el fotograma, como quedaron, sin "
++                    "una barrera en cada resolve: el fotograma se dibuja como cualquier otro");
+ REXCVAR_DEFINE_INT32(x360_diag_instantanea, 3, "X360",
+                      "Las primeras N veces, al terminar un fotograma de diagnostico, sus texturas resueltas clave van a "
+                      "la SD (volcado_NN) sin cambiar como se dibujo (el volcado ZL + ZR + Left pone barreras en cada "
+@@ -1524,7 +1527,7 @@
+           }
+         }
+         if (volcando_) {
+-          if (REXCVAR_GET(nfsmw_dk_volcado_resueltas)) VolcarResuelta(resuelta->imagen, base_resuelta, resuelta->formato_guest);
++          AnotarVolcado(resuelta->imagen, base_resuelta, resuelta->formato_guest);
+         }
+         if (encoger) {
+           LeerResuelta(reg, resuelta->imagen, x0, y0, dx, dy, cabe_ancho, cabe_alto);
+@@ -1878,7 +1881,7 @@
+   SombraMinimoResueltaEscrita(base);
+   ++copias_;
+   if (volcando_) {
+-    if (REXCVAR_GET(nfsmw_dk_volcado_resueltas)) VolcarResuelta(resuelta->imagen, base, resuelta->formato_guest);
++    AnotarVolcado(resuelta->imagen, base, resuelta->formato_guest);
+   }
+   OlvidarEstado();
+ }
+@@ -2451,6 +2454,14 @@
+   InstantaneaDiagnostico();  // before EdramFotograma, which ends the diagnostic frame
+   EdramFotograma();
+   if (volcando_) {
++    // x360_volcado_en_vivo: the textures as the frame left them, copied now, after all its work.
++    if (!volcado_en_vivo_.empty()) AsegurarTrabajo();
++    for (const auto& [base, formato] : volcado_en_vivo_) {
++      if (const auto it = resueltas_.find(base); it != resueltas_.end() && it->second.imagen.viva) {
++        VolcarResuelta(it->second.imagen, base, formato);
++      }
++    }
++    volcado_en_vivo_.clear();
+     TerminarVolcado();
+   }
+   if (volcado_pedido_) {
+@@ -3136,6 +3147,21 @@
+   volcado_usados_ += (bytes + 255) & ~255u;
+ }
+ 
++// A resolved texture for the frame dump: copied at once (with the copy engine and its barrier, as before), or with
++// x360_volcado_en_vivo at the frame's end, as the frame left it, so the dump frame is drawn like any other (run31's
++// black quarter and empty luminance chain were not in the dumps).
++void RenderDk::AnotarVolcado(const ImagenDk& imagen, uint32_t base, uint32_t formato_guest) {
++  if (!REXCVAR_GET(nfsmw_dk_volcado_resueltas)) return;
++  if (!REXCVAR_GET(x360_volcado_en_vivo)) {
++    VolcarResuelta(imagen, base, formato_guest);
++    return;
++  }
++  for (const auto& [b, f] : volcado_en_vivo_) {
++    if (b == base) return;
++  }
++  volcado_en_vivo_.emplace_back(base, formato_guest);
++}
++
+ void RenderDk::VolcarPaseAnterior() {
+   const uint32_t pase = volcado_pases_++;
+   if (int32_t(pase) < REXCVAR_GET(nfsmw_dk_volcado_pase_desde) || int32_t(pase) > REXCVAR_GET(nfsmw_dk_volcado_pase_hasta)) {
+--- a/src/x360/deko/dibujos.cpp
++++ b/src/x360/deko/dibujos.cpp
+@@ -36,6 +36,8 @@
+ REXCVAR_DEFINE_INT32(x360_vs_codigo_max_kb, 256, "X360",
+                      "Los dibujos con un vertex shader de mas KB de codigo compilado no se graban (los que el compilador "
+                      "desborda: segundos por dibujo); 0 = todos");
++REXCVAR_DECLARE(bool, x360_volcado_en_vivo);  // destinos.cpp
++
+ REXCVAR_DEFINE_BOOL(nfsmw_nativo_inv_tamano_tex, true, "NFSMW",
+                     "Renderizador nativo (18/09, build 164): los shaders toman 1/tamano de textura de las "
+                     "constantes en vez de preguntarselo a la textura en cada muestreo con desplazamiento")
+@@ -1112,7 +1114,8 @@
+     OlvidarEstado();
+     g_.pase_valido = false;
+   }
+-  if (volcando_ && !volcado_escena_hecho_ && ((p.registros[gr::XE_GPU_REG_RB_COLOR_INFO] >> 16) & 0xF) == 12) {
++  if (volcando_ && !REXCVAR_GET(x360_volcado_en_vivo) && !volcado_escena_hecho_ &&
++      ((p.registros[gr::XE_GPU_REG_RB_COLOR_INFO] >> 16) & 0xF) == 12) {
+     volcado_escena_hecho_ = true;
+     const uint32_t info = p.registros[gr::XE_GPU_REG_RB_COLOR_INFO];
+     const uint32_t superficie = p.registros[gr::XE_GPU_REG_RB_SURFACE_INFO];
+@@ -1780,7 +1783,11 @@
+   compartidas[64] = (r[kRegBooleanos] & 0xFFFF) | ((r[kRegBooleanos + 4] & 0xFFFF) << 16);
+   compartidas[65] = 0;  // g_SwappedTexcoords
+   if (!(r[gr::XE_GPU_REG_PA_SU_VTX_CNTL] & 0x1)) {  // PixelCenter::kD3DZero
+-    const float medio[2] = {1.0f / viewport[2], -1.0f / std::abs(viewport[3])};
++    // Half a pixel less 1/256: exactly half put the pixel center of a 1x1 viewport on the clipped quad's corner, and the
++    // GPU left it unfilled. GTA IV reduces its luminance to 1x1 (PS n71, then the adaptation n108): those draws never
++    // wrote, the adapted luminance stayed 0 and the tonemap burned the frame white.
++    const float kMedio = 1.0f - 1.0f / 128.0f;
++    const float medio[2] = {kMedio / viewport[2], -kMedio / std::abs(viewport[3])};
+     std::memcpy(&compartidas[66], medio, sizeof(medio));
+   }
+   std::memcpy(&compartidas[68], &umbral_alfa, sizeof(umbral_alfa));

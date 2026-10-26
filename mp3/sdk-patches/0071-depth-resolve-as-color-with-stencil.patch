@@ -1,0 +1,175 @@
+A depth resolve read as a k_8_8_8_8 texture gives the D24S8 word's bytes (stencil, depth low to high), as the Xenos
+resolve leaves them in memory: an RGBA8 companion made at the resolve from the depth target and its stencil.
+
+--- a/include/rex/x360/deko/render.h
++++ b/include/rex/x360/deko/render.h
+@@ -282,6 +282,14 @@
+   bool fs_copia_color_valido_ = false, fs_copia_profundidad_valido_ = false, fs_copia_signo_valido_ = false;
+   // The copy out of a k_2_10_10_10_FLOAT target (7e3): what that format can hold (Copiar3D's limitar_7e3).
+   DkShader fs_copia_7e3_{};
++  // A depth resolve read as a k_8_8_8_8 texture: the D24S8 word's bytes (stencil, then depth low to high), what the
++  // Xenos resolve leaves in memory. GTA IV's deferred lights read the stencil byte (material flags) that way.
++  DkShader fs_z_como_color_{};
++  bool fs_z_como_color_valido_ = false;
++  std::unordered_map<uint32_t, ImagenDk> z_como_color_;  // by resolve base
++  void ZComoColor(ImagenDk& profundidad, uint32_t x0, uint32_t y0, uint32_t ancho, uint32_t alto,
++                  const ImagenDk& resuelta, uint32_t base, uint32_t dx, uint32_t dy);
++  const ImagenDk* ZComoColorDe(uint32_t base, const ImagenDk& resuelta) const;
+   std::set<int32_t> sesgos_vistos_copia_;  // exponent biases of color resolves already logged
+   bool fs_copia_7e3_valido_ = false;
+   // A resolved texture sampled with signed or biased components (TextureSign 1 or 2): the GPU applies them while
+--- a/src/x360/deko/destinos.cpp
++++ b/src/x360/deko/destinos.cpp
+@@ -384,6 +384,20 @@
+   // x 1024 (two's complement), so unsigned reads give those bits / 65535 and signed reads the value / 32.
+   color = mix(color, mod(floor(t * 1024.0 + 0.5) + 65536.0, 65536.0) / 65535.0, equal(copia.modos, ivec4(3)));
+   color = mix(color, clamp(t / 32.0, -1.0, 1.0), equal(copia.modos, ivec4(4)));
++}
++)";
++constexpr const char* kFsZComoColor = R"(#version 460
++layout(binding = 0) uniform sampler2D profundidad;
++layout(binding = 1) uniform usampler2D estencil;
++layout(std140, binding = 0) uniform Copia {
++  ivec4 desplazamiento;
++} copia;
++layout(location = 0) out vec4 color;
++void main() {
++  ivec2 p = ivec2(gl_FragCoord.xy) + copia.desplazamiento.xy;
++  uint d = uint(clamp(texelFetch(profundidad, p, 0).r, 0.0, 1.0) * 16777215.0 + 0.5);
++  uint s = texelFetch(estencil, p, 0).r & 0xFFu;
++  color = vec4(float(s), float(d & 0xFFu), float((d >> 8) & 0xFFu), float(d >> 16)) * (1.0 / 255.0);
+ }
+ )";
+ constexpr const char* kFsCopiaProfundidad = R"(#version 460
+@@ -1804,6 +1818,86 @@
+ // CopiarProfundidad without the scaled shadow map. A whole target resolved to a texture of its size and format (the
+ // 1600x1600 shadow maps) swaps images instead of copying (nfsmw_nativo_resolver_sin_copia), with or without the clear
+ // (nfsmw_nativo_intercambiar_sin_borrado); the target gets its content back if the game draws on it again first.
++void RenderDk::ZComoColor(ImagenDk& profundidad, uint32_t x0, uint32_t y0, uint32_t ancho, uint32_t alto,
++                          const ImagenDk& resuelta, uint32_t base, uint32_t dx, uint32_t dy) {
++  if (!fs_z_como_color_valido_ || !vs_salida_valido_) return;
++  ImagenDk& c = z_como_color_[base];
++  if (c.viva && (c.ancho != resuelta.ancho || c.alto != resuelta.alto)) {
++    DestruirImagen(c);
++  }
++  if (!c.viva && !CrearImagen(c, DkImageType_2D, DkImageFormat_RGBA8_Unorm, resuelta.ancho, resuelta.alto, 1, 1,
++                              DkImageFlags_UsageRender, "profundidad como color")) {
++    return;
++  }
++  const uint32_t ranura_z = VistaDe(profundidad, 0x688, 0 /* RRRR */);
++  const uint32_t ranura_s = VistaEstencil(profundidad);
++  if (!ranura_s) return;
++  AsegurarTrabajo();
++  EmitirCieloPendiente();
++  const deko::Subida ubo = Reservar(256, DK_UNIFORM_BUF_ALIGNMENT);
++  if (!ubo) return;
++  const int32_t desplazamiento[4] = {int32_t(x0) - int32_t(dx), int32_t(y0) - int32_t(dy), 0, 0};
++  std::memcpy(ubo.cpu, desplazamiento, sizeof(desplazamiento));
++  DkCmdBuf cmd = nucleo_.comandos();
++  MarcarGpu(kGpuCopias);
++  if (transferencia_sin_barrera_) {
++    BarreraTransferencia();
++    transferencia_sin_barrera_ = false;
++  }
++  // What wrote the depth (the pass's draws, a transfer) is done and visible to the texture units.
++  dkCmdBufBarrier(cmd, DkBarrier_Fragments, DkInvalidateFlags_Image);
++  ++barreras_fragmentos_;
++  rop_sin_barrera_ = false;
++  DkImageView vista;
++  dkImageViewDefaults(&vista, &c.imagen);
++  dkCmdBufBindRenderTarget(cmd, &vista, nullptr);
++  const DkViewport vp = {float(dx), float(dy), float(ancho), float(alto), 0.0f, 1.0f};
++  const DkScissor tijera = {dx, dy, ancho, alto};
++  dkCmdBufSetViewports(cmd, 0, &vp, 1);
++  static const DkViewportSwizzle kIdentidad = {DkSwizzle_PositiveX, DkSwizzle_PositiveY, DkSwizzle_PositiveZ,
++                                                DkSwizzle_PositiveW};
++  dkCmdBufSetViewportSwizzles(cmd, 0, &kIdentidad, 1);
++  dkCmdBufSetScissors(cmd, 0, &tijera, 1);
++  DkRasterizerState rs;
++  dkRasterizerStateDefaults(&rs);
++  rs.cullMode = DkFace_None;
++  DkColorState cs;
++  dkColorStateDefaults(&cs);
++  DkColorWriteState cws;
++  dkColorWriteStateDefaults(&cws);
++  DkDepthStencilState ds;
++  dkDepthStencilStateDefaults(&ds);
++  ds.depthTestEnable = false;
++  ds.depthWriteEnable = false;
++  ds.stencilTestEnable = false;
++  dkCmdBufBindRasterizerState(cmd, &rs);
++  dkCmdBufBindColorState(cmd, &cs);
++  dkCmdBufBindColorWriteState(cmd, &cws);
++  dkCmdBufBindDepthStencilState(cmd, &ds);
++  dkCmdBufBindVtxAttribState(cmd, nullptr, 0);
++  dkCmdBufBindVtxBufferState(cmd, nullptr, 0);
++  const DkShader* shaders[2] = {&vs_salida_, &fs_z_como_color_};
++  dkCmdBufBindShaders(cmd, DkStageFlag_GraphicsMask, shaders, 2);
++  dkCmdBufBindUniformBuffer(cmd, DkStage_Fragment, 0, ubo.gpu, 256);
++  dkCmdBufBindTexture(cmd, DkStage_Fragment, 0, dkMakeTextureHandle(ranura_z, 0));
++  dkCmdBufBindTexture(cmd, DkStage_Fragment, 1, dkMakeTextureHandle(ranura_s, 0));
++  dkCmdBufDraw(cmd, DkPrimitive_Triangles, 3, 1, 0, 0);
++  ++c.version;
++  copia3d_pendiente_ = true;
++  trabajo_3d_sin_barrera_ = true;
++  fuerza_barrera_copia_ = true;  // the next copy or draw may read it
++  OlvidarEstado();
++}
++
++const ImagenDk* RenderDk::ZComoColorDe(uint32_t base, const ImagenDk& resuelta) const {
++  const auto it = z_como_color_.find(base);
++  if (it == z_como_color_.end() || !it->second.viva || it->second.ancho != resuelta.ancho ||
++      it->second.alto != resuelta.alto) {
++    return nullptr;
++  }
++  return &it->second;
++}
++
+ void RenderDk::CopiarProfundidad(const RegistrosCopia& reg, uint32_t pitch, bool borrara) {
+   const uint32_t info_destino = reg.rb_copy_dest_info;
+   if ((info_destino >> 3) & 0x1) {
+@@ -1867,6 +1961,13 @@
+   HacerBorradoPendiente(*profundidad);
+   CompletarBanda(*profundidad, uint32_t(std::max(y1, 0)), false, 0);
+   const bool sin_copia = REXCVAR_GET(nfsmw_nativo_resolver_sin_copia);  // read each time: the game can switch it (ds2 safe mode)
++  // The D24S8 bytes for the game's k_8_8_8_8 reads of this resolve (its stencil: GTA IV's material flags), from the
++  // depth target as it is now (before it is swapped into the texture or copied without its stencil).
++  uint32_t base_textura = base;
++  for (const auto& [b, r] : resueltas_) {
++    if (&r == resuelta) base_textura = b;
++  }
++  ZComoColor(*profundidad, uint32_t(x0), uint32_t(y0), ancho, alto, resuelta->imagen, base_textura, dx, dy);
+   const bool entero = x0 == 0 && y0 == 0 && dx == 0 && dy == 0 && ancho == profundidad->ancho &&
+                       alto == profundidad->alto && resuelta->imagen.ancho == profundidad->ancho &&
+                       resuelta->imagen.alto == profundidad->alto && resuelta->imagen.formato == profundidad->formato;
+@@ -2300,6 +2401,11 @@
+   if (!fs_copia_7e3_valido_) {
+     REXLOG_ERROR("[deko3d] no se pudo compilar la copia de 7e3: {}", c7e3.log);
+   }
++  const deko::Compilador::Resultado zc = compilador_.Compilar(false, kFsZComoColor);
++  fs_z_como_color_valido_ = zc.ok && nucleo_.CargarShader(fs_z_como_color_, zc.dksh, "profundidad como color");
++  if (!fs_z_como_color_valido_) {
++    REXLOG_ERROR("[deko3d] no se pudo compilar la profundidad como color: {}", zc.log);
++  }
+   const deko::Compilador::Resultado z = compilador_.Compilar(false, kFsCopiaProfundidad);
+   fs_copia_profundidad_valido_ = z.ok && nucleo_.CargarShader(fs_copia_profundidad_, z.dksh, "copia de profundidad");
+   if (!fs_copia_color_valido_ || !fs_copia_profundidad_valido_) {
+--- a/src/x360/deko/texturas.cpp
++++ b/src/x360/deko/texturas.cpp
+@@ -594,8 +594,15 @@
+       ancho_out = resuelta->ancho;
+       alto_out = resuelta->alto;
+       if (resuelta->profundidad) {
+-        // A depth copy (k_24_8): depth in R, which the fetch swizzle distributes; read unfiltered.
+         puntual = true;
++        // Read as k_8_8_8_8 (6): the D24S8 word's bytes, stencil first (GTA IV's GBufferStencilTextureSampler: the
++        // deferred lights decode material flags from it; with the depth in every channel the interiors went black).
++        if ((f[1] & 0x3F) == 6) {
++          if (const ImagenDk* c = ZComoColorDe(base & 0x1FFFFFFF, *resuelta)) {
++            return VistaDe(*c, swizzle, kSwizzleRGBA);
++          }
++        }
++        // A depth copy (k_24_8): depth in R, which the fetch swizzle distributes; read unfiltered.
+         return VistaDe(*resuelta, swizzle, kSwizzleRRRR);
+       }
+       // The emulation's copy swaps channels in memory (copy_dest_swap) and the fetch swizzle undoes it; here the copy

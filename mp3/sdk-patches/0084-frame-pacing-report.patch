@@ -1,0 +1,57 @@
+--- a/src/x360/deko/destinos.cpp
++++ b/src/x360/deko/destinos.cpp
+@@ -2730,6 +2730,14 @@
+     CerrarTrabajo();
+   }
+   ++fotograma_;
++  if (const uint64_t ahora = deko::AhoraNs(); fotograma_previo_ns_) {
++    if (intervalos_us_.size() < 4096) {
++      intervalos_us_.push_back(uint32_t(std::min<uint64_t>((ahora - fotograma_previo_ns_) / 1000, UINT32_MAX)));
++    }
++    fotograma_previo_ns_ = ahora;
++  } else {
++    fotograma_previo_ns_ = ahora;
++  }
+   geometria_.NuevoFotograma(fotograma_);
+   PerfilAlCambiarDeFotograma();
+   if (pintado) {
+@@ -2883,6 +2891,27 @@
+       double(zcull_invalidaciones_ - informe_zcull_) / fotogramas, estencil_aplazados_, estencil_ejecutados_,
+       estencil_descartados_, pases_ampliados_, pases_sin_transferir_, resolves_reducidos_,
+       dibujos_alfa_a_cobertura_, dibujos_reflejo_saltados_, resolves_reflejo_saltados_);
++  // Frame pacing: an even 20 fps and one that alternates 35 and 65 ms have the same average. A stutter is a frame
++  // more than 1.5 times (and twice) the interval's median.
++  if (!intervalos_us_.empty()) {
++    std::vector<uint32_t> v = intervalos_us_;
++    std::sort(v.begin(), v.end());
++    const auto pct = [&](double q) { return double(v[std::min<size_t>(size_t(q * double(v.size())), v.size() - 1)]) / 1e3; };
++    const double mediana = pct(0.5);
++    uint32_t tirones = 0, tirones_dobles = 0;
++    double salto = 0;  // mean change between consecutive frames: high when they alternate
++    for (size_t i = 0; i < intervalos_us_.size(); ++i) {
++      const double ms = double(intervalos_us_[i]) / 1e3;
++      tirones += ms > mediana * 1.5;
++      tirones_dobles += ms > mediana * 2.0;
++      if (i) salto += std::abs(ms - double(intervalos_us_[i - 1]) / 1e3);
++    }
++    X360_INFORME("[ritmo] {} fotogramas: mediana {:.1f} ms, p90 {:.1f}, p99 {:.1f}, maximo {:.1f}; {} tirones (> 1,5x la "
++                 "mediana) y {} dobles; cambio medio entre fotogramas seguidos {:.1f} ms",
++                 v.size(), mediana, pct(0.9), pct(0.99), double(v.back()) / 1e3, tirones, tirones_dobles,
++                 intervalos_us_.size() > 1 ? salto / double(intervalos_us_.size() - 1) : 0.0);
++    intervalos_us_.clear();
++  }
+   // A/B measurement in one run (x360_ab_estados): the interval that just ended had state ab_estado_ (0 = all settings
+   // as configured); the next one gets the next state. The report lines above are that interval's.
+   if (const std::string estados = REXCVAR_GET(x360_ab_estados); !estados.empty()) {
+--- a/include/rex/x360/deko/render.h
++++ b/include/rex/x360/deko/render.h
+@@ -751,6 +751,9 @@
+   std::unordered_map<uint64_t, std::vector<uint64_t>> vistas_por_serie_;
+   std::vector<uint32_t> descriptores_libres_;
+   bool sin_descriptores_avisado_ = false;
++  // Time between frames (each ++fotograma_), for the report's stutter line: microseconds of this interval's frames.
++  uint64_t fotograma_previo_ns_ = 0;
++  std::vector<uint32_t> intervalos_us_;
+   uint32_t ab_estado_ = 0;  // x360_ab_estados: the state of the interval being measured
+   std::vector<std::vector<uint32_t>> descriptores_por_liberar_;  // per work slot
+   uint32_t siguiente_descriptor_ = 8;

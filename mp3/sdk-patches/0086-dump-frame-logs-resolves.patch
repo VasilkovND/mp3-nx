@@ -1,0 +1,31 @@
+--- a/src/x360/deko/destinos.cpp
++++ b/src/x360/deko/destinos.cpp
+@@ -1397,6 +1397,12 @@
+   bool copiar =
+       comando == uint32_t(xenos::CopyCommand::kRaw) || comando == uint32_t(xenos::CopyCommand::kConvert);
+   const uint32_t pitch = reg.rb_surface_info & 0x3FFF;
++  if (origen >= xenos::kMaxColorRenderTargets && (edram_diag_ || EdramRegistrando())) {
++    REXLOG_INFO("[edram-diag] resolve desde la profundidad {:03X} pitch {}{} -> {:08X}{}{}, tijera de ventana {:08X}",
++                reg.rb_depth_info & 0xFFF, pitch, ((reg.rb_surface_info >> 16) & 0x3) == 2 ? "/4x" : ((reg.rb_surface_info >> 16) & 0x3) == 1 ? "/2x" : "", reg.rb_copy_dest_base,
++                copiar ? "" : " (sin copia)", (control >> 9) & 0x1 ? ", borra la profundidad" : "",
++                reg.pa_sc_window_scissor_br);
++  }
+   if (origen >= xenos::kMaxColorRenderTargets) {
+     // From depth (IsClearingColor: a depth source clears no color).
+     if (copiar) {
+@@ -1433,9 +1439,12 @@
+   if (!destino_render) {
+     return false;
+   }
+-  if (edram_diag_) {
+-    REXLOG_INFO("[edram-diag] resolve desde {} ({},{})-({},{}) -> {:08X}{}{}", Vista(*destino_render), x0, y0, x1, y1,
+-                reg.rb_copy_dest_base, copiar ? "" : " (sin copia)", borrar_color ? ", borra el color" : "");
++  // Also in the frame a dump takes (ZL + ZR + Left): which resolve or clear left what in that frame.
++  if (edram_diag_ || EdramRegistrando()) {
++    REXLOG_INFO("[edram-diag] resolve desde {} ({},{})-({},{}) -> {:08X}{}{}{}, tijera de ventana {:08X}",
++                Vista(*destino_render), x0, y0, x1, y1, reg.rb_copy_dest_base, copiar ? "" : " (sin copia)",
++                borrar_color ? ", borra el color" : "", (control >> 9) & 0x1 ? ", borra la profundidad" : "",
++                reg.pa_sc_window_scissor_br);
+   }
+   // A 4x view whose samples one 1x view holds is resolved from it (x360_edram_reduccion_directa), not prepared.
+   ImagenDk* reducida = copiar && y1 > 0 && x0 >= 0 && y0 >= 0 ? EdramVistaReducible(*destino_render, uint32_t(y1))

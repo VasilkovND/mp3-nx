@@ -1,0 +1,54 @@
+--- a/src/x360/deko/destinos.cpp
++++ b/src/x360/deko/destinos.cpp
+@@ -121,6 +121,10 @@
+ REXCVAR_DEFINE_BOOL(x360_volcado_en_vivo, true, "X360",
+                     "El volcado (ZL + ZR + Left) copia las texturas resueltas al terminar el fotograma, como quedaron, sin "
+                     "una barrera en cada resolve: el fotograma se dibuja como cualquier otro");
++REXCVAR_DEFINE_STRING(x360_ab_estados, "", "X360",
++                      "Medida A/B en una sola prueba: estados separados por ';', cada uno 'nombre:valor de prueba:valor "
++                      "normal'. Cada informe de 10 s pasa al siguiente (el 0 es todo como esta) y el log dice que estado "
++                      "tuvo el intervalo");
+ REXCVAR_DEFINE_INT32(x360_diag_instantanea, 1, "X360",
+                      "Las primeras N veces, al terminar un fotograma de diagnostico, sus texturas resueltas clave van a "
+                      "la SD (volcado_NN) sin cambiar como se dibujo (el volcado ZL + ZR + Left pone barreras en cada "
+@@ -2868,6 +2872,30 @@
+       double(zcull_invalidaciones_ - informe_zcull_) / fotogramas, estencil_aplazados_, estencil_ejecutados_,
+       estencil_descartados_, pases_ampliados_, pases_sin_transferir_, resolves_reducidos_,
+       dibujos_alfa_a_cobertura_);
++  // A/B measurement in one run (x360_ab_estados): the interval that just ended had state ab_estado_ (0 = all settings
++  // as configured); the next one gets the next state. The report lines above are that interval's.
++  if (const std::string estados = REXCVAR_GET(x360_ab_estados); !estados.empty()) {
++    std::vector<std::string> lista;
++    for (size_t a = 0; a <= estados.size();) {
++      const size_t b = std::min(estados.find(';', a), estados.size());
++      if (b > a) lista.emplace_back(estados.substr(a, b - a));
++      a = b + 1;
++    }
++    X360_INFORME("[ab] el intervalo que termina tuvo el estado {} ({})", ab_estado_,
++                 ab_estado_ ? lista[std::min<size_t>(ab_estado_ - 1, lista.size() - 1)] : std::string("como esta"));
++    // Each entry is "name:test value:normal value". The current state's entry back to normal, the next one's to test.
++    auto aplicar = [&](uint32_t estado, bool prueba) {
++      if (!estado || estado > lista.size()) return;
++      const std::string& e = lista[estado - 1];
++      const size_t p1 = e.find(':'), p2 = p1 == std::string::npos ? p1 : e.find(':', p1 + 1);
++      if (p2 == std::string::npos) return;
++      const std::string nombre = e.substr(0, p1);
++      rex::cvar::SetFlagByName(nombre, prueba ? e.substr(p1 + 1, p2 - p1 - 1) : e.substr(p2 + 1));
++    };
++    aplicar(ab_estado_, false);
++    ab_estado_ = (ab_estado_ + 1) % uint32_t(lista.size() + 1);
++    aplicar(ab_estado_, true);
++  }
+   const auto us = [&](uint32_t e) { return dibujos ? double(ns_etapas_[e] - informe_etapas_[e]) / double(dibujos) / 1e3 : 0.0; };
+   static constexpr const char* kFasesSm[3] = {"mirando", "APLICANDO", "apagada"};
+   X360_INFORME(
+--- a/include/rex/x360/deko/render.h
++++ b/include/rex/x360/deko/render.h
+@@ -748,6 +748,7 @@
+   std::unordered_map<uint64_t, std::vector<uint64_t>> vistas_por_serie_;
+   std::vector<uint32_t> descriptores_libres_;
+   bool sin_descriptores_avisado_ = false;
++  uint32_t ab_estado_ = 0;  // x360_ab_estados: the state of the interval being measured
+   std::vector<std::vector<uint32_t>> descriptores_por_liberar_;  // per work slot
+   uint32_t siguiente_descriptor_ = 8;
+   std::unordered_map<uint64_t, uint32_t> samplers_;  // key -> descriptor

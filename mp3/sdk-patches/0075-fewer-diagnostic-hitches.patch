@@ -1,0 +1,31 @@
+--- a/src/x360/deko/edram.cpp
++++ b/src/x360/deko/edram.cpp
+@@ -32,7 +32,7 @@
+ REXCVAR_DEFINE_BOOL(x360_edram_compartida, true, "X360",
+                     "Las vistas de un mismo EDRAM (otro pitch, MSAA o formato sobre las mismas tejas) ven los mismos "
+                     "datos: se transfieren al cambiar de vista, como en el hardware");
+-REXCVAR_DEFINE_INT32(x360_edram_diag_veces, 3, "X360",
++REXCVAR_DEFINE_INT32(x360_edram_diag_veces, 1, "X360",
+                      "Fotogramas de diagnostico como mucho por sesion (cada uno escribe ~1500 lineas al log y para el "
+                      "juego 1-2 s)");
+ REXCVAR_DEFINE_INT32(x360_edram_diag_cada, 1200, "X360",
+--- a/src/x360/deko/destinos.cpp
++++ b/src/x360/deko/destinos.cpp
+@@ -121,7 +121,7 @@
+ REXCVAR_DEFINE_BOOL(x360_volcado_en_vivo, true, "X360",
+                     "El volcado (ZL + ZR + Left) copia las texturas resueltas al terminar el fotograma, como quedaron, sin "
+                     "una barrera en cada resolve: el fotograma se dibuja como cualquier otro");
+-REXCVAR_DEFINE_INT32(x360_diag_instantanea, 3, "X360",
++REXCVAR_DEFINE_INT32(x360_diag_instantanea, 1, "X360",
+                      "Las primeras N veces, al terminar un fotograma de diagnostico, sus texturas resueltas clave van a "
+                      "la SD (volcado_NN) sin cambiar como se dibujo (el volcado ZL + ZR + Left pone barreras en cada "
+                      "resolve); 0 = nunca");
+@@ -130,7 +130,7 @@
+                       "0672E000,06732000,06733000,06734000,03EFD000,03EFB000,03EFC000,06665000,07538000,078D0000,"
+                       "07C68000",
+                       "X360", "Las bases de las texturas resueltas de la instantanea de diagnostico");
+-REXCVAR_DEFINE_INT32(nfsmw_dk_perfil_gpu_s, 60, "NFSMW",
++REXCVAR_DEFINE_INT32(nfsmw_dk_perfil_gpu_s, 120, "NFSMW",
+                      "deko3d: cada cuantos segundos se mide un fotograma dibujo a dibujo en la GPU (una marca de tiempo "
+                      "antes y despues de cada dibujo; ese fotograma va algo mas lento) para el informe de pases y "
+                      "shaders mas caros. 0 = nunca");

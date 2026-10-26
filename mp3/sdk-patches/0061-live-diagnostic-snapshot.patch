@@ -1,0 +1,115 @@
+Diagnostics: the first diagnostic frames write their key resolved textures to the SD when they end (no barrier at each
+resolve as the dump has), and the post-processing draws log pixel constants c204-c215.
+
+--- a/include/rex/x360/deko/render.h
++++ b/include/rex/x360/deko/render.h
+@@ -443,6 +443,8 @@
+   // differently.
+   bool edram_diag_ = false;
+   bool edram_diag_primer_dibujo_ = false;
++  uint32_t diag_instantaneas_ = 0;  // x360_diag_instantanea: the live snapshots written so far
++  void InstantaneaDiagnostico();
+   uint64_t edram_diag_contador_ = 0;
+   bool EdramRegistrando() const;
+   static std::string Vista(const ImagenDk& v);
+--- a/src/x360/deko/destinos.cpp
++++ b/src/x360/deko/destinos.cpp
+@@ -4,6 +4,7 @@
+ #include <rex/x360/deko/destinos.h>
+ 
+ #include <map>
++#include <cstdlib>
+ #include <string>
+ 
+ #include <rex/cvar.h>
+@@ -117,6 +118,15 @@
+                      "texturas). Si un fotograma no cabe se envia y sigue en la siguiente ranura")
+     .range(8, 128)
+     .lifecycle(rex::cvar::Lifecycle::kInitOnly);
++REXCVAR_DEFINE_INT32(x360_diag_instantanea, 3, "X360",
++                     "Las primeras N veces, al terminar un fotograma de diagnostico, sus texturas resueltas clave van a "
++                     "la SD (volcado_NN) sin cambiar como se dibujo (el volcado ZL + ZR + Left pone barreras en cada "
++                     "resolve); 0 = nunca");
++REXCVAR_DEFINE_STRING(x360_diag_instantanea_bases,
++                      "06E08000,03F1E000,042B6000,0464E000,06A70000,0640D000,065ED000,066DD000,06719000,06728000,"
++                      "0672E000,06732000,06733000,06734000,03EFD000,03EFB000,03EFC000,06665000,07538000,078D0000,"
++                      "07C68000",
++                      "X360", "Las bases de las texturas resueltas de la instantanea de diagnostico");
+ REXCVAR_DEFINE_INT32(nfsmw_dk_perfil_gpu_s, 20, "NFSMW",
+                      "deko3d: cada cuantos segundos se mide un fotograma dibujo a dibujo en la GPU (una marca de tiempo "
+                      "antes y despues de cada dibujo; ese fotograma va algo mas lento) para el informe de pases y "
+@@ -2403,7 +2413,42 @@
+   return true;
+ }
+ 
++// The diagnostic frame's resolved textures as they are when it ends: copies after all its work, so that frame is drawn
++// as any other (the dump's copies at each resolve go with a full barrier, and the black quarter of run31 was not in it).
++void RenderDk::InstantaneaDiagnostico() {
++  if (!edram_diag_ || volcando_ || diag_instantaneas_ >= uint32_t(std::max(REXCVAR_GET(x360_diag_instantanea), 0))) {
++    return;
++  }
++  ++diag_instantaneas_;
++  if (!volcado_bloque_) {
++    volcado_bloque_ = nucleo_.CrearBloqueLectura(kBytesVolcado, "volcado de un fotograma");
++    volcado_cpu_ = static_cast<uint8_t*>(dkMemBlockGetCpuAddr(volcado_bloque_));
++    volcado_gpu_ = dkMemBlockGetGpuAddr(volcado_bloque_);
++  }
++  if (!volcado_bloque_) return;
++  dkMemBlockFlushCpuCache(volcado_bloque_, 0, kBytesVolcado);
++  volcado_usados_ = 0;
++  volcado_.clear();
++  AsegurarTrabajo();
++  const std::string bases = REXCVAR_GET(x360_diag_instantanea_bases);
++  for (size_t p = 0; p < bases.size();) {
++    size_t q = bases.find(',', p);
++    if (q == std::string::npos) q = bases.size();
++    const uint32_t base = uint32_t(std::strtoul(bases.substr(p, q - p).c_str(), nullptr, 16));
++    p = q + 1;
++    if (const auto it = resueltas_.find(base); it != resueltas_.end() && it->second.imagen.viva) {
++      VolcarResuelta(it->second.imagen, base, it->second.formato_guest);
++    }
++  }
++  REXLOG_INFO("[edram-diag] instantanea en vivo: {} texturas", volcado_.size());
++  if (!volcado_.empty()) {
++    volcando_ = true;  // TerminarVolcado's state
++    TerminarVolcado();
++  }
++}
++
+ bool RenderDk::Presentar(rex::ui::Presenter* presentador, const TexturaSwap& swap, uint32_t ancho, uint32_t alto) {
++  InstantaneaDiagnostico();  // before EdramFotograma, which ends the diagnostic frame
+   EdramFotograma();
+   if (volcando_) {
+     TerminarVolcado();
+--- a/src/x360/deko/dibujos.cpp
++++ b/src/x360/deko/dibujos.cpp
+@@ -1668,6 +1668,17 @@
+   // clear of a target left as they were, they are cleared first (nfsmw_dk_borrar_area_util).
+   {
+     const uint32_t hasta = tijera.y + tijera.height;
++    if (edram_diag_ && ps &&
++        (ps->numero == 71 || ps->numero == 108 || ps->numero == 490 || ps->numero == 850 || ps->numero == 851 ||
++         ps->numero == 828)) {
++      std::string c;
++      for (uint32_t k = 204; k < 216; ++k) {
++        float v[4];
++        std::memcpy(v, r + kRegConstantesPs + k * 4, sizeof(v));
++        c += fmt::format(" c{}=({:g} {:g} {:g} {:g})", k, v[0], v[1], v[2], v[3]);
++      }
++      REXLOG_INFO("[edram-diag] constantes del PS n{} (lee {} bytes):{}", ps->numero, ps->constantes_bytes, c);
++    }
+     if (edram_diag_ && edram_diag_primer_dibujo_) {
+       edram_diag_primer_dibujo_ = false;
+       REXLOG_INFO("[edram-diag] primer dibujo del pase {}: tijera {},{} {}x{}, mascaras {:04X}, c0 {}, VS n{} PS n{}",
+--- a/src/x360/deko/edram.cpp
++++ b/src/x360/deko/edram.cpp
+@@ -20,7 +20,9 @@
+ #include <rex/logging.h>
+ 
+ #include <algorithm>
++#include <cstdlib>
+ #include <cstring>
++#include <string>
+ 
+ #include <rex/ui/deko3d/compilador.h>
+ #include <rex/x360/deko/render.h>
