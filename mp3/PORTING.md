@@ -262,3 +262,20 @@ beyond the fetch bits when it binds a vertex declaration. With `mp3_volcar_desco
 load as `vs_<microcode>_de_<container>.bin` in `shaders_unknown/`; `shaders/ds_parecidos.cpp` (run by tools/shaders.sh
 from `mp3/out/console_unknown/`) copies that container with the loaded microcode, so the library gets the shader as the
 game really runs it.
+
+## Run 19: patched skinned shaders into the library; the tonemap's exposure is a constant
+
+`shaders_unknown/` brought 15 vertex shaders the console had taken by similarity. Against their containers: every
+vertex fetch of the container is a placeholder (format 0, stride 0: `00000E50 00000000`) that Direct3D fills from the
+bound vertex declaration (`00393E50 0000000C` ...), and in some it also turns ALU instructions into nops and a fetch
+off (all components masked). Translated from the container, those fetches read nothing right: the black spikes.
+`ds_parecidos` built 16 containers with the loaded microcode; XenosRecomp now skips a fetch with no component read
+(it wrote `r4. = ...` and 9 of them did not compile). Library: 3842 shaders.
+
+The tonemap is draw 389, ps_cd9469857a0c532a (into the 8-bit 2D0): Reinhard on the HDR scene (080D0000, fetched with
+exp_adjust -13), blur, bloom, depth of field; its exposure is not a texture but constants (`gAdaptedLum` c88,
+`Exposures` c137, `ToneMapParams` c139, `BurnoutLimit` c142), set by the CPU from the small luminance resolves it reads
+back. Those read-backs (`[exposicion]`) swing: 05071000 (adapted) 0.8, 1.5 and 128, 19000000 (current) 0 or 65280 =
+7e3's 31.875 x 2048: some frames feed the chain the scene as raw 16-bit integers. The draw trace of full-screen passes
+now prints every non-zero pixel shader constant, to see gAdaptedLum and Exposures. Run 19 had the render targets' color
+exp bias off (`x360_sesgo_exp_color = false`): too dark, so it stays on.
