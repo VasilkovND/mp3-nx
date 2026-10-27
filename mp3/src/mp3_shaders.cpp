@@ -526,9 +526,23 @@ const EntradaShader* Biblioteca::IdentificarEntrada(bool vertices, uint32_t fisi
       for (const ElementoVertice& el : e.elementos) {
         for (size_t j = 0; j < 3; ++j) fetch[size_t(el.instruccion) * 3 + j] = true;
       }
-      size_t distintas = 0;
-      for (size_t w = 0; w < microcodigo.size(); ++w) distintas += !fetch[w] && microcodigo[w] != e.microcodigo[w];
-      if (distintas <= std::max<size_t>(3, microcodigo.size() / 8)) {
+      // And its fetch instructions must be the entry's in the bits D3D does not patch (the entry keeps only those):
+      // Max Payne 3's jacket VS (container 33041FEED58EB114) is patched with other destination registers and
+      // swizzles when bound to the cloth's vertex declaration. Taken by address as the container, the weights went
+      // into the indices' register and the texture coordinates into the normal's: the black spikes on Max.
+      size_t distintas = 0, fetch_distintas = 0;
+      for (size_t w = 0; w < microcodigo.size(); ++w) {
+        if (fetch[w]) {
+          fetch_distintas += (microcodigo[w] & kFetchConserva[w % 3]) != e.microcodigo[w];
+        } else {
+          distintas += microcodigo[w] != e.microcodigo[w];
+        }
+      }
+      if (fetch_distintas && d.avisos_direccion++ < kMaxAvisos) {
+        REXLOG_WARN("[shaders] {} at {:08X}: n{}'s code with other fetch instructions ({} words): not taken by address",
+                    vertices ? "VS" : "PS", fisica, e.numero, fetch_distintas);
+      }
+      if (!fetch_distintas && distintas <= std::max<size_t>(3, microcodigo.size() / 8)) {
         ++d.estadisticas.por_direccion;
         if (vertices) d.aprendidas[huella] = it->second;
         d.validadas[fisica & 0x1FFFFFFF] = {it->second, uint32_t(n), microcodigo[0], microcodigo[n / 2],
