@@ -1,0 +1,149 @@
+x360_diag_ps: the draws of the listed pixel shaders (container fingerprints in hex) log where they leave Dibujar and,
+when drawn, their pass, targets, viewport and scissor (40 lines per shader). Max Payne 3's tonemap and FXAA write
+nothing visible: which path they take.
+
+--- a/src/x360/deko/dibujos.cpp
++++ b/src/x360/deko/dibujos.cpp
+@@ -22,7 +22,11 @@
+ 
+ #include <algorithm>
+ #include <cmath>
++#include <cstdlib>
+ #include <cstring>
++#include <string>
++#include <unordered_map>
++#include <vector>
+ 
+ #include <rex/ui/deko3d/compilador.h>
+ #include <rex/ui/deko3d/glsl.h>
+@@ -124,7 +128,35 @@
+                     "deko3d: la variante exacta de un vertex shader que no esta en la cache se compila en segundo "
+                     "plano; mientras, dibuja la que conserva todos los interpoladores. false = se compila en el acto")
+     .lifecycle(rex::cvar::Lifecycle::kInitOnly);
++REXCVAR_DEFINE_STRING(x360_diag_ps, "", "X360",
++                      "Diagnostico: los dibujos con estos pixel shaders (huellas de contenedor en hex, separadas por "
++                      "comas) escriben en el log por donde salen de Dibujar y con que pase, encuadre y destino (40 "
++                      "lineas por shader como mucho)");
+ 
++namespace {
++// x360_diag_ps: is this pixel shader one of the listed ones, with lines left to log.
++bool DiagPs(const rex::x360::EntradaShader* ps) {
++  if (!ps) return false;
++  const std::string& lista = REXCVAR_GET(x360_diag_ps);
++  if (lista.empty()) return false;
++  static std::string texto;
++  static std::vector<uint64_t> huellas;
++  static std::unordered_map<uint64_t, uint32_t> lineas;
++  if (lista != texto) {
++    texto = lista;
++    huellas.clear();
++    for (size_t i = 0; i < lista.size();) {
++      size_t fin = lista.find(',', i);
++      if (fin == std::string::npos) fin = lista.size();
++      if (fin > i) huellas.push_back(std::strtoull(lista.substr(i, fin - i).c_str(), nullptr, 16));
++      i = fin + 1;
++    }
++  }
++  if (std::find(huellas.begin(), huellas.end(), ps->huella_contenedor) == huellas.end()) return false;
++  return lineas[ps->huella_contenedor]++ < 40;
++}
++}  // namespace
++
+ namespace rex::x360 {
+ namespace {
+ 
+@@ -1160,6 +1192,7 @@
+ 
+ bool RenderDk::Dibujar(const PeticionDibujo& p) {
+   const uint32_t* r = p.registros;
++  const bool diag = DiagPs(p.ps);  // x360_diag_ps
+   if (!r || !p.vs || p.vs->spirv.empty()) {
+     return false;
+   }
+@@ -1220,7 +1253,7 @@
+   const bool indices32 = (iniciador >> 11) & 0x1;
+   const uint32_t cuenta = iniciador >> 16;
+   if (!cuenta) {
+-    return true;
++    { if (diag) REXLOG_INFO("[diag-ps] {:016X} sale: sin cuenta", p.ps->huella_contenedor); return true; }
+   }
+   DkPrimitive primitiva;
+   bool admite_reinicio = false;
+@@ -1318,7 +1351,7 @@
+           !alfa_nunca && ((((control_profundidad >> 1) & 0x1) && ((control_profundidad >> 2) & 0x1)) ||
+                           (control_profundidad & 0x1));
+       if (!deja_rastro) {
+-        return true;
++        { if (diag) REXLOG_INFO("[diag-ps] {:016X} sale: nada visible (mascaras)", p.ps->huella_contenedor); return true; }
+       }
+     }
+   }
+@@ -1333,7 +1366,7 @@
+       }
+     } else if (REXCVAR_GET(nfsmw_sombras_sin_vegetacion) && REXCVAR_GET(nfsmw_nativo_ps_solo_alfa)) {
+       // Only the alpha test is left (vegetation in the shadow map): not drawn (nfsmw_sombras_sin_vegetacion).
+-      return true;
++      { if (diag) REXLOG_INFO("[diag-ps] {:016X} sale: sin color y solo alfa", p.ps->huella_contenedor); return true; }
+     }
+   }
+   if (control_profundidad & 0x3) {  // stencil or z
+@@ -1343,7 +1376,7 @@
+     hay_destino = true;
+   }
+   if (!hay_destino || !pitch) {
+-    return true;  // writes nothing visible
++    { if (diag) REXLOG_INFO("[diag-ps] {:016X} sale: sin destino", p.ps->huella_contenedor); return true; }  // writes nothing visible
+   }
+   const bool destino_sombras = pitch >= 1600 && claves[4] && !claves[0] && !claves[1] && !claves[2] && !claves[3];
+ 
+@@ -1453,7 +1486,7 @@
+                          vmax);
+     }
+     if (vmin > vmax) {
+-      return true;  // resets only
++      { if (diag) REXLOG_INFO("[diag-ps] {:016X} sale: indices vacios", p.ps->huella_contenedor); return true; }  // resets only
+     }
+     con_indices = true;
+     n_indices = cuenta;
+@@ -1728,7 +1761,7 @@
+   }
+   if (z_por_color_pase_) {
+     if (edram_diag_) REXLOG_INFO("[edram-diag] dibujo del pase de profundidad por color: no se graba");
+-    return true;
++    { if (diag) REXLOG_INFO("[diag-ps] {:016X} sale: pase de profundidad por color", p.ps->huella_contenedor); return true; }
+   }
+   // A draw that tests or writes the stencil of a view whose transfer left its stencil passes for later: they run now and
+   // the pass binds its targets again (x360_edram_estencil_perezoso).
+@@ -1775,7 +1808,7 @@
+     if (edram_diag_) {
+       REXLOG_INFO("[edram-diag] dibujo sin dibujar (encuadre vacio {}) en el pase {}", vacio, g_.pase_serie);
+     }
+-    return true;  // empty viewport or scissor
++    { if (diag) REXLOG_INFO("[diag-ps] {:016X} sale: encuadre vacio", p.ps->huella_contenedor); return true; }  // empty viewport or scissor
+   }
+   // The useful area of the bound targets: nothing is drawn below the scissor. If this draw reaches rows the last
+   // clear of a target left as they were, they are cleared first (nfsmw_dk_borrar_area_util).
+@@ -2001,7 +2034,7 @@
+                     d->second.numero, d->second.bytes_codigo / 1024, d->second.registros, d->second.scratch);
+       }
+       ++vs_enormes_saltados_;
+-      return true;
++      { if (diag) REXLOG_INFO("[diag-ps] {:016X} sale: VS enorme", p.ps->huella_contenedor); return true; }
+     }
+   }
+   nucleo_.InvalidarCodigoSiHaceFalta();  // code copied in the middle of a frame (rex/ui/deko3d/nucleo.h)
+@@ -2599,6 +2632,14 @@
+         const uint32_t tam = r[gr::XE_GPU_REG_PA_SU_POINT_SIZE];
+         const float lado = float(std::max(tam & 0xFFFF, tam >> 16)) * (2.0f / 16.0f);
+         dkCmdBufSetPointSize(cmd, lado > 0.0f ? lado : 1.0f);
++      }
++      if (diag) {
++        REXLOG_INFO("[diag-ps] {:016X} dibuja: pase {} {}x{} c0 {} z {} mascaras {:04X} opaco_completo {} viewport {:.1f},{:.1f} {:.1f}x{:.1f} tijera {},{} {}x{} cuenta {} primitiva {}",
++                    p.ps->huella_contenedor, g_.pase_serie, g_.pase_ancho, g_.pase_alto,
++                    imagenes_pase_[0] ? fmt::format("#{} {}x{} fmt {}", imagenes_pase_[0]->serie, imagenes_pase_[0]->ancho, imagenes_pase_[0]->alto, int(imagenes_pase_[0]->formato)) : std::string("-"),
++                    imagenes_pase_[4] ? fmt::format("#{} {}x{}", imagenes_pase_[4]->serie, imagenes_pase_[4]->ancho, imagenes_pase_[4]->alto) : std::string("-"),
++                    mascaras, dibujo_opaco_completo_, viewport[0], viewport[1], viewport[2], viewport[3], tijera.x, tijera.y,
++                    tijera.width, tijera.height, cuenta, int(primitiva));
+       }
+       if (con_indices) {
+         dkCmdBufDrawIndexed(cmd, primitiva, n_indices, 1, 0, -int32_t(vmin), 0);

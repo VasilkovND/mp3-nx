@@ -336,3 +336,15 @@ single-sampled clear was red (000000FF). Visible where a target is drawn over on
 (64x128, 128x256: red everywhere, so dead and wounded enemies were painted red all over), and the gameplay tonemap's
 effects mask (07367000, R and B white: the effect exposure and gamma always on, x1.5 brighter). c0 is now read as
 A, R, G, B.
+
+## Run 32: the screen shows the raw HDR scene
+
+With honest dumps (resolves copied, not swapped) the final front buffer matches the HDR scene target's EDRAM content
+x4 (the lights' color exp bias), clamped to 1, pixel for pixel (error 0.0006; run 31's two dumps 0.0005 and 0.0017):
+the game's tonemap (ps_fe226603f40e2533 / ps_6671591252a5bce2 / ps_cd9469857a0c532a into c198 f0, resolved to
+0654D000) and its FXAA (ps_8d42760b0383c0d8 into c198 f3, the scene's own target) never reach the screen. That is the
+overexposure since run 11: flat, burnt, no game gamma, and why mp3_exposicion barely changed anything. The HUD drawn
+after the FXAA is there. The EDRAM log of the dumped frame shows no transfer between the tonemap's resolve and the
+final one, so the FXAA's writes to c198 f3 are lost or never happen. Both passes are a single full-screen opaque
+draw, the only ones on the HDR target's base taking x360_edram_saltar_muertas (no transfer before the pass): first
+try, that off in mp3.toml. The 0654D000 dumps are black in every run (the tonemap's output, or its copy, empty).
