@@ -59,9 +59,12 @@ target_include_directories(mp3 PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../shaders ${
 # src/mp3_audio_dsp_neon.cpp (GTA IV's mixer DSP, its constants at GTA IV's addresses). src/mp3_menu.cpp is Max Payne 3's
 # own now (the 720p / 540p choice).
 file(STRINGS "${CMAKE_CURRENT_SOURCE_DIR}/codegen/names.toml" MP3_NOMBRES REGEX "^name = \"mp3_[A-Za-z0-9_]+\"")
+# Only on our own sources (src/), never on the ~270 generated files: a flag those share changes the command line of
+# every one of them, and ccache then recompiles the whole game (about 15 minutes) for a new hook name or a new commit.
+file(GLOB MP3_FUENTES_PROPIAS CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/src/*.cpp")
 foreach(linea IN LISTS MP3_NOMBRES)
     string(REGEX REPLACE "^name = \"(mp3_[A-Za-z0-9_]+)\".*" "\\1" nombre "${linea}")
-    target_compile_definitions(mp3 PRIVATE MP3_TIENE_${nombre}=1)
+    set_property(SOURCE ${MP3_FUENTES_PROPIAS} APPEND PROPERTY COMPILE_DEFINITIONS MP3_TIENE_${nombre}=1)
 endforeach()
 
 # The shader create hooks need the two names codegen/names.toml gives the XDK's Create*Shader (not known before the
@@ -88,7 +91,9 @@ if(NOT MP3_COMMIT)
 elseif(MP3_SUCIO)
     string(APPEND MP3_COMMIT "+changes")
 endif()
-target_compile_definitions(mp3 PRIVATE MP3_VERSION="${MP3_VERSION}" MP3_COMMIT="${MP3_COMMIT}")
+# Only where it is read (src/mp3_cpu.cpp), for the same reason.
+set_property(SOURCE src/mp3_cpu.cpp APPEND PROPERTY COMPILE_DEFINITIONS MP3_VERSION="${MP3_VERSION}"
+             MP3_COMMIT="${MP3_COMMIT}")
 
 # Nintendo Switch: mp3.nro. On the SD card: sdmc:/switch/mp3-nx/mp3-nx.nro, with game/ beside it
 # (src/mp3_app.h finds it there). No icon from the game: the Homebrew Menu shows the default one.
