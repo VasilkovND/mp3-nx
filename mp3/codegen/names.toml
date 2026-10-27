@@ -52,3 +52,23 @@ name = "mp3_D3D_QueryFramesInFlight"
 # (the console's hbl.nsp opens it to homebrew), as GTA IV's gta4_AudioThreadEntry did, so cores 0-2 are left to the game.
 [functions."0x83037B30"]
 name = "mp3_AudioThreadEntry"
+
+# Diagnostic for 540p (src/mp3_resolution_trace.cpp): every function that sets or copies the device's size
+# (0x831D0954/58) logs it before and after its first calls.
+[functions."0x82DEEA18"]
+name = "mp3_DeviceSetup"
+
+[functions."0x82DECDA8"]
+name = "mp3_DevicePresentParams"
+
+[functions."0x822BB928"]
+name = "mp3_DeviceResize"
+
+[functions."0x82DEE698"]
+name = "mp3_DeviceReset"
+
+[functions."0x82DF5EA8"]
+name = "mp3_TextureFactoryCreate"
+
+[functions."0x82DF3FA0"]
+name = "mp3_ReleaseRenderTarget"
