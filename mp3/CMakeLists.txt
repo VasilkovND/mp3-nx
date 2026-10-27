@@ -32,6 +32,7 @@ add_executable(mp3
     src/mp3_god.cpp
     src/mp3_perf_hooks.cpp
     src/mp3_tiling.cpp
+    src/mp3_imagen.cpp
     # The shader library reader, shared with the PC tools (shaders/).
     ${CMAKE_CURRENT_SOURCE_DIR}/../shaders/ds_shader_library.cpp
 )

@@ -726,7 +726,7 @@ class RingGraphicsSystem final : public rex::system::IGraphicsSystem {
       return false;
     }
     destinos_ = rex::x360::CrearDestinosDeko3d(
-        static_cast<rex::deko3d::ProveedorDeko3d*>(provider_.get()), memory_);
+        static_cast<rex::deko3d::ProveedorDeko3d*>(provider_.get()), memory_, GanchosImagen());
     if (destinos_) {
       // The scene's width for the passes' categories and the sky deferral (the frame's size, AnchoJuego).
       rex::x360::g_ancho_escena.store(AnchoJuego(), std::memory_order_relaxed);

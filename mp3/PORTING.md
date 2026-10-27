@@ -292,3 +292,12 @@ Tonemap constants (draw trace): gAdaptedLum c88 = 1.5, Exposures c137 0.85-2.1, 
 0.5), BurnoutLimit c142 8 (1 and 0.78 at times). Current luminance read back 0.2-0.9. With those the Reinhard curve
 does not burn the frame: the brightness comes from what the tonemap reads or from what runs after it. The cutscene
 captures look close to right; the garage in gameplay is washed out, with green-cyan glow at the foot of the pillars.
+
+## Language, the final picture, automatic dumps off
+
+- SDK patch 0098: `XGetLanguage` returned English always (a region guess) and `XamGetLanguage` was a stub; both return
+  the `user_language` setting now (12 = Russian), as `XCONFIG_USER_LANGUAGE` already did. `mp3.toml` sets 12.
+- `src/mp3_imagen.cpp`: the renderer's hooks give the output pass a brightness, contrast and gamma after the game's
+  gamma ramp (`mp3_brillo`, `mp3_contraste`, `mp3_gamma`; 0.9 by default: the frame was a little too bright).
+- The console's `mp3.toml`: automatic dumps, frame traces and the unknown-shader dump off (each automatic dump stalled
+  the game 7-18 s); the 15 s captures stay; a dump on ZL + ZR + Left still works.

@@ -12,3 +12,14 @@ namespace mp3::gpu {
 std::unique_ptr<rex::system::IGraphicsSystem> CreateGraphicsSystem();
 
 }  // namespace mp3::gpu
+
+namespace rex::x360 {
+class RenderHooks;
+}
+
+namespace mp3::gpu {
+
+// The renderer's hooks: the final picture's brightness, contrast and gamma (mp3_imagen.cpp).
+rex::x360::RenderHooks& GanchosImagen();
+
+}  // namespace mp3::gpu
