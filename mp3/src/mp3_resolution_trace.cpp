@@ -44,21 +44,30 @@ void Informar(const char* que, const Tamanos& a, const Tamanos& d, uint32_t lr) 
 
 // The device's setup (sub_82DEEA18). Run 22: it turned the 960x540 written before the game ran into 1280x720, because
 // its -width / -height parameters (rage params at 0x8384C688 and 0x8384C760: +4 points to the value's text, read with
-// strtol by sub_82CB1710) are set to 1280 and 720. At 540p their text is taken away before the setup, so the size comes
-// from the video mode (960x540) as when they are not given; the G-buffer's budget (sub_824C8900) reads the same two.
+// strtol by sub_82CB1710) are set to "1280" and "720". At 540p their text becomes "960" and "540" in place (shorter,
+// so it fits). Taking the text away (run 23) left the G-buffer's budget (sub_824C8900, which reads the same two into
+// stack words it never initializes) with garbage sizes, and the game died allocating physical memory.
 #ifdef MP3_TIENE_mp3_DeviceSetup
 REX_EXTERN(__imp__mp3_DeviceSetup);
 REX_EXTERN(mp3_DeviceSetup) {
   static std::atomic<int> llamadas{0};
   const uint32_t lr = uint32_t(ctx.lr);
   if (mp3::resolucion::Aplicada() == 540) {
-    for (const uint32_t parametro : {0x8384C688u, 0x8384C760u}) {
-      const uint32_t texto = REX_LOAD_U32(parametro + 4);
-      if (texto) {
-        REXLOG_INFO("[540p] parametro {:08X} = '{}': quitado", parametro,
-                    std::string(reinterpret_cast<const char*>(base + texto),
-                                strnlen(reinterpret_cast<const char*>(base + texto), 16)));
-        REX_STORE_U32(parametro + 4, 0);
+    const struct {
+      uint32_t parametro;
+      const char* antes;
+      const char* nuevo;
+    } kParametros[] = {{0x8384C688u, "1280", "960"}, {0x8384C760u, "720", "540"}};
+    for (const auto& p : kParametros) {
+      const uint32_t texto = REX_LOAD_U32(p.parametro + 4);
+      if (!texto) continue;
+      char* c = reinterpret_cast<char*>(base + texto);
+      const std::string leido(c, strnlen(c, 16));
+      if (leido == p.antes) {
+        std::memcpy(c, p.nuevo, std::strlen(p.nuevo) + 1);
+        REXLOG_INFO("[540p] parametro {:08X}: '{}' -> '{}'", p.parametro, leido, p.nuevo);
+      } else {
+        REXLOG_INFO("[540p] parametro {:08X} = '{}': sin cambiar", p.parametro, leido);
       }
     }
   }
