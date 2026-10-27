@@ -37,6 +37,7 @@ add_executable(mp3
     src/mp3_imagen.cpp
     src/mp3_audio_mix_neon.cpp
     src/mp3_detail.cpp
+    src/mp3_audio_dsp_mp3.cpp
     # The shader library reader, shared with the PC tools (shaders/).
     ${CMAKE_CURRENT_SOURCE_DIR}/../shaders/ds_shader_library.cpp
 )
@@ -50,7 +51,7 @@ if(MP3_MSR_GLOBAL)
 endif()
 # The native DSP hooks compute the guest's floating point bit for bit: no FMA fusion of separate multiplies and adds
 # (GCC's default for GNU C++ is -ffp-contract=fast; the generated code gets -ffp-contract=off from the SDK).
-set_source_files_properties(src/mp3_audio_dsp_neon.cpp PROPERTIES COMPILE_OPTIONS "-ffp-contract=off")
+set_source_files_properties(src/mp3_audio_dsp_neon.cpp src/mp3_audio_dsp_mp3.cpp PROPERTIES COMPILE_OPTIONS "-ffp-contract=off")
 rexglue_switch_add_deko3d(mp3)
 target_compile_definitions(mp3 PRIVATE MP3_DEKO3D=1)
 target_include_directories(mp3 PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../shaders ${REXSDK_DIR}/thirdparty/xxHash)

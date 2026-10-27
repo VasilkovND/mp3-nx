@@ -97,3 +97,20 @@ name = "mp3_JobWorkerMp3"
 # on, right after this, the parameters of the detail settings (removetopmips, cheapaudioeffects ...).
 [functions."0x82CB10C8"]
 name = "mp3_ParamRegister"
+
+# The audio mixer's effect DSP (stack samples at stock clocks, % of a core), in native code bit for bit in
+# src/mp3_audio_dsp_mp3.cpp (checked on the Mac against the generated code; each has a cvar to switch it off).
+# The reverb (Freeverb: 8 damped combs, 4 all-passes per channel; r3 = the effect, r5 samples, r6 per channel, r7
+# channels), ~9-10 %: mp3_dsp_reverb_mp3.
+[functions."0x82C76208"]
+name = "mp3_AudioReverbMp3"
+
+# The master look-ahead peak limiter (r3 = the effect, r4 its parameters; +32 of them zero: an RMS compressor, left to
+# the original), ~4-6 %: mp3_dsp_limiter_mp3.
+[functions."0x82C745A8"]
+name = "mp3_AudioLimiterMp3"
+
+# The per-channel biquad, one or two in series (r3 = the effect: coefficients +156, states +176..+248, mask +276,
+# series flag +277), ~2-3 %: mp3_dsp_biquad_mp3.
+[functions."0x82C735E0"]
+name = "mp3_AudioBiquadMp3"
