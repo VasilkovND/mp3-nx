@@ -204,6 +204,8 @@ REXCVAR_DEFINE_BOOL(mp3_arboles_prueba, false, "MP3",
 REXCVAR_DEFINE_INT32(mp3_auto_volcado_dibujos, 800, "MP3",
                      "Dibujos que debe tener el fotograma anterior para un volcado automatico (la escena 3D, no un menu)");
 REXCVAR_DEFINE_INT32(mp3_auto_volcados_max, 4, "MP3", "Volcados automaticos como mucho (0 = ninguno)");
+REXCVAR_DEFINE_INT32(mp3_traza_vport_max, 0, "MP3",
+                     "La traza de dibujos solo escribe los dibujos cuyo viewport mide como mucho este ancho (0 = todos)");
 REXCVAR_DEFINE_BOOL(mp3_volcado_con_dibujos, false, "MP3",
                     "Un volcado de fotograma escribe tambien cada dibujo (texturas y constantes) en el log: lento con "
                     "miles de dibujos (un minuto en Max Payne 3). false = solo la estructura del fotograma");
@@ -2646,6 +2648,14 @@ class RingGraphicsSystem final : public rex::system::IGraphicsSystem {
   void DrawTraceLine(bool drawn, const char* why = nullptr) {
     namespace g = rex::graphics;
     if (draw_trace_n_ >= draw_trace_cap_) return;
+    // Only draws whose viewport is at most this wide (mp3_traza_vport_max; 0 = all): the luminance chain of a frame
+    // without its thousands of scene draws.
+    if (const int32_t maximo = REXCVAR_GET(mp3_traza_vport_max); maximo > 0) {
+      float escala;
+      const uint32_t bits = Register(g::XE_GPU_REG_PA_CL_VPORT_XSCALE);
+      std::memcpy(&escala, &bits, 4);
+      if (std::fabs(escala) * 2.0f > float(maximo)) return;
+    }
     const uint32_t init = Register(g::XE_GPU_REG_VGT_DRAW_INITIATOR);
     REXLOG_INFO("[draws] {:3} prim {} n {} vs {} ps {} c0 {:03X}/f{} z {:03X} mask {:04X} blend0 {:08X} colorctl {:08X} "
                 "depthctl {:08X} stencil {:08X} mode {} pitch {} msaa {} -> {}",

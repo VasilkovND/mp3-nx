@@ -173,3 +173,17 @@ exposure fixes are SDK patches 0057-0072 and the translator, already here. Run 1
 G-buffer, the depth resolve 19048000 read as 8888 and as k_24_8_FLOAT, the 640x360 linear depth in k_32_FLOAT, the
 k_8 occlusion passes) shows nothing wrong yet; the lighting, luminance and tonemap passes come after it. Run 12's
 dumps never fired: with one tile a frame has ~690 draws, under `mp3_auto_volcado_dibujos` (800); 300 now.
+
+## Run 13: the luminance chain is zero (SDK patch 0096)
+
+The first dump with the frame's structure (`volcado_00`, 108 files) shows the scene resolved, and the exposure chain:
+the HDR scene (EDRAM 2D0, 7e3) resolved to `k_16_16_16_16` at 080D0000 (1280x720), 05791000 (640x360) and 06E95000
+(320x180), then `k_32_FLOAT` 64x64 (06F1D000) -> 16x16 -> 8x4 -> 8x1: all 0 from the 64x64 on, the adapted luminance
+(05072000) 0, the exposure infinite. The log: "resolve con exp bias 11 (x2048) desde EDRAM formato 12". 7e3's maximum
+31.875 x 2048 = 65280, the value the dump found in the chain: the Xenos stores the scaled 7e3 as a 16-bit integer, which
+a fetch of `k_16_16_16_16` returns normalized (/ 65535); the renderer kept v x 2048 as a half float (65280 and beyond,
+up to infinity) and read it as it is.
+
+SDK patch 0096: such resolves (7e3 into k_16_16_16_16 / k_16_16, `x360_resolve_16_fijo`) store v x 2^bias / 65535, and a
+resolved texture fetched with an exp_adjust (fetch constant dword 3 bits 13-18, ignored until now) is read through a
+copy scaled by 2^exp_adjust. `mp3_traza_vport_max` limits the draw trace to small viewports (the luminance chain).
