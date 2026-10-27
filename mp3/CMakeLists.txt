@@ -32,6 +32,7 @@ add_executable(mp3
     src/mp3_god.cpp
     src/mp3_perf_hooks.cpp
     src/mp3_tiling.cpp
+    src/mp3_menu.cpp
     # The shader library reader, shared with the PC tools (shaders/).
     ${CMAKE_CURRENT_SOURCE_DIR}/../shaders/ds_shader_library.cpp
 )
@@ -52,8 +53,8 @@ target_include_directories(mp3 PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../shaders ${
 
 # GTA IV's hooks are compiled only for the names codegen/names.toml gives (MP3_TIENE_<name>): each one waits for its
 # Max Payne 3 function to be found and checked. Not built until then: src/mp3_audio_neon.cpp and
-# src/mp3_audio_dsp_neon.cpp (GTA IV's mixer DSP, its constants at GTA IV's addresses) and src/mp3_menu.cpp (GTA IV's
-# detail distance and population options).
+# src/mp3_audio_dsp_neon.cpp (GTA IV's mixer DSP, its constants at GTA IV's addresses). src/mp3_menu.cpp is Max Payne 3's
+# own now (the 720p / 540p choice).
 file(STRINGS "${CMAKE_CURRENT_SOURCE_DIR}/codegen/names.toml" MP3_NOMBRES REGEX "^name = \"mp3_[A-Za-z0-9_]+\"")
 foreach(linea IN LISTS MP3_NOMBRES)
     string(REGEX REPLACE "^name = \"(mp3_[A-Za-z0-9_]+)\".*" "\\1" nombre "${linea}")

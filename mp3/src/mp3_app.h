@@ -32,6 +32,8 @@
 #include "mp3_cpu.h"
 #include "mp3_god.h"
 #include "mp3_gpu.h"
+#include "mp3_menu.h"
+#include "mp3_resolution.h"
 
 #if defined(__SWITCH__)
 // The SDK's FPS counter (ZL + ZR + Up) and debug shortcuts (ZL + ZR + R: the profiler's stack sampling, captures ...).
@@ -93,6 +95,7 @@ class Mp3App : public rex::ReXApp {
     }
 #endif
     mp3::cpu::InformarSistema();
+    mp3::resolucion::Aplicar();  // 720p or 540p (mp3_resolution.h), before the game reads its video mode
   }
 
   void OnLoadXexImage(std::string& xex_image) override {
@@ -121,6 +124,7 @@ class Mp3App : public rex::ReXApp {
   void OnPreLaunchModule() override {
     mp3::cpu::Configurar();
     mp3::god::DespuesDeCargar(*runtime());
+    mp3::menu::Instalar(*runtime());
   }
 
  private:

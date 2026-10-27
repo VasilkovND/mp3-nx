@@ -92,13 +92,15 @@ REXCVAR_DECLARE(bool, switch_volcado_pedido);  // ZL + ZR + Left: every resolved
 REXCVAR_DECLARE(bool, nfsmw_dk_todas_las_salidas);  // skip mode 9 (SDK patch 0033)
 REXCVAR_DECLARE(bool, nfsmw_dk_gamma_lineal);       // skip mode 10 (SDK patch 0033)
 REXCVAR_DECLARE(std::string, rex_archivos_ocultos);  // SDK patch 0048: files the game does not find
+REXCVAR_DECLARE(int32_t, video_mode_width);   // sdk/src/ui/window.cpp: what XGetVideoMode reports
+REXCVAR_DECLARE(int32_t, video_mode_height);
 namespace {
-// The frame's size. GTA IV keeps its render targets at 1280x720 whatever the video mode says (run46: with
-// video_mode_width/height = 1024x576 every resolve was still 1280x720; the width and height it derives from
-// XGetVideoMode, capped at 1280x720, at 0x82B0B45C/60, size something else). Taking the size from the video mode made the
-// one-tile widening miss the G-buffer's 1280x256 band and the presentation show a 1024x576 corner of the frame.
-constexpr uint32_t AnchoJuego() { return 1280; }
-constexpr uint32_t AltoJuego() { return 720; }
+// The frame's size. GTA IV kept its render targets at 1280x720 whatever the video mode said (gta4-nx run46). Max Payne 3
+// sizes its device from XGetVideoMode (sub_82DEEA18, grcDevice's setup: the width and height at 0x821D0954/58, capped at
+// 1280x720 and overridden only by the -width/-height parameters), so video_mode_width/height = 960x540 asks it for a
+// smaller frame: the one-tile widening and the presentation follow the same size.
+uint32_t AnchoJuego() { return uint32_t(std::clamp<int32_t>(REXCVAR_GET(video_mode_width), 320, 1280)); }
+uint32_t AltoJuego() { return uint32_t(std::clamp<int32_t>(REXCVAR_GET(video_mode_height), 180, 720)); }
 }  // namespace
 REXCVAR_DECLARE(bool, switch_omitir_pedido);   // ZL + ZR + Right: next draw-skipping mode (SkipMode)
 // The SDK renderer's shadow-pass shortcuts (sdk/src/x360/deko/destinos.cpp; the SDK keeps their nfsmw_ names): both

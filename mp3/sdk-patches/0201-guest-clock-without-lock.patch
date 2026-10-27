@@ -1,0 +1,88 @@
+The guest clock without a lock: every mftb and guest time query computed from an anchor (host and guest counts when the ratio last changed) instead of a running count under a mutex the game's threads queued on.
+
+--- a/src/core/clock.cpp
++++ b/src/core/clock.cpp
+@@ -10,6 +10,7 @@
+  */
+ 
+ #include <algorithm>
++#include <atomic>
+ #include <limits>
+ #include <mutex>
+ 
+@@ -35,13 +36,35 @@ uint64_t guest_system_time_base_ = Clock::QueryHostSystemTime();
+ // Computed by RecomputeGuestTickScalar.
+ std::pair<uint64_t, uint64_t> guest_tick_ratio_ = std::make_pair(1, 1);
+ 
+-// Native guest ticks.
+-uint64_t last_guest_tick_count_ = 0;
+-// Last sampled host tick count.
+-uint64_t last_host_tick_count_ = Clock::QueryHostTickCount();
+-// Mutex to ensure last_host_tick_count_ and last_guest_tick_count_ are in sync
++// The guest clock without a lock. Every mftb of the generated code and every guest time query lands in
++// UpdateGuestClock; it used to take tick_mutex_ to add the host ticks since the last call to a running count, so the
++// game's threads queued on it (Max Payne 3's job threads had 10-15 % of their samples in that mutex). The ratio only
++// changes in RecomputeGuestTickScalar (at startup), so the guest count is a function of the host count from an anchor
++// (the host and guest counts when the ratio last changed): readers load the anchor and compute, with no shared writes.
++struct GuestClockAnchor {
++  uint64_t host_tick_count;
++  uint64_t guest_tick_count;
++  uint64_t numerator;
++  uint64_t denominator;
++};
++GuestClockAnchor initial_anchor_{Clock::QueryHostTickCount(), 0, 1, 1};
++// Replaced anchors are not freed: a reader may still hold one, and the ratio changes a few times per run.
++std::atomic<const GuestClockAnchor*> anchor_{&initial_anchor_};
++// Serializes the ratio's writers.
+ std::mutex tick_mutex_;
+ 
++uint64_t GuestTicksAt(const GuestClockAnchor& anchor, uint64_t host_tick_count) {
++  const uint64_t host_tick_delta =
++      host_tick_count > anchor.host_tick_count ? host_tick_count - anchor.host_tick_count : 0;
++#if defined(__SIZEOF_INT128__)
++  const uint64_t guest_tick_delta =
++      uint64_t((unsigned __int128)host_tick_delta * anchor.numerator / anchor.denominator);
++#else
++  const uint64_t guest_tick_delta = host_tick_delta * anchor.numerator / anchor.denominator;
++#endif
++  return anchor.guest_tick_count + guest_tick_delta;
++}
++
+ void RecomputeGuestTickScalar() {
+   // Create a rational number with numerator (first) and denominator (second)
+   auto frac = std::make_pair(guest_tick_frequency_, Clock::QueryHostTickFrequency());
+@@ -59,6 +82,11 @@ void RecomputeGuestTickScalar() {
+ 
+   std::lock_guard<std::mutex> lock(tick_mutex_);
+   guest_tick_ratio_ = frac;
++  const uint64_t host_tick_count = Clock::QueryHostTickCount();
++  const GuestClockAnchor* old_anchor = anchor_.load(std::memory_order_acquire);
++  anchor_.store(new GuestClockAnchor{host_tick_count, GuestTicksAt(*old_anchor, host_tick_count), frac.first,
++                                     frac.second},
++                std::memory_order_release);
+ }
+ 
+ // Update the guest timer for all threads.
+@@ -71,21 +99,7 @@ uint64_t UpdateGuestClock() {
+     return host_tick_count * guest_tick_ratio_.first / guest_tick_ratio_.second;
+   }
+ 
+-  std::unique_lock<std::mutex> lock(tick_mutex_, std::defer_lock);
+-  if (lock.try_lock()) {
+-    // Translate host tick count to guest tick count.
+-    uint64_t host_tick_delta =
+-        host_tick_count > last_host_tick_count_ ? host_tick_count - last_host_tick_count_ : 0;
+-    last_host_tick_count_ = host_tick_count;
+-    uint64_t guest_tick_delta =
+-        host_tick_delta * guest_tick_ratio_.first / guest_tick_ratio_.second;
+-    last_guest_tick_count_ += guest_tick_delta;
+-    return last_guest_tick_count_;
+-  } else {
+-    // Wait until another thread has finished updating the clock.
+-    lock.lock();
+-    return last_guest_tick_count_;
+-  }
++  return GuestTicksAt(*anchor_.load(std::memory_order_acquire), host_tick_count);
+ }
+ 
+ // Offset of the current guest system file time relative to the guest base time.
