@@ -86,6 +86,9 @@ inline void Aplicar() {
   const bool p540 = elegida == 540;
   rex::cvar::SetFlagByName("video_mode_width", p540 ? "960" : "1280");
   rex::cvar::SetFlagByName("video_mode_height", p540 ? "540" : "720");
+  // The SDK reports a mode below 1280x720 as standard definition, and the game then lays its interface out for SD
+  // (bigger, with wide safe margins): 960x540 is still told high definition (SDK patch 0202).
+  rex::cvar::SetFlagByName("video_mode_alta_definicion", p540 ? "true" : "false");
   REXLOG_INFO("mp3: fotograma {} ({}p, {}; CPU {} MHz)", p540 ? "960x540" : "1280x720", elegida,
               guardada ? "guardada" : "por defecto", CpuMhz());
 }
@@ -108,6 +111,19 @@ inline void AplicarMemoria(rex::Runtime& runtime) {
   *reinterpret_cast<uint32_t*>(ancho) = __builtin_bswap32(960u);
   *reinterpret_cast<uint32_t*>(alto) = __builtin_bswap32(540u);
   REXLOG_INFO("mp3: tamano deseado del juego 960x540 (era {}x{})", antes_ancho, antes_alto);
+}
+
+// Diagnostic, called at each Swap: the sizes the game holds, logged after 300 Swaps and again after 3000 (the device's at
+// 0x821D0954/58, the copy other threads read at 0x8381C810/0x8381C800, the wanted size at 0x83139EB0/B4).
+inline void InformarTamanos(rex::memory::Memory* memoria) {
+  static uint32_t swaps = 0;
+  ++swaps;
+  if (!memoria || (swaps != 300 && swaps != 3000)) return;
+  auto leer = [&](uint32_t direccion) {
+    return __builtin_bswap32(*memoria->TranslateVirtual<const uint32_t*>(direccion));
+  };
+  REXLOG_INFO("mp3: tamanos tras {} Swaps: dispositivo {}x{}, copia {}x{}, deseado {}x{}", swaps, leer(0x821D0954),
+              leer(0x821D0958), leer(0x8381C810), leer(0x8381C800), leer(kAnchoDeseado), leer(kAltoDeseado));
 }
 
 }  // namespace mp3::resolucion

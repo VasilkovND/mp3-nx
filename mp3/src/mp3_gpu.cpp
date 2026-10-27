@@ -80,6 +80,7 @@ void mp3_log_main_thread();  // src/mp3_guards.cpp
 #include <rex/x360/xenos.h>
 
 #include "mp3_shaders.h"
+#include "mp3_resolution.h"
 
 // xxHash reads with memcpy under GCC's strict aliasing (see shaders/ds_shader_library.cpp).
 #undef XXH_FORCE_MEMORY_ACCESS
@@ -588,6 +589,7 @@ class RingGraphicsSystem final : public rex::system::IGraphicsSystem {
   // when they change.
   void AplicarPrioridades() {
     Mp3AplicarPrioridades();
+    mp3::resolucion::InformarTamanos(memory_);  // run 20: where the 1280x720 comes from at 540p
 #if defined(__SWITCH__)
     const int32_t pedida = REXCVAR_GET(mp3_prioridad_anillo);
     const int prioridad = pedida >= 44 && pedida <= 0x3B ? pedida : 0x2C;
