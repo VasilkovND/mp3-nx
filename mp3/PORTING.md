@@ -301,3 +301,10 @@ captures look close to right; the garage in gameplay is washed out, with green-c
   gamma ramp (`mp3_brillo`, `mp3_contraste`, `mp3_gamma`; 0.9 by default: the frame was a little too bright).
 - The console's `mp3.toml`: automatic dumps, frame traces and the unknown-shader dump off (each automatic dump stalled
   the game 7-18 s); the 15 s captures stay; a dump on ZL + ZR + Left still works.
+
+## Run 22: the spikes are not the geometry store
+
+With the geometry store off (`nfsmw_dk_geometria_mb = 0`: no store statistics in the log) and the shader constants sent
+whole, Max still turned into spikes after the jump: neither the store nor the constant diffs. Both are back on. Next: a
+manual dump with the whole frame's draw trace (vertex fetch formats of Max's draws). `mp3_gamma` 0.8 meanwhile (the
+picture still too bright at 0.9).
