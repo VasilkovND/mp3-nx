@@ -185,10 +185,26 @@ REXCVAR_DEFINE_BOOL(mp3_audio_solo_nucleo3, false, "MP3",
                     "Los hilos de audio (XAudio2, descodificador XMA, trabajador de audio) solo en el nucleo 3, sin "
                     "pasar a los nucleos del juego");
 
+// Runs 29 and 30 at stock clocks: whenever the four cores were full (under 16 fps) the audio ran dry 400-900 times in
+// 10 s. The XAudio2 thread is a guest thread, at the guests' 0x3B, which Horizon time-slices only about every 10 ms,
+// while the host audio threads (XMA decoder, audio worker) are at 0x2B: it now gets their priority. It blocks on its
+// events between buffers, so it cannot hold a core.
+REXCVAR_DEFINE_INT32(mp3_prioridad_audio, 0x2B, "MP3",
+                     "Prioridad de Horizon (0x2B-0x3B; menor = mas alta) del hilo de XAudio2 del juego; 0x3B = como "
+                     "los demas hilos del juego")
+    .range(0x2B, 0x3B);
+
 #ifdef MP3_TIENE_mp3_AudioThreadEntry  // codegen/names.toml names it (CMakeLists.txt)
 REX_EXTERN(__imp__mp3_AudioThreadEntry);
 REX_EXTERN(mp3_AudioThreadEntry) {
 #if defined(__SWITCH__)
+  {
+    Thread* yo = threadGetSelf();
+    const Handle h = yo != nullptr ? yo->handle : CUR_THREAD_HANDLE;
+    const int prioridad = REXCVAR_GET(mp3_prioridad_audio);
+    const bool hecho = R_SUCCEEDED(svcSetThreadPriority(h, u32(prioridad)));
+    REXLOG_INFO("[mp3] hilo de audio: prioridad 0x{:X}{}", prioridad, hecho ? "" : " (rechazada)");
+  }
   if (REXCVAR_GET(mp3_audio_nucleo3)) {
     u64 proceso = 0;
     const bool leido = R_SUCCEEDED(svcGetInfo(&proceso, InfoType_CoreMask, CUR_PROCESS_HANDLE, 0));
