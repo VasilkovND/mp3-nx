@@ -8,8 +8,12 @@
 #include "mp3_pch.h"
 
 #include <atomic>
+#include <cstring>
+#include <string>
 
 #include <rex/logging.h>
+
+#include "mp3_resolution.h"
 
 namespace {
 
@@ -38,8 +42,30 @@ void Informar(const char* que, const Tamanos& a, const Tamanos& d, uint32_t lr) 
     if (llamadas.fetch_add(1) < (veces)) Informar(texto, antes, Leer(base), lr); \
   }
 
+// The device's setup (sub_82DEEA18). Run 22: it turned the 960x540 written before the game ran into 1280x720, because
+// its -width / -height parameters (rage params at 0x8384C688 and 0x8384C760: +4 points to the value's text, read with
+// strtol by sub_82CB1710) are set to 1280 and 720. At 540p their text is taken away before the setup, so the size comes
+// from the video mode (960x540) as when they are not given; the G-buffer's budget (sub_824C8900) reads the same two.
 #ifdef MP3_TIENE_mp3_DeviceSetup
-MP3_ENVOLVER(mp3_DeviceSetup, "sub_82DEEA18 (configuracion del dispositivo)", 4)
+REX_EXTERN(__imp__mp3_DeviceSetup);
+REX_EXTERN(mp3_DeviceSetup) {
+  static std::atomic<int> llamadas{0};
+  const uint32_t lr = uint32_t(ctx.lr);
+  if (mp3::resolucion::Aplicada() == 540) {
+    for (const uint32_t parametro : {0x8384C688u, 0x8384C760u}) {
+      const uint32_t texto = REX_LOAD_U32(parametro + 4);
+      if (texto) {
+        REXLOG_INFO("[540p] parametro {:08X} = '{}': quitado", parametro,
+                    std::string(reinterpret_cast<const char*>(base + texto),
+                                strnlen(reinterpret_cast<const char*>(base + texto), 16)));
+        REX_STORE_U32(parametro + 4, 0);
+      }
+    }
+  }
+  const Tamanos antes = Leer(base);
+  __imp__mp3_DeviceSetup(ctx, base);
+  if (llamadas.fetch_add(1) < 4) Informar("sub_82DEEA18 (configuracion del dispositivo)", antes, Leer(base), lr);
+}
 #endif
 #ifdef MP3_TIENE_mp3_DevicePresentParams
 MP3_ENVOLVER(mp3_DevicePresentParams, "sub_82DECDA8 (parametros de presentacion)", 8)
