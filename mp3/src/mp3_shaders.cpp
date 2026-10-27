@@ -40,6 +40,10 @@ REXCVAR_DEFINE_BOOL(mp3_shaders_por_demanda, true, "MP3",
                     "se lee de la tarjeta la primera vez que se usa: con todos los shaders del juego (~470 MB) no cabe "
                     "en memoria. false = entera en memoria");
 
+REXCVAR_DEFINE_BOOL(mp3_vs_por_parecido, true, "MP3",
+                    "Un VS cargado que no coincide con ninguno de la biblioteca se toma por el mas parecido (menos "
+                    "palabras distintas en total); false = el dibujo se salta");
+
 namespace mp3::shaders {
 namespace {
 
@@ -556,7 +560,7 @@ const EntradaShader* Biblioteca::IdentificarEntrada(bool vertices, uint32_t fisi
     // 4. A vertex shader D3D patched beyond its fetch bits: it may reorder the fetch instructions and rewrite the
     // exports the pixel shader does not read. Each candidate's fetch instructions are ignored whole and the rest
     // compared word by word; the closest one is taken if it is clearly the closest and differs in few words.
-    if (!elegido && vertices) {
+    if (!elegido && vertices && REXCVAR_GET(mp3_vs_por_parecido)) {
       if (auto c = d.candidatos.find({vertices, uint32_t(microcodigo.size())}); c != d.candidatos.end()) {
         // Score: words that differ outside the fetch instructions, then (Unreal Engine 3 has many vertex shaders
         // with the same code and other vertex layouts) the fetch words that differ in the bits D3D does not patch.
@@ -564,6 +568,12 @@ const EntradaShader* Biblioteca::IdentificarEntrada(bool vertices, uint32_t fisi
         using Puntos = std::pair<size_t, size_t>;
         Puntos mejor{SIZE_MAX, SIZE_MAX}, segundo{SIZE_MAX, SIZE_MAX};
         const EntradaShader* candidato = nullptr;
+        // Max Payne 3: the fetch words D3D does not patch differing means another vertex layout, as wrong as other
+        // code: "3+5" was taken over "4+0" and skinned meshes came out as black spikes. Ranked by the total, then by
+        // the code words.
+        auto menor = [](const Puntos& x, const Puntos& y) {
+          return x.first + x.second != y.first + y.second ? x.first + x.second < y.first + y.second : x < y;
+        };
         for (uint32_t indice : c->second) {
           const EntradaShader& e = d.entradas[indice];
           std::vector<bool> fetch(microcodigo.size(), false);
@@ -571,18 +581,18 @@ const EntradaShader* Biblioteca::IdentificarEntrada(bool vertices, uint32_t fisi
             for (size_t j = 0; j < 3; ++j) fetch[size_t(el.instruccion) * 3 + j] = true;
           }
           Puntos p{0, 0};
-          for (size_t w = 0; w < microcodigo.size() && p.first <= mejor.first; ++w) {
+          for (size_t w = 0; w < microcodigo.size() && p.first + p.second <= mejor.first + mejor.second; ++w) {
             if (fetch[w]) {
               p.second += (microcodigo[w] & kFetchConserva[w % 3]) != e.microcodigo[w];
               continue;
             }
             p.first += microcodigo[w] != e.microcodigo[w];
           }
-          if (p < mejor) {
+          if (menor(p, mejor)) {
             segundo = mejor;
             mejor = p;
             candidato = &e;
-          } else if (p < segundo) {
+          } else if (menor(p, segundo)) {
             segundo = p;
           }
         }
@@ -590,7 +600,7 @@ const EntradaShader* Biblioteca::IdentificarEntrada(bool vertices, uint32_t fisi
         // exports for the pixel shader too) and tied between three library entries with the same code: up to a
         // quarter of the words may differ, and a tie on both scores is the same code, so the first one is taken.
         if (candidato && mejor.first <= std::max<size_t>(3, microcodigo.size() / 4) &&
-            (mejor <= segundo || (mejor.first == 0 && mejor.second == 0))) {
+            (!menor(segundo, mejor) || (mejor.first == 0 && mejor.second == 0))) {
           elegido = candidato;
           parecido = true;
           if (d.avisos_parecido++ < kMaxAvisos) {

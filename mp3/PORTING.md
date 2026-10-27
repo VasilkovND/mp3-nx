@@ -234,3 +234,15 @@ Performance (run 16, profile from ZL+ZR+R): gameplay 16-25 fps at 300-370 % CPU.
 XAudio2 processing thread started at 0x83037B30 (1 MB stack): named `mp3_AudioThreadEntry`, it prefers core 3 now, as
 in GTA IV. Then the main thread (~51 %), the ring (~42 %), the XMA decoder (~33 %). Most samples of the game threads
 are waits (svcWaitForAddress, svcArbitrateLock), not work.
+
+## Run 17: black spikes in the G-buffer; the 64x64 luminance still 0
+
+The dumps now hold the 16-bit resolves: the 320x180 scene the exposure reads (06E95000) is not empty (0-6796, v x
+2048), and another pass reads it right (its output 06DA5000 has the same range), yet the 64x64 written from it by
+ps_7e6d0c02a3470149 (CurLumSampler in slot 0, as bound) is 0. `mp3.toml` dumps the EDRAM view of each pass at base
+0x5A0 next, to tell whether the draw or its resolve loses it. One dumped frame was presented all black (the flashes).
+
+The black spikes around Max are in the G-buffer itself (06A0D000): a mesh drawn with broken vertices. The library
+match "by similarity" ranked candidates by the differing code words first and the differing fetch words (the vertex
+layout, which D3D leaves alone) second: n1772 was taken at "3+5" over a "4+0" (84 times in runs 15-17), n2430 the same.
+They are ranked by the total now, and `mp3_vs_por_parecido = false` skips such draws instead, to test.
