@@ -412,11 +412,16 @@ REX_EXTERN(mp3_JobWorker) {
 #endif  // MP3_TIENE_mp3_JobWorker
 
 // Max Payne 3's job workers (sub_82DADC08): only their Horizon priority (mp3_prioridad_trabajos), none of GTA IV's
-// queue stealing, whose layout is GTA IV's.
+// queue stealing, whose layout is GTA IV's. Run 29: it returns between jobs (~9,000 calls in 10 minutes), so each
+// thread registers once.
 #ifdef MP3_TIENE_mp3_JobWorkerMp3  // codegen/names.toml names it (CMakeLists.txt)
 REX_EXTERN(__imp__mp3_JobWorkerMp3);
 REX_EXTERN(mp3_JobWorkerMp3) {
-  Registrar(true);
+  thread_local bool registrado = false;
+  if (!registrado) {
+    registrado = true;
+    Registrar(true);
+  }
   __imp__mp3_JobWorkerMp3(ctx, base);
 }
 #endif  // MP3_TIENE_mp3_JobWorkerMp3
