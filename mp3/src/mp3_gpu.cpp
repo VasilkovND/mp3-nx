@@ -257,6 +257,7 @@ REXCVAR_DEFINE_BOOL(mp3_perfil_pilas, true, "MP3",
 #endif
 
 void Mp3AplicarPrioridades();  // mp3_perf_hooks.cpp
+void Mp3AplicarDetalle(uint8_t* base);  // mp3_detail.cpp
 
 namespace mp3::gpu {
 namespace {
@@ -603,6 +604,7 @@ class RingGraphicsSystem final : public rex::system::IGraphicsSystem {
   // when they change.
   void AplicarPrioridades() {
     Mp3AplicarPrioridades();
+    Mp3AplicarDetalle(memory_ ? memory_->virtual_membase() : nullptr);
     mp3::resolucion::InformarTamanos(memory_);  // run 20: where the 1280x720 comes from at 540p
 #if defined(__SWITCH__)
     const int32_t pedida = REXCVAR_GET(mp3_prioridad_anillo);

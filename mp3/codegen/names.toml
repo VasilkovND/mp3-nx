@@ -91,3 +91,9 @@ name = "mp3_RenderThreadLoop"
 # mp3_JobWorker reads GTA IV's queue layout and stays unnamed.
 [functions."0x82DADC08"]
 name = "mp3_JobWorkerMp3"
+
+# RAGE's command-line parameter registration (each of the game's 410 PARAMs: a static constructor calls it with the
+# object; r5 = its name; it zeroes the value text at +4, which the command line fills later). src/mp3_detail.cpp turns
+# on, right after this, the parameters of the detail settings (removetopmips, cheapaudioeffects ...).
+[functions."0x82CB10C8"]
+name = "mp3_ParamRegister"

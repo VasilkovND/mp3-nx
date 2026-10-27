@@ -36,6 +36,7 @@ add_executable(mp3
     src/mp3_resolution_trace.cpp
     src/mp3_imagen.cpp
     src/mp3_audio_mix_neon.cpp
+    src/mp3_detail.cpp
     # The shader library reader, shared with the PC tools (shaders/).
     ${CMAKE_CURRENT_SOURCE_DIR}/../shaders/ds_shader_library.cpp
 )
