@@ -1,4 +1,4 @@
-The profiler counts the lock and wait syscalls (svcArbitrateLock/Unlock, svcWaitForAddress, svcSignalToAddress, svcWaitProcessWideKeyAtomic, svcSignalProcessWideKey: calls per second and the time inside) by wrapping them like svcSleepThread; one more line in each 10 s report.
+The profiler counts the lock and wait syscalls (svcArbitrateLock/Unlock, svcWaitForAddress, svcSignalToAddress, svcWaitProcessWideKeyAtomic, svcSignalProcessWideKey: calls per second and the time inside) by wrapping them like svcSleepThread, in total and per thread (contended mutex, address waits and signals); one more line in each 10 s report and one per thread.
 
 diff --git a/cmake/rexglue_switch.cmake b/cmake/rexglue_switch.cmake
 index 3243a79..3e8735b 100644
@@ -16,7 +16,7 @@ index 3243a79..3e8735b 100644
  
  function(rexglue_switch_configure_target target_name)
 diff --git a/src/ui/switch_perf.cpp b/src/ui/switch_perf.cpp
-index 548e986..ed03234 100644
+index 548e986..7ff100c 100644
 --- a/src/ui/switch_perf.cpp
 +++ b/src/ui/switch_perf.cpp
 @@ -79,6 +79,12 @@ Result __real_nwindowQueueBuffer(NWindow* nw, s32 slot, const NvMultiFence* fenc
@@ -32,7 +32,30 @@ index 548e986..ed03234 100644
  }
  
  namespace {
-@@ -165,6 +171,12 @@ enum : unsigned {
+@@ -120,6 +126,22 @@ struct Slot {
+ };
+ Slot g_slots[kMaxThreads];
+ 
++// The calling thread's slot (searched by handle once per thread; -1 if it is not registered).
++int SlotActual() {
++  static thread_local int slot = -2;
++  if (slot == -2) {
++    slot = -1;
++    const u32 h = threadGetCurHandle();
++    for (size_t i = 0; i < kMaxThreads; ++i) {
++      if (g_slots[i].handle.load(std::memory_order_relaxed) == h) {
++        slot = int(i);
++        break;
++      }
++    }
++  }
++  return slot;
++}
++
+ struct Sample {
+   u64 pc;
+   u64 lr;
+@@ -165,6 +187,12 @@ enum : unsigned {
    kSleepCeder,        // svcSleepThread(-1 o -2)
    kSleepCorto,        // up to 1 ms
    kSleepLargo,        // over 1 ms
@@ -45,7 +68,25 @@ index 548e986..ed03234 100644
    kLlamadasCount,
  };
  struct Llamadas {
-@@ -545,6 +557,13 @@ void Report(u64 elapsed_ticks, u64 tick_freq, u64 counters_last[kCounterCount],
+@@ -174,6 +202,17 @@ struct Llamadas {
+ };
+ Llamadas g_llamadas[kLlamadasCount];
+ 
++// The same synchronization calls per thread (who makes them): contended mutex, address waits, address signals.
++enum { kSincMutex, kSincEspera, kSincSenal, kSincCount };
++std::atomic<u32> g_sinc[160][kSincCount];
++u32 g_sinc_ultimo[160][kSincCount];
++
++int SlotActual();  // below, after g_slots
++inline void AnotarHilo(unsigned id) {
++  const int slot = SlotActual();
++  if (slot >= 0) g_sinc[slot][id].fetch_add(1, std::memory_order_relaxed);
++}
++
+ inline void Anotar(unsigned id, u64 desde, u64 bytes = 0) {
+   const u64 ticks = armGetSystemTick() - desde;
+   Llamadas& l = g_llamadas[id];
+@@ -545,6 +584,13 @@ void Report(u64 elapsed_ticks, u64 tick_freq, u64 counters_last[kCounterCount],
                   n[kMapeoGpu], mb[kMapeoGpu], ms[kMapeoGpu], n[kCacheClean], mb[kCacheClean], ms[kCacheClean],
                   n[kQueueBuffer], ms[kQueueBuffer], n[kDequeueBuffer], ms[kDequeueBuffer], n[kSleep0],
                   n[kSleepCeder], n[kSleepCorto], ms[kSleepCorto], n[kSleepLargo]);
@@ -59,7 +100,26 @@ index 548e986..ed03234 100644
    }
    if (frames > 0) {
      std::fprintf(f,
-@@ -1031,6 +1050,47 @@ Result __wrap_bqDequeueBuffer(Binder* b, bool async, u32 width, u32 height, s32
+@@ -658,6 +704,18 @@ void Report(u64 elapsed_ticks, u64 tick_freq, u64 counters_last[kCounterCount],
+                  "mascara 0x%llX\n",
+                  tid, s.name[0] ? s.name : "?", s.cpu, static_cast<unsigned>(prioridad),
+                  static_cast<int>(preferido), static_cast<unsigned long long>(mascara));
++    {
++      u32 d[kSincCount];
++      for (int k = 0; k < kSincCount; ++k) {
++        const u32 v = g_sinc[i][k].load(std::memory_order_relaxed);
++        d[k] = v - g_sinc_ultimo[i][k];
++        g_sinc_ultimo[i][k] = v;
++      }
++      if (d[kSincMutex] || d[kSincEspera] || d[kSincSenal]) {
++        std::fprintf(f, "   sincronizacion por segundo: mutex con espera %.0f, esperas en direccion %.0f, senales %.0f\n",
++                     d[kSincMutex] / seconds, d[kSincEspera] / seconds, d[kSincSenal] / seconds);
++      }
++    }
+ 
+     auto lo = std::lower_bound(samples.begin(), samples.end(), i,
+                                [](const Sample& a, size_t v) { return a.slot < v; });
+@@ -1031,6 +1089,50 @@ Result __wrap_bqDequeueBuffer(Binder* b, bool async, u32 width, u32 height, s32
    return rc;
  }
  
@@ -67,6 +127,7 @@ index 548e986..ed03234 100644
 +  const u64 desde = armGetSystemTick();
 +  const Result rc = __real_svcArbitrateLock(wait_tag, tag_location, self_tag);
 +  Anotar(kArbLock, desde);
++  AnotarHilo(kSincMutex);
 +  return rc;
 +}
 +
@@ -81,6 +142,7 @@ index 548e986..ed03234 100644
 +  const u64 desde = armGetSystemTick();
 +  const Result rc = __real_svcWaitForAddress(address, arb_type, value, timeout);
 +  Anotar(kEsperaDir, desde);
++  AnotarHilo(kSincEspera);
 +  return rc;
 +}
 +
@@ -88,6 +150,7 @@ index 548e986..ed03234 100644
 +  const u64 desde = armGetSystemTick();
 +  const Result rc = __real_svcSignalToAddress(address, signal_type, value, count);
 +  Anotar(kSenalDir, desde);
++  AnotarHilo(kSincSenal);
 +  return rc;
 +}
 +
