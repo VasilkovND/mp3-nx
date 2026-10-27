@@ -2053,7 +2053,7 @@ class RingGraphicsSystem final : public rex::system::IGraphicsSystem {
     // mp3_exposicion: the tonemap's Exposures (c137.xy) scaled for this draw, before its curve (not a ramp on the
     // output: the highlights keep their roll-off).
     const float exposure = float(REXCVAR_GET(mp3_exposicion));
-    const bool exposure_scaled = exposure != 1.0f && ps_ && ps_->huella_contenedor == UINT64_C(0xCD9469857A0C532A);
+    const bool exposure_scaled = exposure != 1.0f && ps_ && IsTonemap(ps_->huella_contenedor);
     std::array<uint32_t, 2> saved_exposures{};
     if (exposure_scaled) {
       for (uint32_t i = 0; i < 2; ++i) {
@@ -2739,9 +2739,16 @@ class RingGraphicsSystem final : public rex::system::IGraphicsSystem {
 
   // The exposure as the game sets it, every 10 s of play, without a dump: the tonemap's (ps_cd9469857a0c532a) and the
   // luminance adaptation's (ps_7067b48d822df127) pixel constants, by name.
+  // The tonemaps: the cutscenes' (ps_cd9469857a0c532a) and gameplay's (ps_6671591252a5bce2, ps_fe226603f40e2533,
+  // which blend Exposures.x towards .y and the gamma towards deSatContrastGammaIFX by the 128x128 effects mask).
+  static bool IsTonemap(uint64_t huella) {
+    return huella == UINT64_C(0xCD9469857A0C532A) || huella == UINT64_C(0x6671591252A5BCE2) ||
+           huella == UINT64_C(0xFE226603F40E2533);
+  }
+
   void LogExposureConstants() {
-    static constexpr uint64_t kTonemap = UINT64_C(0xCD9469857A0C532A), kAdaptation = UINT64_C(0x7067B48D822DF127);
-    const bool tonemap = ps_->huella_contenedor == kTonemap;
+    static constexpr uint64_t kAdaptation = UINT64_C(0x7067B48D822DF127);
+    const bool tonemap = IsTonemap(ps_->huella_contenedor);
     if (!tonemap && ps_->huella_contenedor != kAdaptation) return;
     Clock::time_point& next = tonemap ? next_tonemap_log_ : next_adaptation_log_;
     const auto now = Clock::now();
@@ -2754,10 +2761,11 @@ class RingGraphicsSystem final : public rex::system::IGraphicsSystem {
                          std::bit_cast<float>(registers_[r + 3]));
     };
     if (tonemap) {
-      REXLOG_INFO("[exposicion] tonemap: gAdaptedLum c88 {} Exposures c137 {} ToneMapParams c139 {} BurnoutLimit c142 {} "
-                  "deSatContrastGamma c46 {} ColorCorrectTop c43 {} ColorCorrectBottom c44 {} BrightnessSetting c130 {} "
-                  "blurIntensity c210 {}",
-                  c(88), c(137), c(139), c(142), c(46), c(43), c(44), c(130), c(210));
+      REXLOG_INFO("[exposicion] tonemap {:016X}: gAdaptedLum c88 {} Exposures c137 {} ToneMapParams c139 {} BurnoutLimit "
+                  "c142 {} deSatContrastGamma c46 {} deSatContrastGammaIFX c75 {} ColorCorrectTop c43 {} "
+                  "ColorCorrectBottom c44 {} BrightnessSetting c130 {} KillFlashCol c146 {} InterlaceMask c147 {}",
+                  ps_->huella_contenedor, c(88), c(137), c(139), c(142), c(46), c(75), c(43), c(44), c(130), c(146),
+                  c(147));
     } else {
       REXLOG_INFO("[exposicion] adaptacion: AdaptedLumMin c140 {} AdaptedLumMax c141 {} ElapsedTime c159 {} AdaptTime "
                   "c160 {}",
