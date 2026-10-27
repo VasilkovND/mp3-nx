@@ -1,7 +1,7 @@
 // mp3-nx - the frame's resolution: 1280x720 or 960x540 (three quarters, the same 16:9 shape; the presenter stretches it
 // to the screen). 960x540 is for stock clocks: the GPU draws about 56 % of the pixels. Max Payne 3 keeps the size it
 // wants in two words at 0x83139EB0/B4 (1280, 720 in the image); sub_822BB928 compares them with the device's size
-// (0x821D0954/58, taken from XGetVideoMode by sub_82DEEA18) and, when they differ, resets the device and resizes every
+// (0x831D0954/58, taken from XGetVideoMode by sub_82DEEA18) and, when they differ, resets the device and resizes every
 // render target to them. Run 19 changed only the video mode: the game put everything back to 1280x720 and the frame
 // was presented cropped. So 540p writes 960x540 into both, before the game runs (Aplicar and AplicarMemoria, from
 // mp3_app.h); a change takes effect at the next start.
@@ -96,6 +96,11 @@ inline void Aplicar() {
 // Where the game keeps the size it wants (big-endian words), read by sub_822BB928.
 constexpr uint32_t kAnchoDeseado = 0x83139EB0;
 constexpr uint32_t kAltoDeseado = 0x83139EB4;
+// The device's size (grcDevice): 1 and 1 in the image, which sub_82DEEA18 replaces with XGetVideoMode's size, or keeps
+// when the -width / -height parameters set them. Run 20 at 540p still had a 1280x720 device (its copy for other threads
+// at 0x8381C810 / 0x8381C800): 960x540 is written here before the game runs, as those parameters would.
+constexpr uint32_t kAnchoDispositivo = 0x831D0954;
+constexpr uint32_t kAltoDispositivo = 0x831D0958;
 
 // The same size into the game's wanted size; call once the executable is loaded, before it runs.
 inline void AplicarMemoria(rex::Runtime& runtime) {
@@ -110,11 +115,20 @@ inline void AplicarMemoria(rex::Runtime& runtime) {
   }
   *reinterpret_cast<uint32_t*>(ancho) = __builtin_bswap32(960u);
   *reinterpret_cast<uint32_t*>(alto) = __builtin_bswap32(540u);
-  REXLOG_INFO("mp3: tamano deseado del juego 960x540 (era {}x{})", antes_ancho, antes_alto);
+  uint32_t* disp_ancho = runtime.memory()->TranslateVirtual<uint32_t*>(kAnchoDispositivo);
+  uint32_t* disp_alto = runtime.memory()->TranslateVirtual<uint32_t*>(kAltoDispositivo);
+  const uint32_t antes_disp_ancho = __builtin_bswap32(*disp_ancho), antes_disp_alto = __builtin_bswap32(*disp_alto);
+  if (antes_disp_ancho == 1 && antes_disp_alto == 1) {
+    *disp_ancho = __builtin_bswap32(960u);
+    *disp_alto = __builtin_bswap32(540u);
+  }
+  REXLOG_INFO("mp3: tamano deseado del juego 960x540 (era {}x{}), dispositivo {} (era {}x{})", antes_ancho, antes_alto,
+              antes_disp_ancho == 1 && antes_disp_alto == 1 ? "960x540" : "sin cambiar", antes_disp_ancho,
+              antes_disp_alto);
 }
 
 // Diagnostic, called at each Swap: the sizes the game holds, logged after 300 Swaps and again after 3000 (the device's at
-// 0x821D0954/58, the copy other threads read at 0x8381C810/0x8381C800, the wanted size at 0x83139EB0/B4).
+// 0x831D0954/58, the copy other threads read at 0x8381C810/0x8381C800, the wanted size at 0x83139EB0/B4).
 inline void InformarTamanos(rex::memory::Memory* memoria) {
   static uint32_t swaps = 0;
   ++swaps;
@@ -122,8 +136,8 @@ inline void InformarTamanos(rex::memory::Memory* memoria) {
   auto leer = [&](uint32_t direccion) {
     return __builtin_bswap32(*memoria->TranslateVirtual<const uint32_t*>(direccion));
   };
-  REXLOG_INFO("mp3: tamanos tras {} Swaps: dispositivo {}x{}, copia {}x{}, deseado {}x{}", swaps, leer(0x821D0954),
-              leer(0x821D0958), leer(0x8381C810), leer(0x8381C800), leer(kAnchoDeseado), leer(kAltoDeseado));
+  REXLOG_INFO("mp3: tamanos tras {} Swaps: dispositivo {}x{}, copia {}x{}, deseado {}x{}", swaps, leer(kAnchoDispositivo),
+              leer(kAltoDispositivo), leer(0x8381C810), leer(0x8381C800), leer(kAnchoDeseado), leer(kAltoDeseado));
 }
 
 }  // namespace mp3::resolucion

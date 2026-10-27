@@ -97,7 +97,7 @@ REXCVAR_DECLARE(int32_t, video_mode_width);   // sdk/src/ui/window.cpp: what XGe
 REXCVAR_DECLARE(int32_t, video_mode_height);
 namespace {
 // The frame's size. GTA IV kept its render targets at 1280x720 whatever the video mode said (gta4-nx run46). Max Payne 3
-// sizes its device from XGetVideoMode (sub_82DEEA18, grcDevice's setup: the width and height at 0x821D0954/58, capped at
+// sizes its device from XGetVideoMode (sub_82DEEA18, grcDevice's setup: the width and height at 0x831D0954/58, capped at
 // 1280x720 and overridden only by the -width/-height parameters), so video_mode_width/height = 960x540 asks it for a
 // smaller frame: the one-tile widening and the presentation follow the same size.
 uint32_t AnchoJuego() { return uint32_t(std::clamp<int32_t>(REXCVAR_GET(video_mode_width), 320, 1280)); }
