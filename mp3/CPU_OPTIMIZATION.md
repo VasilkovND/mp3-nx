@@ -77,3 +77,51 @@ Play 10-15 minutes (city on foot, driving, a mission, an interior), then `grep r
    mtmsrd lock: here the Switch PCH already keeps that state per thread (`make_nx_pch.py` point 3, from ds2-nx).
 2. PRES for vector and CR saves; call-heavy functions (see gears2-nx's file, "Next steps").
 3. Cross-file inlining of hot call chains (unity builds or LTO of related units).
+
+## Max Payne 3: where the frame goes (runs 17-28, 2026-10-27)
+
+Measured handheld with the 10 s reports (`[deko3d] ultimos 10 s`, `[ritmo]`, `rex_perfil.log`), A/B through
+`x360_ab_estados`.
+
+| | GPU busy / frame | GPU idle waiting for the CPU | frame (median) |
+| --- | --- | --- | --- |
+| 720p, CPU 1785, GPU 614 | 37-80 ms (scene 21-27, copies 15) | 1-2 ms | 40-55 ms |
+| 540p, CPU 1785, GPU 614 | 26-30 ms (scene 14-17, copies 9-10) | 4-10 ms | 36-45 ms |
+| 540p, CPU 1020, GPU 460.8 (stock + profile) | 25-29 ms (copies 12) | 9-25 ms | 41-80 ms |
+
+At stock clocks the CPU is the limit: no thread is at 100 %, but the four cores are 85-90 % busy (CPU total 330-360 %)
+and the frame's threads wait for each other and for a core. Per thread at stock (run 27): XAudio2 mixer ~82 % of a
+core, main ~50 %, GPU ring ~47 %, XMA decoder ~33 %, the game's render thread ~29 %, job workers 7-10 % each. The audio
+(~115 %) does not fit core 3 and runs on the game's cores; it also underruns (200-900 requests without data per 10 s).
+
+### Done (branch claude/kind-kalam-7c40c9)
+
+| Change | Result |
+| --- | --- |
+| 540p (`mp3_resolution.h`, menu ZL+ZR+Minus): -width/-height params and the wanted size 0x83139EB0 rewritten | GPU -35 % |
+| Handheld GPU 460.8 MHz profile at stock CPU (`mp3_gpu_portatil_mhz`, as ds3-nx) | applied, logged in rex_stderr |
+| SDK 0201: guest clock without a mutex | job threads' 10-15 % in the clock mutex gone |
+| SDK 0203: color resolves without copy (`x360_resolver_color_sin_copia`, off) | 6.6 swaps / frame; 7e3 (f12) resolves keep copying |
+| XAudio2 mono->5.1 mix in NEON (`mp3_mezcla_neon`, sub_8301B028) | A/B pending |
+| `nfsmw_dk_envio_parcial` 64 vs 256 | no difference: dropped |
+| Audio threads on core 3 only (`mp3_audio_solo_nucleo3`, SDK 0204) | 33 s freeze, worse underruns: stays off |
+
+### Next, by expected gain (stock clocks)
+
+1. Audio DSP natively, ported from gta4-nx's `mp3_audio_dsp_neon.cpp` (bit-exact, checked on the Mac against the
+   generated code): Max Payne 3's RAGE audio has the same effects with other layouts. `sub_82C735E0` is the per-channel
+   biquad (coefficients at +156..+172, states from +244, channel mask +276, two in series +277: GTA IV's
+   sub_82936CE0); `sub_82C771D0`, `sub_82C745A8` are scalar FPU DSP of the same family; `sub_8303ECE0` is XAudio2's
+   16-bit resampler (fixed-point position, VMX: GTA IV's own sub_821B0310 does the same job). Together ~30 % of a core at
+   stock; gta4-nx got 2-3x on each.
+2. Thread priorities (this branch): `mp3_RenderThreadLoop` (0x82200AB8, the render thread entry) and
+   `mp3_JobWorkerMp3` (0x82DADC08) named, so `mp3_prioridad_render` / `mp3_prioridad_trabajos` (44-58, 0 = off, applied
+   at each Swap) can be A/B'd: with the cores full, the main thread waits for these.
+3. XMA: 11.7k contexts decoded per second (~11 us each at 1785 MHz); every kick and every lock goes through the MMIO
+   handler (~3 us) and a lock waits for the worker's context mutex. `audio_xma_en_trabajador` 0 vs 1 is in the A/B.
+4. GPU ring: 12-20 us to record a draw; `nfsmw_nativo_huellas_muestreo = 0` (full texture rechecks) is on until the
+   render session's spike fix (ac52740) lets it go back to sampling.
+5. 7e3 resolves (f12 -> RGBA8, the scene's tonemap input): still copied by 0203 (a conversion); 3-4 full-frame copies
+   a frame at 540p.
+6. Game-side load: find Max Payne 3's detail distance and ped density scales (gta4-nx's `gta4_distancia_lod`,
+   `gta4_densidad_*`): fewer draws (ring, GPU) and fewer peds (main, jobs).

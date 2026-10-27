@@ -78,3 +78,16 @@ name = "mp3_ReleaseRenderTarget"
 # at stock clocks): src/mp3_audio_mix_neon.cpp does it in NEON (mp3_mezcla_neon).
 [functions."0x8301B028"]
 name = "mp3_XAudioMixMonoTo6"
+
+# The game's render thread entry (started once; it sets up, then runs sub_821FFDC8, the loop that builds and submits each
+# frame, until shutdown). src/mp3_perf_hooks.cpp registers the thread for mp3_prioridad_render (GTA IV's
+# gta4_RenderThreadLoop, sub_821B6F18 there). Run 27 at stock: the main thread waits on it (sub_8222DF48) while it waits
+# for a core: all four were 85-90 % busy.
+[functions."0x82200AB8"]
+name = "mp3_RenderThreadLoop"
+
+# The game's job worker thread entry (several threads: r3 = the queue object, the loop takes jobs through
+# sub_82DAD1B8). Only its priority is set (mp3_prioridad_trabajos, src/mp3_perf_hooks.cpp mp3_JobWorkerMp3); GTA IV's
+# mp3_JobWorker reads GTA IV's queue layout and stays unnamed.
+[functions."0x82DADC08"]
+name = "mp3_JobWorkerMp3"
