@@ -18,3 +18,18 @@ name = "mp3_D3DDevice_CreateVertexShader"
 
 [functions."0x830801A8"]
 name = "mp3_D3DDevice_CreatePixelShader"
+
+# XDK Direct3D: BeginTiling (r3 device, r4 flags, r5 tile count, r6 tile rects of 16 bytes: x1 y1 x2 y2, r7 clear color,
+# f1 clear z). Run 10's trace showed the G-buffer drawn twice (two predicated tiles, resolves 384 rows apart, SET_BIN_MASK
+# / SET_BIN_SELECT in the ring) and the scene came out white: src/mp3_tiling.cpp makes it one tile, as for GTA IV. Found
+# with tools/fuzzy_find.py against GTA IV's tree (TU8's gta4_D3DDevice_BeginTiling, generated from the user's own
+# executable for the comparison only): ratio 0.734 (293 against 219 instructions, the 2012 XDK's version), the next
+# 0.267; the same use of its arguments (the count stored in the device, +13124 here, +12740 in GTA IV; each rect's
+# corners read and aligned to 32).
+[functions."0x83079948"]
+name = "mp3_D3DDevice_BeginTiling"
+
+# One step of Direct3D's waits for the GPU (r3 = 1 while the caller keeps waiting): src/mp3_perf_hooks.cpp yields, then
+# sleeps between steps. ds3-nx's D3D_GpuWaitStep exactly (ratio 1.0), GTA IV's gta4_D3D_WaitStep at 0.807.
+[functions."0x83076C70"]
+name = "mp3_D3D_WaitStep"

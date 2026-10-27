@@ -151,3 +151,16 @@ The captures of gameplay are white but for the HUD prompt. The renderer's once-o
 SDK patch 0095 resolves into `k_8` and `k_8_8` (R8, RG8) and logs, for the first depth textures without a resolve,
 their base and size and the resolves within 8 MB of it. `mp3.toml` takes one automatic dump of a gameplay frame's
 resolved textures and three frame traces for the next run.
+
+## Run 10 (2026-10-27): predicated tiling, as in GTA IV
+
+The automatic dump's frame (2361 draws) was traced to the log before the game was closed (its BMPs were not written
+yet). Its first 1122 draws: shadow maps (8888, pitch 800), small 8888 passes, the G-buffer at EDRAM 180 (pitch 1280, 4
+targets, mask 7777) drawn twice, each time resolving its four targets and the depth (as 8888) to bases 384 rows apart,
+with SET_BIN_MASK / SET_BIN_SELECT packets around: predicated tiling, two tiles. Then a linear depth at 640x360
+(`k_32_FLOAT`) and one-channel `k_8` passes at 320x180 and 640x360 (refused until patch 0095).
+
+XDK Direct3D's `BeginTiling` is `sub_83079948` (tools/fuzzy_find.py against GTA IV's TU8 tree, generated from the
+user's own executable for the comparison: 0.734, next 0.267; the same use of its arguments), named in
+`codegen/names.toml`: `src/mp3_tiling.cpp` asks for one tile, the union of the game's, as for GTA IV. Direct3D's wait
+step for the GPU (`sub_83076C70`, ds3-nx's exactly) is named too: the waiting thread yields and sleeps.
