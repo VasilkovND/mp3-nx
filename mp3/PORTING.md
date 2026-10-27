@@ -279,3 +279,16 @@ back. Those read-backs (`[exposicion]`) swing: 05071000 (adapted) 0.8, 1.5 and 1
 7e3's 31.875 x 2048: some frames feed the chain the scene as raw 16-bit integers. The draw trace of full-screen passes
 now prints every non-zero pixel shader constant, to see gAdaptedLum and Exposures. Run 19 had the render targets' color
 exp bias off (`x360_sesgo_exp_color = false`): too dark, so it stays on.
+
+## Run 20: no more similarity matches, the spikes stay; the tonemap's constants
+
+With the 16 exact patched containers no vertex shader is taken by similarity any more (0 in two runs), yet Max himself
+is still a black mass of spikes in gameplay (an enemy beside him, and the cutscenes, draw right): not the shader
+choice. No vertex shader exports to memory (memexport would not translate; all 3842 do). Next A/B, settings only:
+the geometry store fully checked every frame (`nfsmw_dk_geometria_confianza = 1`, `nfsmw_dk_geometria_muestreo =
+false`) and the shader constants sent whole (`nfsmw_dk_constantes_por_diferencias = false`).
+
+Tonemap constants (draw trace): gAdaptedLum c88 = 1.5, Exposures c137 0.85-2.1, ToneMapParams c139 (0.257 0.634 0.5
+0.5), BurnoutLimit c142 8 (1 and 0.78 at times). Current luminance read back 0.2-0.9. With those the Reinhard curve
+does not burn the frame: the brightness comes from what the tonemap reads or from what runs after it. The cutscene
+captures look close to right; the garage in gameplay is washed out, with green-cyan glow at the foot of the pillars.
