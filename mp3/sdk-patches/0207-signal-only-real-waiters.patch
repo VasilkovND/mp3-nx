@@ -1,0 +1,100 @@
+Events and semaphores call the kernel only for the waiters they have (Switch): a signal or release wakes its own address only when a thread sleeps in its Wait, and the WaitMultiple polls only when one looks at that object. Run 35 at stock clocks had 60-80 thousand svcSignalToAddress a second and the audio worker woken 28 thousand times a second by other objects' signals.
+
+diff --git a/src/core/threading_posix.cpp b/src/core/threading_posix.cpp
+index b0ffc9f..47f8a82 100644
+--- a/src/core/threading_posix.cpp
++++ b/src/core/threading_posix.cpp
+@@ -353,6 +353,33 @@ class PosixConditionBase {
+   virtual ~PosixConditionBase() = default;
+   virtual bool Signal() = 0;
+ 
++#if defined(__SWITCH__)
++  // Run 35 (stock clocks): 60-80 thousand svcSignalToAddress a second, and the audio worker woken 28 thousand times a
++  // second by signals that were not its. An event or a semaphore now calls the kernel only for the waiters it has:
++  // esperando_ counts the threads asleep in its own Wait, sondeado_ the WaitMultiple polls that look at it (only
++  // those are woken through the poll generation). Each side changes its counter or the object's state and then reads
++  // the other with a full barrier between (a Dekker pair), so either the signal sees the waiter or the waiter, at its
++  // check, sees the signal.
++  std::atomic<int32_t> esperando_{0};
++  std::atomic<int32_t> sondeado_{0};
++  // After the object's state changed.
++  void DespertarSiHace(void* direccion, int32_t cuantos) {
++    std::atomic_thread_fence(std::memory_order_seq_cst);
++    if (esperando_.load(std::memory_order_relaxed) > 0) {
++      svcSignalToAddress(direccion, SignalType_Signal, 0, cuantos);
++    }
++    if (sondeado_.load(std::memory_order_relaxed) > 0) {
++      DespertarSondeos();
++    }
++  }
++  // Around a kernel wait on the object's own address.
++  void EmpezarEspera() {
++    esperando_.fetch_add(1, std::memory_order_relaxed);
++    std::atomic_thread_fence(std::memory_order_seq_cst);
++  }
++  void AcabarEspera() { esperando_.fetch_sub(1, std::memory_order_relaxed); }
++#endif
++
+   // WaitMultiple, with the object's internal mutex held: takes the object if it is signaled. A semaphore without the
+   // mutex (Switch) can lose its count to a lock-free waiter between signaled() and the taking: then false.
+   virtual bool TryAcquire() {
+@@ -431,6 +458,19 @@ class PosixConditionBase {
+       return std::make_pair(result, 0);
+     }
+ 
++#if defined(__SWITCH__)
++    // Its objects learn that a poll looks at them (see sondeado_), for the whole wait, before the first look.
++    struct Sondeando {
++      std::vector<PosixConditionBase*>& h;
++      explicit Sondeando(std::vector<PosixConditionBase*>& handles) : h(handles) {
++        for (PosixConditionBase* c : h) c->sondeado_.fetch_add(1, std::memory_order_relaxed);
++        std::atomic_thread_fence(std::memory_order_seq_cst);
++      }
++      ~Sondeando() {
++        for (PosixConditionBase* c : h) c->sondeado_.fetch_sub(1, std::memory_order_relaxed);
++      }
++    } sondeando(handles);
++#endif
+     auto start_time = std::chrono::steady_clock::now();
+     auto end_time = (timeout == std::chrono::milliseconds::max())
+                         ? std::chrono::steady_clock::time_point::max()
+@@ -604,8 +644,7 @@ class PosixCondition<Event> : public PosixConditionBase {
+   bool Signal() override {
+     signal_.store(1, std::memory_order_release);
+     // An auto-reset event lets one waiter through; the others would only find it taken.
+-    svcSignalToAddress(&signal_, SignalType_Signal, 0, manual_reset_ ? -1 : 1);
+-    DespertarSondeos();
++    DespertarSiHace(&signal_, manual_reset_ ? -1 : 1);
+     return true;
+   }
+ 
+@@ -629,7 +668,9 @@ class PosixCondition<Event> : public PosixConditionBase {
+         espera = int64_t(armTicksToNs(fin - ahora));
+       }
+       // Sleeps only while the state is still 0 (checked by the kernel), until a Signal or the timeout.
++      EmpezarEspera();
+       svcWaitForAddress(&signal_, ArbitrationType_WaitIfEqual, 0, espera);
++      AcabarEspera();
+     }
+   }
+ 
+@@ -707,8 +748,7 @@ class PosixCondition<Semaphore> : public PosixConditionBase {
+     if (out_previous_count) {
+       *out_previous_count = c;
+     }
+-    svcSignalToAddress(&count_, SignalType_Signal, 0, int32_t(release_count));
+-    DespertarSondeos();
++    DespertarSiHace(&count_, int32_t(release_count));
+     return true;
+   }
+ 
+@@ -730,7 +770,9 @@ class PosixCondition<Semaphore> : public PosixConditionBase {
+         espera = int64_t(armTicksToNs(fin - ahora));
+       }
+       // Returns at once if the count is no longer below 1, when a release signals, or at the timeout.
++      EmpezarEspera();
+       svcWaitForAddress(&count_, ArbitrationType_WaitIfLessThan, 1, espera);
++      AcabarEspera();
+     }
+   }
+ 
