@@ -95,7 +95,8 @@ class Mp3App : public rex::ReXApp {
     }
 #endif
     mp3::cpu::InformarSistema();
-    mp3::resolucion::Aplicar();  // 720p or 540p (mp3_resolution.h), before the game reads its video mode
+    // mp3::resolucion::Aplicar() (720p / 540p) is off: run 19 showed the video mode only sizes the device, the game's
+    // render targets stay 1280x720 (the frame was cropped). It comes back once the render targets' size is found.
   }
 
   void OnLoadXexImage(std::string& xex_image) override {
@@ -124,7 +125,6 @@ class Mp3App : public rex::ReXApp {
   void OnPreLaunchModule() override {
     mp3::cpu::Configurar();
     mp3::god::DespuesDeCargar(*runtime());
-    mp3::menu::Instalar(*runtime());
   }
 
  private:
