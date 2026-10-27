@@ -1924,6 +1924,7 @@ class RingGraphicsSystem final : public rex::system::IGraphicsSystem {
                (Register(g::XE_GPU_REG_RB_DEPTHCONTROL) & 0x4) && depth_vs_frame_.size() < 256) {
       ++depth_vs_frame_[vs_->numero];
     }
+    if (ps_) LogExposureConstants();
     if (OmittedVs(vs_->huella_contenedor)) {
       if (draw_tracing_) DrawTraceLine(false, "omitted (mp3_omitir_vs)");
       return;
@@ -2699,6 +2700,34 @@ class RingGraphicsSystem final : public rex::system::IGraphicsSystem {
     if (vs_ && REXCVAR_GET(mp3_traza_bufers)) TraceIndexedBuffers();
   }
 
+  // The exposure as the game sets it, every 10 s of play, without a dump: the tonemap's (ps_cd9469857a0c532a) and the
+  // luminance adaptation's (ps_7067b48d822df127) pixel constants, by name.
+  void LogExposureConstants() {
+    static constexpr uint64_t kTonemap = UINT64_C(0xCD9469857A0C532A), kAdaptation = UINT64_C(0x7067B48D822DF127);
+    const bool tonemap = ps_->huella_contenedor == kTonemap;
+    if (!tonemap && ps_->huella_contenedor != kAdaptation) return;
+    Clock::time_point& next = tonemap ? next_tonemap_log_ : next_adaptation_log_;
+    const auto now = Clock::now();
+    if (now < next) return;
+    next = now + std::chrono::seconds(10);
+    auto c = [&](uint32_t n) {
+      const uint32_t r = 0x4000 + (256 + n) * 4;
+      return fmt::format("({:g} {:g} {:g} {:g})", std::bit_cast<float>(registers_[r]),
+                         std::bit_cast<float>(registers_[r + 1]), std::bit_cast<float>(registers_[r + 2]),
+                         std::bit_cast<float>(registers_[r + 3]));
+    };
+    if (tonemap) {
+      REXLOG_INFO("[exposicion] tonemap: gAdaptedLum c88 {} Exposures c137 {} ToneMapParams c139 {} BurnoutLimit c142 {} "
+                  "deSatContrastGamma c46 {} ColorCorrectTop c43 {} ColorCorrectBottom c44 {} BrightnessSetting c130 {} "
+                  "blurIntensity c210 {}",
+                  c(88), c(137), c(139), c(142), c(46), c(43), c(44), c(130), c(210));
+    } else {
+      REXLOG_INFO("[exposicion] adaptacion: AdaptedLumMin c140 {} AdaptedLumMax c141 {} ElapsedTime c159 {} AdaptTime "
+                  "c160 {}",
+                  c(140), c(141), c(159), c(160));
+    }
+  }
+
   // mp3_omitir_vs: the container fingerprints, parsed again only when the setting changes.
   bool OmittedVs(uint64_t huella) {
     const std::string& lista = REXCVAR_GET(mp3_omitir_vs);
@@ -3220,6 +3249,7 @@ class RingGraphicsSystem final : public rex::system::IGraphicsSystem {
   uint32_t glow_draws_logged_ = 0;
   bool draw_tracing_ = false;
   uint32_t draw_traces_ = 0, draw_trace_n_ = 0, draw_trace_cap_ = 400;
+  Clock::time_point next_tonemap_log_{}, next_adaptation_log_{};
   std::string omitted_vs_text_;
   std::vector<uint64_t> omitted_vs_;
   uint32_t volume_traces_ = 0;  // the light volumes' draws logged (Draw)
