@@ -200,3 +200,23 @@ After a jump Max fell through the floor (GTA IV's car did at its start, fixed th
 here too). The log had 36 calls to two functions the codegen did not know (0x82FBAFB8, 0x82FBAFC8: vtable thunks, run
 only through pointers; their callers went on with nothing done). A scan for that shape (after a blr or bctr, lwz
 rX,N(r3), then mtctr and bctr) found 22, all function entries now.
+
+## Run 15: still burned; the log luminance (SDK patch 0097); performance
+
+The fetches now read the scene resolves right (exp_adjust -11/-13 as integers), yet the 64x64 `k_32_FLOAT` of the
+exposure chain was still 0. The trace of the small passes: draw 48 reads the 320x180 scene (06E95000) and writes the
+64x64 `k_32_FLOAT`, which the next ones average down to 1x1. MP3 keeps the log of the luminance there, negative below
+1; the k_32_FLOAT resolve kept, from GTA IV's patch 0070, only finite and non-negative values, so every log came out 0.
+SDK patch 0097: k_32_FLOAT resolves drop only NaN and infinities. Patch 0096 marks a resolved image that holds 16-bit
+integers (`entero16`: a 7e3 target into k_16_16(_16_16)); only those are divided by 65535 when fetched as a fraction
+(two other 16-bit textures, 1536x512 and 512x512, were scaled by it in run 15).
+
+Performance (run 15, CPU 1785 MHz, GPU 614 MHz): gameplay at 15-22 fps with 350-400 % of the 400 % CPU in use. From the
+profile's stack samples:
+- a host thread on core 0 at ~59 % compiling shaders (nv50_ir, glsl_to_tgsi: DKSH variants missing from the cache):
+  the 181 variants the console compiled in runs 1-15 (1108 log lines) are now in `dksh_variants.txt`, and with the 10
+  new shaders the cache has 12,230 DKSH;
+- lock waits in every game thread (svcArbitrateLock, svcWaitForAddress); the game's spin lock (`sub_8220D850`, GTA IV's
+  exactly) and Direct3D's frames-in-flight query (`sub_830853E8`, GTA IV's exactly) are named, so their hooks yield and
+  sleep instead of spinning;
+- the XMA decoder at ~36 % of a core.

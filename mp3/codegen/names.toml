@@ -33,3 +33,16 @@ name = "mp3_D3DDevice_BeginTiling"
 # sleeps between steps. ds3-nx's D3D_GpuWaitStep exactly (ratio 1.0), GTA IV's gta4_D3D_WaitStep at 0.807.
 [functions."0x83076C70"]
 name = "mp3_D3D_WaitStep"
+
+# The game's spin lock acquire (r3 = lock word): compare-and-swap 0 -> 1 through sub_82CC0450, between tries an empty
+# counting loop doubling from 8 to 1024. GTA IV's gta4_SpinLockAcquire instruction for instruction (tools/fuzzy_find.py
+# against GTA IV's tree: ratio 1.0, next 0.65). src/mp3_perf_hooks.cpp yields, then sleeps, instead of spinning: run 15's
+# threads spent much of their samples in lock waits.
+[functions."0x8220D850"]
+name = "mp3_SpinLockAcquire"
+
+# Direct3D's frames-in-flight query (r4 = a 12-byte result; +8 = frames submitted but not retired): GTA IV's
+# gta4_D3D_QueryFramesInFlight exactly (ratio 1.0; the device offsets 16968/16976 here, 16544/16552 in GTA IV).
+# src/mp3_perf_hooks.cpp sleeps while two or more are in flight instead of asking again at once.
+[functions."0x830853E8"]
+name = "mp3_D3D_QueryFramesInFlight"

@@ -1,0 +1,22 @@
+k_32_FLOAT resolves keep negative values (only NaN and infinities out): Max Payne 3 stores its log luminance there.
+
+--- a/src/x360/deko/destinos.cpp
++++ b/src/x360/deko/destinos.cpp
+@@ -378,11 +378,16 @@
+ } copia;
+ layout(location = 0) out vec4 color;
+ vec4 Limitado(vec4 t, vec4 tope) {
++  // modos.x = 1 (k_32_FLOAT): only NaN and infinities out. A 32-bit float target holds negatives: Max Payne 3 keeps its
++  // log luminance there (negative below 1), and with them made 0 its adapted luminance was 0 and the frame burned.
++  if (copia.modos.x == 1) {
++    return vec4(lessThanEqual(abs(t), tope)) * t;  // NaN compares false: 0
++  }
+   return vec4(greaterThan(t, vec4(0.0))) * min(t, tope);  // NaN compares false: 0
+ }
+ void main() {
+   ivec2 p = ivec2(gl_FragCoord.xy) + copia.desplazamiento.xy;
+-  // modos.x = 1: a k_32_FLOAT target, finite and not negative but without the 7e3 ceiling.
++  // modos.x = 1: a k_32_FLOAT target, finite (negatives kept) and without the 7e3 ceiling.
+   vec4 tope = copia.modos.x == 1 ? vec4(3.0e38) : vec4(31.875, 31.875, 31.875, 1.0);
+   // Clamped in EDRAM units, then the resolve's exponent bias (Gears of War 2: scene x 8 in EDRAM, resolved with -3).
+   // modos.y = 1: a 4x view's resolve from the 1x view that holds its samples: each clamped (as EDRAM keeps them), then

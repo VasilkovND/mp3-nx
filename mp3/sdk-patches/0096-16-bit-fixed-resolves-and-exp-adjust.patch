@@ -1,6 +1,16 @@
 --- a/include/rex/x360/deko/render.h
 +++ b/include/rex/x360/deko/render.h
-@@ -341,6 +341,11 @@
+@@ -87,6 +87,9 @@
+   bool viva = false;
+   // Resolved with copy_dest_swap: red and blue are swapped (the fetch constant's swizzle undoes it).
+   bool intercambio_rb = false;
++  // A 7e3 target resolved into k_16_16_16_16 or k_16_16: it holds the 16-bit integers (v x 2^copy exp bias), which a
++  // fetch as a fraction divides by 65535 (texturas.cpp).
++  bool entero16 = false;
+   uint64_t serie = 0;  // unique per creation: the key of its descriptors
+   uint64_t version = 0;  // resolved textures: goes up every time a resolve writes it (the cubemaps' faces)
+   // Render targets only, and they stay with the target when its image is swapped (IntercambiarImagenes):
+@@ -341,6 +344,11 @@
    const ImagenDk* ResueltaConSigno(const ImagenDk& resuelta, uint32_t signos);
    // A resolved k_16_16 target read as a k_16_16 texture (fetch format 25): converted to what the hardware returns.
    const ImagenDk* ResueltaFija16(const ImagenDk& resuelta, uint32_t signos);
@@ -43,6 +53,15 @@
              !Copiar3D(reducida ? *reducida : *destino_render, uint32_t(x0), uint32_t(y0), ancho, alto, resuelta->imagen,
                        dx, dy, nullptr,
                        formato_color == 3 || formato_color == 12 ||
+@@ -1600,6 +1606,8 @@
+         }
+         resuelta->escrita = true;
+         ++resuelta->imagen.version;
++        resuelta->imagen.entero16 =
++            (formato_destino == 25 || formato_destino == 26) && (formato_color == 3 || formato_color == 12);
+         SombraMinimoResueltaEscrita(base_resuelta);
+         ++copias_;
+         destino_render->sin_resolver = false;  // what it holds is a texture now
 --- a/src/x360/deko/texturas.cpp
 +++ b/src/x360/deko/texturas.cpp
 @@ -57,6 +57,8 @@
@@ -90,24 +109,22 @@
  const ImagenDk* RenderDk::ResueltaFija16(const ImagenDk& resuelta, uint32_t signos) {
    // Per channel: 4 signed (value / 32), 3 unsigned (the fixed-point bits as a normalized integer).
    int32_t modos[4] = {};
-@@ -596,6 +627,20 @@
-           resuelta = recortada;
-           // Looked at again on every draw: a resolve later in the frame must reach the copy.
+@@ -598,6 +629,18 @@
            valido_hasta = fotograma_ ? fotograma_ - 1 : 0;
-+        }
-+      }
+         }
+       }
 +      // exp_adjust (dword 3 bits 13-18): the fetch scales by 2^exp_adjust. A 16-bit fixed-point fetch (k_16_16_16_16,
 +      // k_16_16) of a resolve holds the 16-bit integers (v x 2^copy exp bias): read as integers (num_format, dword 3
 +      // bit 0) they are taken as they are, as a fraction / 65535. Max Payne 3 reads its HDR scene, resolved with exp
 +      // bias 11, as integers with exp_adjust -11 or -13. A scaled copy.
 +      const int32_t exp_adjust = int32_t(f[3] << 13) >> 26;
-+      const bool fraccion_16 = ((f[1] & 0x3F) == 26 || (f[1] & 0x3F) == 25) && !(f[3] & 0x1) &&
-+                               (resuelta->formato == DkImageFormat_RGBA16_Float ||
-+                                resuelta->formato == DkImageFormat_RG16_Float) &&
++      const bool fraccion_16 = ((f[1] & 0x3F) == 26 || (f[1] & 0x3F) == 25) && !(f[3] & 0x1) && resuelta->entero16 &&
 +                               REXCVAR_GET(x360_resolve_16_fijo);
 +      if ((exp_adjust || fraccion_16) && !resuelta->profundidad) {
 +        if (const ImagenDk* escalada = ResueltaEscalada(*resuelta, exp_adjust, fraccion_16)) {
 +          resuelta = escalada;
-         }
-       }
++        }
++      }
        // Resolved textures report their size like any other (without it the shadow PCF taps collapse).
+       ancho_out = resuelta->ancho;
+       alto_out = resuelta->alto;
