@@ -327,3 +327,12 @@ picture still too bright at 0.9).
   maximum exposure: flat, grainy (noise amplified) and burnt where the few lights are. Next: the lighting passes
   (ambient, deferred lights), which give 5-10 times less light than the levels expect.
 - `mp3_exposicion` and the 10 s exposure log now cover the gameplay tonemaps too (they only covered the cutscenes').
+
+## Run 31: every color clear was red
+
+Direct3D's clear shader writes its pixel constant c0, which holds the D3DCOLOR as A, R, G, B: the game clears with
+c0 (1 0 0 0) and RB_COLOR_CLEAR FF000000, opaque black. The clear emulation took c0 as R, G, B, A, so every
+single-sampled clear was red (000000FF). Visible where a target is drawn over only in part: the per-ped blood targets
+(64x128, 128x256: red everywhere, so dead and wounded enemies were painted red all over), and the gameplay tonemap's
+effects mask (07367000, R and B white: the effect exposure and gamma always on, x1.5 brighter). c0 is now read as
+A, R, G, B.
