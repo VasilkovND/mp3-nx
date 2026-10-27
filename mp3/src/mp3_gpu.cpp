@@ -40,6 +40,7 @@ void mp3_log_main_thread();  // src/mp3_guards.cpp
 #include <chrono>
 #include <condition_variable>
 #include <deque>
+#include <cstdlib>
 #include <cstring>
 #include <iterator>
 #include <mutex>
@@ -193,6 +194,12 @@ REXCVAR_DEFINE_BOOL(mp3_busqueda_directa, true, "MP3",
 REXCVAR_DEFINE_BOOL(mp3_saltar_vs_rotos, false, "MP3",
                     "No dibujar los vertex shaders que rompen la geometria (nivel 2: el VS 38234053372F8F2F, con "
                     "matrices elegidas por indice, dibuja triangulos gigantes sobre toda la pantalla)");
+REXCVAR_DEFINE_STRING(mp3_omitir_vs, "", "MP3",
+                      "Prueba: no dibujar los vertex shaders de estos contenedores (huellas en hex separadas por comas, "
+                      "p. ej. 33041FEED58EB114: la chaqueta de Max con la tela)");
+REXCVAR_DEFINE_BOOL(mp3_traza_bufers, true, "MP3",
+                    "En la traza completa (ZL+ZR+Left): de cada bufer de vertices que el shader lee por indice (la tela "
+                    "de Max: otro bufer que el de la malla), su rango de valores, NaN e infinitos y sus primeros float4");
 REXCVAR_DEFINE_INT32(mp3_arboles, 1, "MP3",
                      "Los arboles del nivel 2 (VS 38234053372F8F2F): 0 = no se dibujan (mp3_saltar_vs_rotos), 1 = tal cual, "
                      "2 = con las matrices de balanceo (c11-c22) cambiadas por la identidad, 3 = identidad y c10 = 0, "
@@ -1917,6 +1924,10 @@ class RingGraphicsSystem final : public rex::system::IGraphicsSystem {
                (Register(g::XE_GPU_REG_RB_DEPTHCONTROL) & 0x4) && depth_vs_frame_.size() < 256) {
       ++depth_vs_frame_[vs_->numero];
     }
+    if (OmittedVs(vs_->huella_contenedor)) {
+      if (draw_tracing_) DrawTraceLine(false, "omitted (mp3_omitir_vs)");
+      return;
+    }
     bool tree_identity = false, tree_c10_zero = false;
     if (vs_->huella_contenedor == kBrokenSkinVs) {
       LogBrokenSkinDraw();
@@ -2685,6 +2696,82 @@ class RingGraphicsSystem final : public rex::system::IGraphicsSystem {
                   (w0 >> 12) & 0x3F, (w0 >> 20) & 0x1F, (w0 >> 25) & 3, (w1 >> 16) & 0x3F, w1 & 0xFFF, (w1 >> 12) & 1,
                   (w1 >> 13) & 1, (w2 & 0xFF) * 4, ((w2 >> 8) & 0x7FFFFF) * 4);
     }
+    if (vs_ && REXCVAR_GET(mp3_traza_bufers)) TraceIndexedBuffers();
+  }
+
+  // mp3_omitir_vs: the container fingerprints, parsed again only when the setting changes.
+  bool OmittedVs(uint64_t huella) {
+    const std::string& lista = REXCVAR_GET(mp3_omitir_vs);
+    if (lista.empty()) return false;
+    if (lista != omitted_vs_text_) {
+      omitted_vs_text_ = lista;
+      omitted_vs_.clear();
+      for (size_t i = 0; i < lista.size();) {
+        size_t fin = lista.find(',', i);
+        if (fin == std::string::npos) fin = lista.size();
+        const std::string h = lista.substr(i, fin - i);
+        if (!h.empty()) omitted_vs_.push_back(std::strtoull(h.c_str(), nullptr, 16));
+        i = fin + 1;
+      }
+      REXLOG_INFO("[gpu] mp3_omitir_vs: {} vertex shaders not drawn", omitted_vs_.size());
+    }
+    return std::find(omitted_vs_.begin(), omitted_vs_.end(), huella) != omitted_vs_.end();
+  }
+
+  // The vertex buffers a traced draw's shader fetches from other than its mesh's (fetch constants other than the first
+  // fetch's): Max's jacket reads its cloth particles (float4, stride 16) by an index from the mesh. The renderer copies
+  // each such buffer whole (sdk deko/dibujos.cpp, the shader's own fetches), so reading it here is as safe. Per buffer:
+  // the fetch constant, how many floats are NaN, infinite or huge, the range of each component and the first float4s.
+  void TraceIndexedBuffers() {
+    uint32_t first = UINT32_MAX;
+    std::vector<uint32_t> slots;
+    for (size_t i = 0; i + 2 < vs_microcode_.size(); i += 3) {
+      const uint32_t w0 = vs_microcode_[i];
+      if ((w0 & 0x1F) != 0 || !((w0 >> 19) & 1)) continue;
+      const uint32_t slot = ((w0 >> 20) & 0x1F) * 3 + ((w0 >> 25) & 3);
+      if (first == UINT32_MAX) first = slot;
+      if (slot != first && std::find(slots.begin(), slots.end(), slot) == slots.end()) slots.push_back(slot);
+    }
+    for (const uint32_t slot : slots) {
+      const uint32_t d0 = registers_[0x4800 + slot * 2], d1 = registers_[0x4800 + slot * 2 + 1];
+      const uint32_t address = d0 & 0x1FFFFFFC, bytes = ((d1 >> 2) & 0xFFFFFF) * 4;
+      if ((d0 & 0x3) != 3 || !bytes || bytes > (1u << 20) || address + bytes > 0x20000000u) {
+        REXLOG_INFO("[draws]       buffer {}.{}: words {:08X} {:08X} (not read)", slot / 3, slot % 3, d0, d1);
+        continue;
+      }
+      const uint8_t* p = memory_->TranslatePhysical(address);
+      const uint32_t endian = d1 & 0x3;
+      auto word = [&](uint32_t i) {
+        uint32_t w;
+        std::memcpy(&w, p + i * 4, 4);
+        if (endian == 2) return __builtin_bswap32(w);
+        if (endian == 1) return ((w & 0x00FF00FFu) << 8) | ((w >> 8) & 0x00FF00FFu);
+        if (endian == 3) return (w << 16) | (w >> 16);
+        return w;
+      };
+      const uint32_t n = bytes / 4;
+      uint32_t nan = 0, inf = 0, huge = 0;
+      float lo[4] = {INFINITY, INFINITY, INFINITY, INFINITY}, hi[4] = {-INFINITY, -INFINITY, -INFINITY, -INFINITY};
+      for (uint32_t i = 0; i < n; ++i) {
+        const float f = std::bit_cast<float>(word(i));
+        if (std::isnan(f)) { ++nan; continue; }
+        if (std::isinf(f)) { ++inf; continue; }
+        if (std::fabs(f) > 1.0e4f) ++huge;
+        lo[i & 3] = std::min(lo[i & 3], f);
+        hi[i & 3] = std::max(hi[i & 3], f);
+      }
+      std::string first_values;
+      for (uint32_t i = 0; i < n && i < 32; i += 4) {
+        first_values += fmt::format(" ({:g} {:g} {:g} {:g})", std::bit_cast<float>(word(i)),
+                                    i + 1 < n ? std::bit_cast<float>(word(i + 1)) : 0.0f,
+                                    i + 2 < n ? std::bit_cast<float>(word(i + 2)) : 0.0f,
+                                    i + 3 < n ? std::bit_cast<float>(word(i + 3)) : 0.0f);
+      }
+      REXLOG_INFO("[draws]       buffer {}.{}: base {:08X} {} bytes endian {}; {} NaN, {} inf, {} over 1e4; x {:g}..{:g} "
+                  "y {:g}..{:g} z {:g}..{:g} w {:g}..{:g}; first{}",
+                  slot / 3, slot % 3, address, bytes, endian, nan, inf, huge, lo[0], hi[0], lo[1], hi[1], lo[2], hi[2],
+                  lo[3], hi[3], first_values);
+    }
     // The pixel shader's textures: fetch constant of each sampler (base, format, size, dimension, swizzle, signs).
     // Every sampler (blended materials use up to 8: S4-S7 were not shown), with the raw words for the mip range.
     for (size_t i = 0; ps_ && i < ps_->samplers.size() && i < 16; ++i) {
@@ -2702,7 +2789,10 @@ class RingGraphicsSystem final : public rex::system::IGraphicsSystem {
       std::string pc;
       // With mp3_traza_solo_quads (few draws: the post-processing) every non-zero one up to c255: Max Payne 3's tonemap
       // reads its exposure from c88 and c137.
-      const uint32_t hasta = REXCVAR_GET(mp3_traza_solo_quads) ? 256 : 16;
+      // In the whole frame's trace too, for its full-screen passes (at most 6 vertices): the tonemap's exposure.
+      const uint32_t hasta =
+          REXCVAR_GET(mp3_traza_solo_quads) || (Register(rex::graphics::XE_GPU_REG_VGT_DRAW_INITIATOR) >> 16) <= 6
+              ? 256 : 16;
       for (uint32_t c = 0; c < hasta; ++c) {
         const uint32_t r = 0x4000 + (256 + c) * 4;
         if (c >= 16 && !(registers_[r] | registers_[r + 1] | registers_[r + 2] | registers_[r + 3])) continue;
@@ -3130,6 +3220,8 @@ class RingGraphicsSystem final : public rex::system::IGraphicsSystem {
   uint32_t glow_draws_logged_ = 0;
   bool draw_tracing_ = false;
   uint32_t draw_traces_ = 0, draw_trace_n_ = 0, draw_trace_cap_ = 400;
+  std::string omitted_vs_text_;
+  std::vector<uint64_t> omitted_vs_;
   uint32_t volume_traces_ = 0;  // the light volumes' draws logged (Draw)
   uint32_t next_capture_ = UINT32_MAX;  // SaveCapture
   Clock::time_point next_draw_trace_{};
