@@ -2761,7 +2761,12 @@ class RingGraphicsSystem final : public rex::system::IGraphicsSystem {
     if (!tonemap && ps_->huella_contenedor != kAdaptation) return;
     Clock::time_point& next = tonemap ? next_tonemap_log_ : next_adaptation_log_;
     const auto now = Clock::now();
-    if (now < next) return;
+    // The gameplay tonemaps' painkiller / kill effect (InterlaceMask c147.w over 0): logged as soon as it starts, not
+    // only on the 10 s tick (the screen went all red under it).
+    const bool effect = tonemap && std::bit_cast<float>(registers_[0x4000 + (256 + 147) * 4 + 3]) > 0.0f;
+    const bool effect_started = effect && !tonemap_effect_logged_;
+    if (tonemap) tonemap_effect_logged_ = effect;
+    if (now < next && !effect_started) return;
     next = now + std::chrono::seconds(10);
     auto c = [&](uint32_t n) {
       const uint32_t r = 0x4000 + (256 + n) * 4;
@@ -3304,6 +3309,7 @@ class RingGraphicsSystem final : public rex::system::IGraphicsSystem {
   bool draw_tracing_ = false;
   uint32_t draw_traces_ = 0, draw_trace_n_ = 0, draw_trace_cap_ = 400;
   Clock::time_point next_tonemap_log_{}, next_adaptation_log_{}, next_fxaa_log_{};
+  bool tonemap_effect_logged_ = false;
   std::string omitted_vs_text_;
   std::vector<uint64_t> omitted_vs_;
   uint32_t volume_traces_ = 0;  // the light volumes' draws logged (Draw)
