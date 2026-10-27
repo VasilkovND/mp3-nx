@@ -1,4 +1,4 @@
-x360_resolver_color_sin_copia (off by default): a whole color resolve gives the texture the target's image (a view of its first rows, the target's tile height) instead of copying its pixels, and the target another image; RestaurarContenido brings the rows back if the game draws on it again without clearing it.
+x360_resolver_color_sin_copia (off by default): a whole color resolve gives the texture the target's image (a view of its first rows, the target's tile height) instead of copying its pixels, and the target another image; RestaurarContenido brings the rows back if the game draws on it again without clearing it. The first refusals are logged with their reason.
 
 --- a/include/rex/x360/deko/render.h
 +++ b/include/rex/x360/deko/render.h
@@ -28,11 +28,12 @@ x360_resolver_color_sin_copia (off by default): a whole color resolve gives the 
    // A render target whose content went to a resolved texture in a swap gets it back (copy), before it is drawn on or
    // resolved again; or, for the shadow map's car pass while the shadow minimum is applied, a clear instead.
    void RestaurarContenido(ImagenDk& destino, bool para_resolver);
-@@ -550,6 +562,7 @@ class RenderDk final : public DestinosNativos {
+@@ -550,6 +562,8 @@ class RenderDk final : public DestinosNativos {
    uint64_t sm_limpios_seguidos_ = 0, sm_ciclos_ = 0, sm_ciclos_aplicados_ = 0, sm_diferencias_ = 0;
    uint64_t sm_dibujos_coches_ = 0, sm_dibujos_no_exactos_ = 0, sm_lecturas_minimo_ = 0, sm_lecturas_si_misma_ = 0;
    uint64_t sm_lecturas_normales_ = 0, sm_lecturas_a_destiempo_ = 0, sm_lecturas_incapaces_ = 0;
 +  uint64_t intercambios_color_ = 0, informe_intercambios_color_ = 0;
++  uint32_t rechazos_sin_copia_ = 0;  // x360_resolver_color_sin_copia: refusals logged
    uint64_t intercambios_ = 0, restauraciones_ = 0, borrados_aplazados_ = 0, cubos_refrescados_ = 0;
    uint64_t informe_intercambios_ = 0, informe_restauraciones_ = 0, informe_cubos_ = 0, informe_cielos_ = 0;
    bool Rechazar(uint32_t causa, const char* texto);
@@ -93,21 +94,42 @@ x360_resolver_color_sin_copia (off by default): a whole color resolve gives the 
    return true;
  }
  
-@@ -1577,6 +1618,32 @@ bool RenderDk::Copiar(const RegistrosCopia& reg) {
+@@ -1577,6 +1618,53 @@ bool RenderDk::Copiar(const RegistrosCopia& reg) {
          ++resuelta->imagen.version;
          SombraMinimoResueltaEscrita(base_resuelta);
          ++frontales_ahorrados_;
 +      } else if (uint32_t(x0) < destino_render->ancho && uint32_t(y0) < destino_render->alto && ancho && alto &&
-+                 REXCVAR_GET(x360_resolver_color_sin_copia) && !reducida && !encoger && !se_lee && !capa &&
-+                 x0 == 0 && y0 == 0 && dx == 0 && dy == 0 && msaa == 0 && sesgo_exp == 0 &&
-+                 formato_color != 3 && formato_color != 12 && formato_color != 14 &&
-+                 formato_destino != 25 && formato_destino != 26 && !resuelta->imagen.intercambio_rb &&
-+                 resuelta->imagen.tipo == DkImageType_2D && resuelta->imagen.capas == 1 &&
-+                 resuelta->imagen.niveles == 1 && destino_render->tipo == DkImageType_2D &&
-+                 ancho == resuelta->imagen.ancho && alto == resuelta->imagen.alto &&
-+                 resuelta->imagen.ancho == destino_render->ancho && resuelta->imagen.alto <= destino_render->alto &&
-+                 resuelta->imagen.formato == destino_render->formato && !destino_render->contenido_invalido &&
-+                 destino_render->alto_usado != 0 && destino_render->alto_usado <= ((alto + 7) & ~7u) &&
++                 REXCVAR_GET(x360_resolver_color_sin_copia) &&
++                 [&] {
++                   // Why a large color resolve is not swapped (the first ones are logged): run 27 swapped none.
++                   const char* motivo =
++                       reducida || encoger || se_lee || capa       ? "vista 4x, encogida, leida o capa"
++                       : x0 || y0 || dx || dy                      ? "no empieza en (0,0)"
++                       : msaa                                      ? "msaa"
++                       : sesgo_exp                                 ? "exp bias"
++                       : formato_color == 3 || formato_color == 12 || formato_color == 14 ? "formato 7e3 o f14"
++                       : formato_destino == 25 || formato_destino == 26 ? "16 bits fijos"
++                       : resuelta->imagen.tipo != DkImageType_2D || resuelta->imagen.capas != 1 ||
++                               resuelta->imagen.niveles != 1 || destino_render->tipo != DkImageType_2D
++                           ? "no 2D simple"
++                       : ancho != resuelta->imagen.ancho || alto != resuelta->imagen.alto ? "no toda la textura"
++                       : resuelta->imagen.ancho != destino_render->ancho ? "otro ancho"
++                       : resuelta->imagen.alto > destino_render->alto     ? "textura mas alta"
++                       : resuelta->imagen.formato != destino_render->formato ? "otro formato host"
++                       : destino_render->contenido_invalido                 ? "destino ya intercambiado"
++                       : destino_render->alto_usado == 0 || destino_render->alto_usado > ((alto + 7) & ~7u)
++                           ? "filas usadas desconocidas o de mas"
++                           : nullptr;
++                   if (motivo && ancho >= 256 && rechazos_sin_copia_ < 24) {
++                     ++rechazos_sin_copia_;
++                     REXLOG_INFO("[deko3d] resolve de color {}x{} a {:08X} copiado: {} (destino {}x{} f{} formato host {}, "
++                                 "textura {}x{} formato host {}, filas usadas {})",
++                                 ancho, alto, base_resuelta, motivo, destino_render->ancho, destino_render->alto,
++                                 formato_color, int(destino_render->formato), resuelta->imagen.ancho,
++                                 resuelta->imagen.alto, int(resuelta->imagen.formato), destino_render->alto_usado);
++                   }
++                   return motivo == nullptr;
++                 }() &&
 +                 (AntesDeCambiarDestino(destino_render), IntercambiarColorConTextura(*destino_render, resuelta->imagen))) {
 +        // x360_resolver_color_sin_copia: the texture has the target's pixels without a copy; the target gets them back
 +        // if the game draws on it again without clearing it (RestaurarContenido).
@@ -126,7 +148,7 @@ x360_resolver_color_sin_copia (off by default): a whole color resolve gives the 
        } else if (uint32_t(x0) < destino_render->ancho && uint32_t(y0) < destino_render->alto && ancho && alto) {
          const DkImageView origen_vista = VistaCompleta(destino_render->imagen);
          const DkImageView destino_vista = VistaCompleta(resuelta->imagen.imagen);
-@@ -1673,6 +1740,11 @@ bool RenderDk::Copiar(const RegistrosCopia& reg) {
+@@ -1673,6 +1761,11 @@ bool RenderDk::Copiar(const RegistrosCopia& reg) {
      // Done when the target is next bound (EmpezarPase), resolved or painted, not now: the front buffer may still be
      // painted from it, and a later clear makes this one unnecessary.
      destino_render->borrado_pendiente = true;
@@ -138,7 +160,7 @@ x360_resolver_color_sin_copia (off by default): a whole color resolve gives the 
      EdramReclamar(*destino_render, uint32_t(y1), destino_render->borrado_color);  // the cleared rows are this view's
      ++borrados_;
      const bool aplazar = REXCVAR_GET(nfsmw_dk_borrado_color_aplazado);  // read each time: the game can switch it (ds2 safe mode)
-@@ -1860,13 +1932,76 @@ void RenderDk::IntercambiarImagenes(ImagenDk& destino, ImagenDk& resuelta) {
+@@ -1860,13 +1953,81 @@ void RenderDk::IntercambiarImagenes(ImagenDk& destino, ImagenDk& resuelta) {
    ++intercambios_;
  }
  
@@ -178,6 +200,11 @@ x360_resolver_color_sin_copia (off by default): a whole color resolve gives the 
 +      !InicializarSobre(imagen_textura, destino.memoria, textura.formato, destino.flags, textura.ancho, textura.alto,
 +                        destino.alto)) {
 +    if (!memoria_de_destino) nucleo_.LiberarImagenLuego(memoria_destino);
++    if (rechazos_sin_copia_ < 24) {
++      ++rechazos_sin_copia_;
++      REXLOG_WARN("[deko3d] resolve de color sin copia: la vista {}x{} no cabe en la memoria del destino {}x{} ({} bytes)",
++                  textura.ancho, textura.alto, destino.ancho, destino.alto, destino.memoria.bytes);
++    }
 +    return false;
 +  }
 +  if (!memoria_de_destino) {
@@ -216,7 +243,7 @@ x360_resolver_color_sin_copia (off by default): a whole color resolve gives the 
        it->second.imagen.formato != destino.formato) {
      return;  // unknown where it went: the target keeps what it has, as the Vulkan path
    }
-@@ -1876,19 +2011,21 @@ void RenderDk::RestaurarContenido(ImagenDk& destino, bool para_resolver) {
+@@ -1876,19 +2037,21 @@ void RenderDk::RestaurarContenido(ImagenDk& destino, bool para_resolver) {
    }
    AsegurarTrabajo();
    EmitirCieloPendiente();
@@ -243,7 +270,7 @@ x360_resolver_color_sin_copia (off by default): a whole color resolve gives the 
    ++restauraciones_;
    OlvidarEstado();
  }
-@@ -2862,6 +2999,7 @@ void RenderDk::InformePeriodico() {
+@@ -2862,6 +3025,7 @@ void RenderDk::InformePeriodico() {
      informe_etapas_ = ns_etapas_;
      informe_dedupe_bytes_ = dedupe_.bytes_ahorrados();
      informe_intercambios_ = intercambios_;
@@ -251,7 +278,7 @@ x360_resolver_color_sin_copia (off by default): a whole color resolve gives the 
      informe_restauraciones_ = restauraciones_;
      informe_cubos_ = cubos_refrescados_;
      informe_cielos_ = cielo_aplazados_;
-@@ -2980,12 +3118,13 @@ void RenderDk::InformePeriodico() {
+@@ -2980,12 +3144,13 @@ void RenderDk::InformePeriodico() {
    const auto us = [&](uint32_t e) { return dibujos ? double(ns_etapas_[e] - informe_etapas_[e]) / double(dibujos) / 1e3 : 0.0; };
    static constexpr const char* kFasesSm[3] = {"mirando", "APLICANDO", "apagada"};
    X360_INFORME(
