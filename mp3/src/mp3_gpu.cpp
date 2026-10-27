@@ -194,9 +194,13 @@ REXCVAR_DEFINE_BOOL(mp3_saltar_vs_rotos, false, "MP3",
 REXCVAR_DEFINE_STRING(mp3_omitir_vs, "", "MP3",
                       "Prueba: no dibujar los vertex shaders de estos contenedores (huellas en hex separadas por comas, "
                       "p. ej. 33041FEED58EB114: la chaqueta de Max con la tela)");
-REXCVAR_DEFINE_DOUBLE(mp3_exposicion, 0.6, "MP3",
+REXCVAR_DEFINE_DOUBLE(mp3_exposicion, 1.0, "MP3",
                       "Exposicion del tonemap: multiplica sus Exposures (c137) antes de la curva. 1 = la del juego; menos "
                       "de 1 baja el pase de luz quemado (0.4 a 1.0)");
+REXCVAR_DEFINE_BOOL(mp3_fxaa_sin_sesgo, true, "MP3",
+                    "El FXAA del juego (ps 8D42760B0383C0D8) escribe en el destino 7e3 de la escena sin su exp bias de "
+                    "color (2, x4): la salida ya es 0..1 y el resolve a 8 bits no lo deshace; con el, el cuadro x4 y "
+                    "quemado");
 REXCVAR_DEFINE_BOOL(mp3_traza_bufers, true, "MP3",
                     "En la traza completa (ZL+ZR+Left): de cada bufer de vertices que el shader lee por indice (la tela "
                     "de Max: otro bufer que el de la malla), su rango de valores, NaN e infinitos y sus primeros float4");
@@ -2060,7 +2064,23 @@ class RingGraphicsSystem final : public rex::system::IGraphicsSystem {
       ++generacion_constantes_ps_;
       request.generacion_constantes_ps = generacion_constantes_ps_;
     }
+    // mp3_fxaa_sin_sesgo: the game's FXAA writes into the scene's 7e3 target, whose RB_COLOR_INFO keeps color_exp_bias
+    // 2 (x4) from the lighting; its output is already the 0..1 picture and the resolve to the 8-bit front buffer has no
+    // bias of its own, so with it the frame came out x4, burnt white. The bias bits (20-25) cleared for this draw.
+    static constexpr uint64_t kFxaa = UINT64_C(0x8D42760B0383C0D8);
+    const bool fxaa = ps_ && ps_->huella_contenedor == kFxaa;
+    const uint32_t color_info = registers_[rex::graphics::XE_GPU_REG_RB_COLOR_INFO];
+    const int32_t fxaa_bias = fxaa ? int32_t(color_info << 6) >> 26 : 0;
+    if (fxaa && Clock::now() >= next_fxaa_log_) {
+      next_fxaa_log_ = Clock::now() + std::chrono::seconds(10);
+      REXLOG_INFO("[exposicion] fxaa: RB_COLOR_INFO {:08X} (formato {}, exp bias {}){}", color_info,
+                  (color_info >> 16) & 0xF, fxaa_bias,
+                  fxaa_bias && REXCVAR_GET(mp3_fxaa_sin_sesgo) ? ": se dibuja sin el" : "");
+    }
+    const bool fxaa_unbiased = fxaa_bias && REXCVAR_GET(mp3_fxaa_sin_sesgo);
+    if (fxaa_unbiased) registers_[rex::graphics::XE_GPU_REG_RB_COLOR_INFO] = color_info & ~(0x3Fu << 20);
     const bool drawn = destinos_->Dibujar(request);
+    if (fxaa_unbiased) registers_[rex::graphics::XE_GPU_REG_RB_COLOR_INFO] = color_info;
     if (exposure_scaled) {
       for (uint32_t i = 0; i < 2; ++i) registers_[0x4000 + (256 + 137) * 4 + i] = saved_exposures[i];
       ++generacion_constantes_ps_;
@@ -3266,7 +3286,7 @@ class RingGraphicsSystem final : public rex::system::IGraphicsSystem {
   uint32_t glow_draws_logged_ = 0;
   bool draw_tracing_ = false;
   uint32_t draw_traces_ = 0, draw_trace_n_ = 0, draw_trace_cap_ = 400;
-  Clock::time_point next_tonemap_log_{}, next_adaptation_log_{};
+  Clock::time_point next_tonemap_log_{}, next_adaptation_log_{}, next_fxaa_log_{};
   std::string omitted_vs_text_;
   std::vector<uint64_t> omitted_vs_;
   uint32_t volume_traces_ = 0;  // the light volumes' draws logged (Draw)
