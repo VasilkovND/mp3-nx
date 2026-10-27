@@ -1,0 +1,90 @@
+x360_diag_resolve: the resolves to the listed addresses log which view and image they copy from; x360_diag_swaps: the
+first N Swaps (and one in 300 after) log which texture they present. Max Payne 3's tonemap and FXAA draw into their
+targets, yet the screen does not show them: where the frame gets lost after the draws.
+
+--- a/src/x360/deko/destinos.cpp
++++ b/src/x360/deko/destinos.cpp
+@@ -23,6 +23,8 @@
+ #include <cstring>
+ #include <mutex>
+ #include <deque>
++#include <unordered_map>
++#include <vector>
+ #include <condition_variable>
+ #include <filesystem>
+ #include <fstream>
+@@ -159,6 +161,36 @@
+                      "sin copiarlo ni convertirlo. 0 = apagado, todo al anillo como antes")
+     .range(0, 256)
+     .lifecycle(rex::cvar::Lifecycle::kInitOnly);
++REXCVAR_DEFINE_STRING(x360_diag_resolve, "", "X360",
++                      "Diagnostico: los resolves a estas direcciones (hex, separadas por comas) escriben en el log de que "
++                      "vista e imagen copian (60 lineas por direccion como mucho)");
++REXCVAR_DEFINE_INT32(x360_diag_swaps, 0, "X360",
++                     "Diagnostico: los primeros N Swaps (y uno de cada 300 despues) escriben en el log que textura "
++                     "presentan; 0 = ninguno");
++
++namespace {
++// x360_diag_resolve: is this resolve destination one of the listed ones, with lines left to log.
++bool DiagDireccion(uint32_t direccion) {
++  const std::string& lista = REXCVAR_GET(x360_diag_resolve);
++  if (lista.empty()) return false;
++  static std::string texto;
++  static std::vector<uint32_t> direcciones;
++  static std::unordered_map<uint32_t, uint32_t> lineas;
++  if (lista != texto) {
++    texto = lista;
++    direcciones.clear();
++    for (size_t i = 0; i < lista.size();) {
++      size_t fin = lista.find(',', i);
++      if (fin == std::string::npos) fin = lista.size();
++      if (fin > i) direcciones.push_back(uint32_t(std::strtoul(lista.substr(i, fin - i).c_str(), nullptr, 16)));
++      i = fin + 1;
++    }
++  }
++  if (std::find(direcciones.begin(), direcciones.end(), direccion) == direcciones.end()) return false;
++  return lineas[direccion]++ < 60;
++}
++}  // namespace
++
+ REXCVAR_DEFINE_BOOL(nfsmw_dk_geometria_muestreo, true, "NFSMW",
+                     "deko3d: los rangos guardados se recomprueban leyendo 1 de cada 8 lineas de 64 bytes (rotando, "
+                     "asi cada linea se lee al menos cada 8 fotogramas) mas la primera y la ultima, en vez de todo. Las "
+@@ -1446,6 +1478,13 @@
+   ImagenDk* destino_render = DestinoColor(info_color & 0xFFF, formato_color, pitch, msaa);
+   if (!destino_render) {
+     return false;
++  }
++  if (DiagDireccion(reg.rb_copy_dest_base & 0x1FFFFFFF)) {
++    REXLOG_INFO("[diag-resolve] {:08X} desde {} serie {} ({}x{} fmt {}) rect ({},{})-({},{}) {} formato destino {}{}",
++                reg.rb_copy_dest_base & 0x1FFFFFFF, Vista(*destino_render), destino_render->serie,
++                destino_render->ancho, destino_render->alto, int(destino_render->formato), x0, y0, x1, y1,
++                copiar ? "copia" : "sin copia", (reg.rb_copy_dest_info >> 7) & 0x3F,
++                borrar_color ? ", borra el color" : "");
+   }
+   // Also in the frame a dump takes (ZL + ZR + Left): which resolve or clear left what in that frame.
+   if (edram_diag_ || EdramRegistrando()) {
+@@ -2738,6 +2777,13 @@
+       REXLOG_INFO("[deko3d] frontal presentado sin la direccion del Swap: {:08X} (el Swap dio {:08X})", base_mejor,
+                   base);
+     }
++  }
++  if (const int32_t n = REXCVAR_GET(x360_diag_swaps); n > 0 && (diag_swaps_ < uint32_t(n) || fotograma_ % 300 == 0)) {
++    ++diag_swaps_;
++    REXLOG_INFO("[diag-swap] fotograma {} base {:08X} desde_destino {} origen {} {}x{} fmt {} version {} (resueltas {})",
++                fotograma_, base, desde_destino, origen ? int64_t(origen->serie) : -1, origen ? origen->ancho : 0,
++                origen ? origen->alto : 0, origen ? int(origen->formato) : -1, origen ? origen->version : 0,
++                resueltas_.size());
+   }
+   const uint32_t ancho_origen = desde_destino ? frontal_.ancho : (origen ? origen->ancho : 0);
+   const uint32_t alto_origen = desde_destino ? frontal_.alto : (origen ? origen->alto : 0);
+--- a/include/rex/x360/deko/render.h
++++ b/include/rex/x360/deko/render.h
+@@ -283,6 +283,7 @@
+                 bool reducir2x2 = false);   // each destination texel the average of 2x2 source texels (x0, y0 halved)
+   ImagenDk* EdramVistaReducible(const ImagenDk& vista, uint32_t filas);
+   bool rop_sin_barrera_ = true;
++  uint32_t diag_swaps_ = 0;  // x360_diag_swaps
+   bool copia3d_pendiente_ = false;
+   // The 3D copies since the last barrier: the images they wrote and read (series). Another copy needs a barrier only
+   // when it reads what one of them wrote or writes what one of them reads: GTA IV resolves its G-buffer five times in a
