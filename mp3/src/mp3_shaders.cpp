@@ -246,14 +246,23 @@ void TiposDesdeSpirv(std::span<const uint32_t> spirv, std::vector<SamplerShader>
 // Each distinct microcode no step identifies, as the ring loaded it (big-endian words, D3D's patches included), to
 // shaders_unknown/{vs,ps}_<fingerprint>.bin beside the NRO: compared offline with the game's containers, it tells why
 // it was not found (not in the library, or patched in a way the steps do not expect). mp3_volcar_desconocidos.
-void VolcarDesconocido(bool vertices, uint64_t huella, std::span<const uint32_t> microcodigo) {
+// Taken by similarity (`parecido`, its library entry): written as {vs,ps}_<fingerprint>_de_<that entry's container
+// fingerprint>.bin, so the PC can put the patched microcode into a copy of that container (tools/parecidos.py) and the
+// library gets the shader as the game really loads it.
+void VolcarDesconocido(bool vertices, uint64_t huella, std::span<const uint32_t> microcodigo,
+                       const EntradaShader* parecido = nullptr) {
   static uint32_t escritos = 0;
   if (!REXCVAR_GET(mp3_volcar_desconocidos) || escritos >= 2000) return;
   static const std::filesystem::path carpeta = rex::filesystem::GetExecutableFolder() / "shaders_unknown";
   std::error_code ec;
   if (escritos == 0) std::filesystem::create_directories(carpeta, ec);
-  char nombre[48];
-  std::snprintf(nombre, sizeof(nombre), "%s_%016llx.bin", vertices ? "vs" : "ps", static_cast<unsigned long long>(huella));
+  char nombre[80];
+  if (parecido) {
+    std::snprintf(nombre, sizeof(nombre), "%s_%016llx_de_%016llx.bin", vertices ? "vs" : "ps",
+                  static_cast<unsigned long long>(huella), static_cast<unsigned long long>(parecido->huella_contenedor));
+  } else {
+    std::snprintf(nombre, sizeof(nombre), "%s_%016llx.bin", vertices ? "vs" : "ps", static_cast<unsigned long long>(huella));
+  }
   if (FILE* f = std::fopen((carpeta / nombre).string().c_str(), "wb")) {
     for (uint32_t w : microcodigo) {
       const uint32_t be = __builtin_bswap32(w);
@@ -608,6 +617,7 @@ const EntradaShader* Biblioteca::IdentificarEntrada(bool vertices, uint32_t fisi
                         fisica, candidato->numero, mejor.first, mejor.second, segundo.first, segundo.second);
           }
           d.aprendidas[huella] = elegido;  // later loads of it: step 2
+          VolcarDesconocido(vertices, huella, microcodigo, elegido);
         }
       }
     }
