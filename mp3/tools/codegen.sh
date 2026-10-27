@@ -102,9 +102,13 @@ INPUTS=$( (cat "$CG/game/default.xex" "$CG/game/default.xexp" "$CG"/*.toml "$REX
   "$ROOT"/mp3/tools/patch_inline_calls.py "$ROOT"/mp3/tools/patch_local_regs.py
   echo "barriers=$BARRIERS localregs=$LOCALREGS check=${PLR_CHECK:-0} vmx_exact=$VMX_EXACT"
   # The functions the sources name (patch_inline_calls.py and patch_local_regs.py keep their calls): a new hook
-  # regenerates the code.
+  # regenerates the code. Of the mp3_ words only the function names the .toml files give: a new setting (mp3_<cvar>)
+  # is no function and re-ran the whole codegen (~5 minutes).
   grep -rhoE "\b(__imp__)?(sub_[0-9A-Fa-f]{8}|mp3_[A-Za-z0-9_]+|rexcrt_[A-Za-z0-9_]+)\b" \
-    "$ROOT/mp3/src" "$ROOT/sdk/src" "$ROOT/sdk/include" | sort -u) \
+    "$ROOT/mp3/src" "$ROOT/sdk/src" "$ROOT/sdk/include" | sort -u \
+    | grep -vE "^(__imp__)?mp3_" ; \
+  grep -rhoE "\b(__imp__)?mp3_[A-Za-z0-9_]+\b" "$ROOT/mp3/src" "$ROOT/sdk/src" "$ROOT/sdk/include" | sort -u \
+    | grep -xFf <(sed -n 's/.*name = "\(mp3_[A-Za-z0-9_]*\)".*/\1/p' "$CG"/*.toml | awk '{print; print "__imp__" $0}')) \
   | shasum -a 256 | cut -d' ' -f1)
 if [ "$(cat "$STAMP" 2>/dev/null)" != "$INPUTS" ] || [ ! -f "$CG/generated/default/sources.cmake" ]; then
   # Generated and patched in a staging folder, then only the files whose text changed are copied over generated/:
