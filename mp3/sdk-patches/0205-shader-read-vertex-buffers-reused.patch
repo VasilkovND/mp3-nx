@@ -1,7 +1,7 @@
-Vertex buffers the shader reads itself (dsVfetch): kept in the geometry store across frames and deduplicated within a work, like the other streams, instead of copied whole for every draw (x360_vertices_manuales_reusados, default true; a counter logs MB bound and copied).
+Vertex buffers the shader reads itself (dsVfetch): within a work the same buffer is bound again instead of copied whole for every draw (the dedupe, like the other streams; not the cross-frame geometry store: Max's jacket cloth is rewritten every frame). x360_vertices_manuales_reusados, default true; a counter logs MB bound and copied.
 
 diff --git a/src/x360/deko/dibujos.cpp b/src/x360/deko/dibujos.cpp
-index 7d74161..dcfda0a 100644
+index 7d74161..d7cc1a4 100644
 --- a/src/x360/deko/dibujos.cpp
 +++ b/src/x360/deko/dibujos.cpp
 @@ -41,6 +41,10 @@ REXCVAR_DEFINE_BOOL(x360_edram_saltar_muertas, true, "X360",
@@ -9,13 +9,13 @@ index 7d74161..dcfda0a 100644
                      "pantalla completa sin mezcla, prueba ni descarte) no recibe lo que otras vistas tienen en esas "
                      "tejas: GTA IV convierte su mapa de sombras a R32F sobre tejas de la escena (3 ms de transferencias)");
 +REXCVAR_DEFINE_BOOL(x360_vertices_manuales_reusados, true, "X360",
-+                    "Los bufers de vertices que lee el propio shader (dsVfetch) se guardan como los demas: entre "
-+                    "fotogramas en el almacen de geometria y dentro de un trabajo sin volver a copiarlos. false = "
-+                    "copiados enteros en cada dibujo, como antes");
++                    "Los bufers de vertices que lee el propio shader (dsVfetch): dentro de un trabajo, el mismo bufer "
++                    "se vuelve a enlazar sin copiarlo (no entre fotogramas: la tela de la chaqueta de Max cambia cada "
++                    "fotograma). false = copiados enteros en cada dibujo, como antes");
  REXCVAR_DEFINE_BOOL(x360_alfa_a_cobertura, true, "X360",
                      "Alpha to coverage (RB_COLORCONTROL bit 4) como prueba de alfa >= 0.5, como Xenia con una muestra: "
                      "las hojas de los arboles y los cables de los puentes de GTA IV salian como tarjetas enteras");
-@@ -2351,12 +2355,53 @@ bool RenderDk::Dibujar(const PeticionDibujo& p) {
+@@ -2351,12 +2355,43 @@ bool RenderDk::Dibujar(const PeticionDibujo& p) {
            direccion + bytes > kMemoriaFisica) {
          return Rechazar(27, "bufer de vertices leido por el shader invalido o demasiado grande");
        }
@@ -29,21 +29,11 @@ index 7d74161..dcfda0a 100644
 +                    manuales_bytes / 1048576.0, manuales_copiados / 1048576.0);
 +      }
 +      // The whole buffer for each draw: Max Payne 3's cutscenes bind the same large buffers draw after draw (42 MB of
-+      // uploads a frame, 15 us a draw on the ring in run 29). Kept like the other streams: across frames in the
-+      // geometry store, within a work by the dedupe (its own order bit: these are storage buffers).
++      // uploads a frame, 15 us a draw on the ring in run 29). Within a work it is bound again, not copied (the dedupe,
++      // its own order bit: these are storage buffers). Not kept across frames in the geometry store: Max's jacket cloth
++      // is one of these buffers, rewritten by the CPU every frame, and the store's trust (nfsmw_dk_geometria_confianza)
++      // could bind last frame's content after it held still for a while.
 +      if (REXCVAR_GET(x360_vertices_manuales_reusados) && bytes >= 4096) {
-+        if (geometria_.activo()) {
-+          const deko::AlmacenGeometria::Resultado en_almacen = geometria_.Buscar(
-+              datos, bytes, (uint64_t(1) << 61) | uint64_t(orden), bytes, [&](uint8_t* destino, uint32_t&, uint32_t&) {
-+                CopiarVertices(TrabajoCopia{datos, destino, bytes / 4, orden});
-+                manuales_copiados += bytes;
-+              });
-+          if (en_almacen.gpu) {
-+            geometria_.Usar(en_almacen.entrada, trabajo_);
-+            dkCmdBufBindStorageBuffer(cmd, DkStage_Vertex, uint32_t(b), en_almacen.gpu, bytes);
-+            continue;
-+          }
-+        }
 +        uint64_t ya = 0;
 +        const uint32_t orden_dedupe = uint32_t(orden) | 0x200u;
 +        if (dedupe_.Buscar(uint64_t(reinterpret_cast<uintptr_t>(datos)), bytes, orden_dedupe, ya)) {
