@@ -46,3 +46,9 @@ name = "mp3_SpinLockAcquire"
 # src/mp3_perf_hooks.cpp sleeps while two or more are in flight instead of asking again at once.
 [functions."0x830853E8"]
 name = "mp3_D3D_QueryFramesInFlight"
+
+# The XAudio2 processing thread's entry (the XDK's mixer, started once with a 1 MB stack): run 16's busiest thread at
+# ~69 % of a core (sub_8301B028, sub_82C7xxxx, sub_83037BC0 under it). src/mp3_perf_hooks.cpp makes it prefer core 3
+# (the console's hbl.nsp opens it to homebrew), as GTA IV's gta4_AudioThreadEntry did, so cores 0-2 are left to the game.
+[functions."0x83037B30"]
+name = "mp3_AudioThreadEntry"

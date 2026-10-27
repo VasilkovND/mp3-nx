@@ -220,3 +220,17 @@ profile's stack samples:
   exactly) and Direct3D's frames-in-flight query (`sub_830853E8`, GTA IV's exactly) are named, so their hooks yield and
   sleep instead of spinning;
 - the XMA decoder at ~36 % of a core.
+
+## Run 16: playable picture, still too bright; black spikes around Max after bullet time
+
+The parking garage draws whole, too bright; after bullet time black spiky triangles stand out around Max (vertices
+going wrong somewhere: not looked into yet). The exposure chain is still 0 from its 64x64: the pixel shader that
+writes it (ps_7e6d0c02a3470149) is a plain 16-tap average of `CurLumSampler` (the 320x180 k_16_16_16_16 resolve
+06E95000, read as integers with exp_adjust -13) dotted with the luminance weights: no log, so that texture itself reads
+0. The 16-bit resolves never reached a dump (the EDRAM views of each pass filled its 96 MB first): `mp3.toml` now
+dumps resolved textures only (`nfsmw_dk_volcado_pase_desde`).
+
+Performance (run 16, profile from ZL+ZR+R): gameplay 16-25 fps at 300-370 % CPU. The busiest thread (~69 %) is the
+XAudio2 processing thread started at 0x83037B30 (1 MB stack): named `mp3_AudioThreadEntry`, it prefers core 3 now, as
+in GTA IV. Then the main thread (~51 %), the ring (~42 %), the XMA decoder (~33 %). Most samples of the game threads
+are waits (svcWaitForAddress, svcArbitrateLock), not work.
