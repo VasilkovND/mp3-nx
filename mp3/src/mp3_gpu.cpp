@@ -204,6 +204,9 @@ REXCVAR_DEFINE_BOOL(mp3_arboles_prueba, false, "MP3",
 REXCVAR_DEFINE_INT32(mp3_auto_volcado_dibujos, 800, "MP3",
                      "Dibujos que debe tener el fotograma anterior para un volcado automatico (la escena 3D, no un menu)");
 REXCVAR_DEFINE_INT32(mp3_auto_volcados_max, 4, "MP3", "Volcados automaticos como mucho (0 = ninguno)");
+REXCVAR_DEFINE_BOOL(mp3_volcado_con_dibujos, false, "MP3",
+                    "Un volcado de fotograma escribe tambien cada dibujo (texturas y constantes) en el log: lento con "
+                    "miles de dibujos (un minuto en Max Payne 3). false = solo la estructura del fotograma");
 REXCVAR_DEFINE_INT32(mp3_traza_cada_s, 60, "MP3", "Segundos entre trazas de la estructura de un fotograma pesado");
 REXCVAR_DEFINE_INT32(mp3_trazas_max, 20, "MP3", "Trazas de fotograma como mucho");
 REXCVAR_DEFINE_BOOL(mp3_ver_texturas, true, "MP3",
@@ -1109,8 +1112,9 @@ class RingGraphicsSystem final : public rex::system::IGraphicsSystem {
           if (REXCVAR_GET(switch_volcado_pedido)) {
             REXCVAR_SET(switch_volcado_pedido, false);
             destinos_->PedirVolcado();
-            // And every draw of that frame in the log, whatever its size (FrameTraceSwap ends it at the next Swap).
-            draw_tracing_ = true;
+            // And every draw of that frame in the log, whatever its size (FrameTraceSwap ends it at the next Swap), when
+            // mp3_volcado_con_dibujos asks: a 2400-draw frame of Max Payne 3 took a minute of SD writes.
+            draw_tracing_ = REXCVAR_GET(mp3_volcado_con_dibujos);
             draw_trace_n_ = 0;
             draw_trace_cap_ = 8000;
             packet_trace_n_ = 0;
@@ -2546,11 +2550,15 @@ class RingGraphicsSystem final : public rex::system::IGraphicsSystem {
         REXLOG_INFO("[gpu] automatic frame dump {} at {:.0f} s ({} draws in the previous frame)", auto_dumps_, t,
                     last_frame_draws_);
         destinos_->PedirVolcado();
-        // And every draw of that frame in the log, as the manual dump (ZL + ZR + Left) does.
-        draw_tracing_ = true;
+        // And every draw of that frame in the log, as the manual dump (ZL + ZR + Left) does (mp3_volcado_con_dibujos),
+        // and the frame's structure (passes and resolves, a few lines each).
+        draw_tracing_ = REXCVAR_GET(mp3_volcado_con_dibujos);
         draw_trace_n_ = 0;
         draw_trace_cap_ = 8000;
         packet_trace_n_ = 0;
+        tracing_ = true;
+        trace_lines_ = 0;
+        trace_pass_ = 0;
       }
     }
   }
