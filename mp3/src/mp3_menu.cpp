@@ -24,9 +24,6 @@
 #include <switch.h>
 #endif
 
-REXCVAR_DECLARE(int32_t, video_mode_width);   // sdk/src/ui/window.cpp
-REXCVAR_DECLARE(int32_t, video_mode_height);
-
 namespace mp3::menu {
 namespace {
 
@@ -54,8 +51,7 @@ Estado& ElEstado() {
 
 void Pintar(const Estado& e) {
   const uint32_t guardada = resolucion::Guardada();
-  char ahora[32];
-  std::snprintf(ahora, sizeof(ahora), "%dx%d", int(REXCVAR_GET(video_mode_width)), int(REXCVAR_GET(video_mode_height)));
+  const char* ahora = resolucion::Aplicada() == 540 ? "960x540" : "1280x720";
   std::vector<std::string> lineas = {
       "MAX PAYNE 3 - OPTIONS",
       std::string("> RESOLUTION:  < ") +
