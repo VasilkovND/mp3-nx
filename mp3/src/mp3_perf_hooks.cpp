@@ -193,6 +193,9 @@ REXCVAR_DEFINE_INT32(mp3_prioridad_audio, 0x2B, "MP3",
                      "Prioridad de Horizon (0x2B-0x3B; menor = mas alta) del hilo de XAudio2 del juego; 0x3B = como "
                      "los demas hilos del juego")
     .range(0x2B, 0x3B);
+// The XAudio2 thread's handle (0: not started), for Mp3AplicarPrioridades: the setting follows at each Swap, so an A/B
+// run can switch it (run 35: is the game's streaming starved by the audio threads above it?).
+std::atomic<uint32_t> g_hilo_xaudio{0};
 
 #ifdef MP3_TIENE_mp3_AudioThreadEntry  // codegen/names.toml names it (CMakeLists.txt)
 REX_EXTERN(__imp__mp3_AudioThreadEntry);
@@ -203,6 +206,7 @@ REX_EXTERN(mp3_AudioThreadEntry) {
     const Handle h = yo != nullptr ? yo->handle : CUR_THREAD_HANDLE;
     const int prioridad = REXCVAR_GET(mp3_prioridad_audio);
     const bool hecho = R_SUCCEEDED(svcSetThreadPriority(h, u32(prioridad)));
+    if (h != CUR_THREAD_HANDLE) g_hilo_xaudio.store(h, std::memory_order_release);
     REXLOG_INFO("[mp3] hilo de audio: prioridad 0x{:X}{}", prioridad, hecho ? "" : " (rechazada)");
   }
   if (REXCVAR_GET(mp3_audio_nucleo3)) {
@@ -295,6 +299,16 @@ void Mp3AplicarPrioridades() {
     audio_solo = pedido_audio;
     RexSwitchAudioSoloNucleo3(audio_solo);
     REXLOG_INFO("[mp3] hilos de audio: {}", audio_solo ? "solo el nucleo 3" : "todo el proceso, prefieren el 3");
+  }
+  {
+    static int audio_aplicada = 0;
+    const uint32_t h = g_hilo_xaudio.load(std::memory_order_acquire);
+    const int pedida = REXCVAR_GET(mp3_prioridad_audio);
+    if (h && audio_aplicada && pedida != audio_aplicada) {
+      svcSetThreadPriority(h, u32(pedida));
+      REXLOG_INFO("[mp3] hilo de audio: prioridad 0x{:X}", pedida);
+    }
+    if (h) audio_aplicada = pedida;
   }
 #endif
   const int trabajos = PrioridadPedida(true), render = PrioridadPedida(false);
