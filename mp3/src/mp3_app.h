@@ -36,6 +36,10 @@
 #include "mp3_resolution.h"
 
 #if defined(__SWITCH__)
+#include <rex/ui/switch_apm.h>
+#endif
+
+#if defined(__SWITCH__)
 // The SDK's FPS counter (ZL + ZR + Up) and debug shortcuts (ZL + ZR + R: the profiler's stack sampling, captures ...).
 REXCVAR_DECLARE(bool, switch_contador_fps);
 REXCVAR_DECLARE(bool, switch_atajos_depuracion);
@@ -48,6 +52,16 @@ REXCVAR_DEFINE_STRING(mp3_game, "", "MP3", "Carpeta del juego (disco extraido + 
 REXCVAR_DEFINE_STRING(mp3_god, "", "MP3",
                       "El paquete Games on Demand del disco 1: su archivo de cabecera (junto a su carpeta .data) o la "
                       "carpeta que lo tiene. Vacio: god/ junto al ejecutable.");
+
+// Handheld GPU clock through Horizon's own performance profiles (the ones commercial games pick; no overclock), as in
+// ds3-nx: at stock the handheld GPU runs at 307.2 MHz, and at 540p Max Payne 3 needs ~26 ms of GPU per frame at 614 MHz
+// (run 25), ~52 at 307. 460 asks for GPU 460.8 MHz with the CPU at 1020 and the memory at 1331.2 as before
+// (sdk/src/ui/switch_apm.cpp tries the pairs that keep the memory clock first). Docked, or with the CPU already above
+// 1020 MHz at start (sys-clk), nothing is requested.
+REXCVAR_DEFINE_INT32(mp3_gpu_portatil_mhz, 460, "MP3",
+                     "GPU en modo portatil por los perfiles de rendimiento de Horizon: 460 o 384 MHz; 0 = no tocar "
+                     "(307,2 MHz de serie)")
+    .range(0, 460);
 
 class Mp3App : public rex::ReXApp {
  public:
@@ -126,6 +140,15 @@ class Mp3App : public rex::ReXApp {
     mp3::god::DespuesDeCargar(*runtime());
     mp3::resolucion::AplicarMemoria(*runtime());  // the game's wanted size too (mp3_resolution.h)
     mp3::menu::Instalar(*runtime());
+#if defined(__SWITCH__)
+    const uint32_t cpu_mhz = mp3::resolucion::CpuMhz();
+    if (const int32_t mhz = REXCVAR_GET(mp3_gpu_portatil_mhz); mhz > 0 && cpu_mhz <= 1020) {
+      RexSwitchApmPedirGpuMhz(mhz);
+      RexSwitchApmAplicar();
+    } else if (mhz > 0) {
+      REXLOG_INFO("mp3: CPU a {} MHz (overclock): sin perfil de GPU portatil", cpu_mhz);
+    }
+#endif
   }
 
  private:
