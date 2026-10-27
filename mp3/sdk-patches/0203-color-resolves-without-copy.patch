@@ -1,0 +1,268 @@
+x360_resolver_color_sin_copia (off by default): a whole color resolve gives the texture the target's image (a view of its first rows, the target's tile height) instead of copying its pixels, and the target another image; RestaurarContenido brings the rows back if the game draws on it again without clearing it.
+
+--- a/include/rex/x360/deko/render.h
++++ b/include/rex/x360/deko/render.h
+@@ -100,6 +100,13 @@ struct ImagenDk {
+   //    pass valid; or before the target is copied or swapped.
+   bool contenido_invalido = false;
+   uint32_t resuelta_base = 0;
++  // x360_resolver_color_sin_copia: the rows a color resolve gave away with its image (the texture, alto_intercambiado
++  // rows, now samples this target's old memory); 0 = a swap of equal images, as depth's.
++  uint32_t alto_intercambiado = 0;
++  // The layout flags it was created with and the height its memory was laid out for (a resolved texture that took a
++  // taller target's memory keeps that target's height here, so a later swap can hand the memory back as a target).
++  uint32_t flags = 0;
++  uint32_t memoria_alto = 0;
+   bool borrado_pendiente = false;
+   // Resolved with a copy this frame and drawn on since: a frame still being composed (GTA IV's scene at 2D0, resolved
+   // for the post-processing, then the HUD). Another base's clear does not reach it (x360_edram_frontal_sin_borrados).
+@@ -437,6 +444,11 @@ class RenderDk final : public DestinosNativos {
+   // The images (and descriptors) of a render target and a resolved texture of the same size and format change places:
+   // the resolve without a copy.
+   void IntercambiarImagenes(ImagenDk& destino, ImagenDk& resuelta);
++  // x360_resolver_color_sin_copia: the texture gets the target's image (a view of its first rows) and the target a
++  // new one; false when it cannot (no memory).
++  bool IntercambiarColorConTextura(ImagenDk& destino, ImagenDk& textura);
++  bool InicializarSobre(DkImage& imagen, const deko::BloqueImagen& memoria, DkImageFormat formato, uint32_t flags,
++                        uint32_t ancho, uint32_t alto, uint32_t filas_memoria, uint64_t* bytes = nullptr);
+   // A render target whose content went to a resolved texture in a swap gets it back (copy), before it is drawn on or
+   // resolved again; or, for the shadow map's car pass while the shadow minimum is applied, a clear instead.
+   void RestaurarContenido(ImagenDk& destino, bool para_resolver);
+@@ -550,6 +562,7 @@ class RenderDk final : public DestinosNativos {
+   uint64_t sm_limpios_seguidos_ = 0, sm_ciclos_ = 0, sm_ciclos_aplicados_ = 0, sm_diferencias_ = 0;
+   uint64_t sm_dibujos_coches_ = 0, sm_dibujos_no_exactos_ = 0, sm_lecturas_minimo_ = 0, sm_lecturas_si_misma_ = 0;
+   uint64_t sm_lecturas_normales_ = 0, sm_lecturas_a_destiempo_ = 0, sm_lecturas_incapaces_ = 0;
++  uint64_t intercambios_color_ = 0, informe_intercambios_color_ = 0;
+   uint64_t intercambios_ = 0, restauraciones_ = 0, borrados_aplazados_ = 0, cubos_refrescados_ = 0;
+   uint64_t informe_intercambios_ = 0, informe_restauraciones_ = 0, informe_cubos_ = 0, informe_cielos_ = 0;
+   bool Rechazar(uint32_t causa, const char* texto);
+--- a/src/x360/deko/destinos.cpp
++++ b/src/x360/deko/destinos.cpp
+@@ -81,6 +81,10 @@ REXCVAR_DEFINE_BOOL(nfsmw_nativo_resolver_sin_copia, true, "NFSMW",
+                     "Renderizador nativo (17/09, build 154; por defecto desde la 161, medido en consola: -2,36 ms "
+                     "de los 7,41 de copias): al resolver un destino entero a una textura del mismo "
+                     "tamano y formato, intercambia las imagenes en vez de copiar los pixeles");
++REXCVAR_DEFINE_BOOL(x360_resolver_color_sin_copia, false, "X360",
++                    "Un resolve de color de un destino entero (desde la fila 0, todo su ancho, sin conversion) da a la "
++                    "textura la imagen del destino en vez de copiar sus pixeles (la textura ve sus primeras filas) y el "
++                    "destino recibe otra; si el juego vuelve a dibujar en el sin borrarlo, se le devuelve el contenido");
+ REXCVAR_DEFINE_BOOL(nfsmw_nativo_intercambiar_sin_borrado, true, "NFSMW",
+                     "Renderizador nativo (20/09): intercambiar la imagen tambien cuando la orden de resolve no "
+                     "borra el destino. Se lleva por delante la copia de 1600x1600 del segundo mapa de sombras "
+@@ -982,6 +986,43 @@ bool RenderDk::CrearImagen(ImagenDk& imagen, DkImageType tipo, DkImageFormat for
+   imagen.profundidad = formato == DkImageFormat_Z24S8 || formato == DkImageFormat_ZF32_X24S8;
+   imagen.viva = true;
+   imagen.serie = ++serie_imagenes_;
++  imagen.flags = flags;
++  imagen.memoria_alto = alto;
++  return true;
++}
++
++// The tile height deko3d picks for an image of `filas` rows (and ArreglarTamanoDeTesela's level-0 shrink): an image
++// laid out with it over a taller image's memory, same width, format and flags, holds the same bytes for its rows.
++static DkTileSize TeselaParaFilas(uint32_t filas) {
++  const uint32_t gobs = (filas + filas / 2 + 7) / 8;
++  uint32_t tesela = gobs >= 16 ? 4 : gobs >= 8 ? 3 : gobs >= 4 ? 2 : gobs >= 2 ? 1 : 0;
++  while (tesela && (8u << (tesela - 1)) >= filas) {
++    --tesela;
++  }
++  return DkTileSize(tesela);
++}
++
++bool RenderDk::InicializarSobre(DkImage& imagen, const deko::BloqueImagen& memoria, DkImageFormat formato,
++                                uint32_t flags, uint32_t ancho, uint32_t alto, uint32_t filas_memoria,
++                                uint64_t* bytes) {
++  DkImageLayoutMaker m;
++  dkImageLayoutMakerDefaults(&m, nucleo_.dispositivo());
++  m.type = DkImageType_2D;
++  m.flags = flags | DkImageFlags_CustomTileSize;
++  m.format = formato;
++  m.dimensions[0] = ancho;
++  m.dimensions[1] = alto;
++  m.dimensions[2] = 1;
++  m.mipLevels = 1;
++  m.tileSize = TeselaParaFilas(filas_memoria);
++  DkImageLayout disposicion;
++  dkImageLayoutInitialize(&disposicion, &m);
++  const uint64_t tam = dkImageLayoutGetSize(&disposicion);
++  if (bytes) *bytes = tam;
++  if (!memoria || tam > memoria.bytes) {
++    return false;
++  }
++  dkImageInitialize(&imagen, &disposicion, memoria.bloque, memoria.offset);
+   return true;
+ }
+ 
+@@ -1577,6 +1618,32 @@ bool RenderDk::Copiar(const RegistrosCopia& reg) {
+         ++resuelta->imagen.version;
+         SombraMinimoResueltaEscrita(base_resuelta);
+         ++frontales_ahorrados_;
++      } else if (uint32_t(x0) < destino_render->ancho && uint32_t(y0) < destino_render->alto && ancho && alto &&
++                 REXCVAR_GET(x360_resolver_color_sin_copia) && !reducida && !encoger && !se_lee && !capa &&
++                 x0 == 0 && y0 == 0 && dx == 0 && dy == 0 && msaa == 0 && sesgo_exp == 0 &&
++                 formato_color != 3 && formato_color != 12 && formato_color != 14 &&
++                 formato_destino != 25 && formato_destino != 26 && !resuelta->imagen.intercambio_rb &&
++                 resuelta->imagen.tipo == DkImageType_2D && resuelta->imagen.capas == 1 &&
++                 resuelta->imagen.niveles == 1 && destino_render->tipo == DkImageType_2D &&
++                 ancho == resuelta->imagen.ancho && alto == resuelta->imagen.alto &&
++                 resuelta->imagen.ancho == destino_render->ancho && resuelta->imagen.alto <= destino_render->alto &&
++                 resuelta->imagen.formato == destino_render->formato && !destino_render->contenido_invalido &&
++                 destino_render->alto_usado != 0 && destino_render->alto_usado <= ((alto + 7) & ~7u) &&
++                 (AntesDeCambiarDestino(destino_render), IntercambiarColorConTextura(*destino_render, resuelta->imagen))) {
++        // x360_resolver_color_sin_copia: the texture has the target's pixels without a copy; the target gets them back
++        // if the game draws on it again without clearing it (RestaurarContenido).
++        destino_render->contenido_invalido = true;
++        destino_render->resuelta_base = base_resuelta;
++        destino_render->alto_intercambiado = alto;
++        resuelta->escrita = true;
++        ++resuelta->imagen.version;
++        resuelta->imagen.entero16 = false;
++        SombraMinimoResueltaEscrita(base_resuelta);
++        destino_render->sin_resolver = false;
++        destino_render->copiada_en = fotograma_;
++        if (volcando_) {
++          AnotarVolcado(resuelta->imagen, base_resuelta, resuelta->formato_guest);
++        }
+       } else if (uint32_t(x0) < destino_render->ancho && uint32_t(y0) < destino_render->alto && ancho && alto) {
+         const DkImageView origen_vista = VistaCompleta(destino_render->imagen);
+         const DkImageView destino_vista = VistaCompleta(resuelta->imagen.imagen);
+@@ -1673,6 +1740,11 @@ bool RenderDk::Copiar(const RegistrosCopia& reg) {
+     // Done when the target is next bound (EmpezarPase), resolved or painted, not now: the front buffer may still be
+     // painted from it, and a later clear makes this one unnecessary.
+     destino_render->borrado_pendiente = true;
++    if (destino_render->contenido_invalido && destino_render->alto_intercambiado &&
++        uint32_t(std::max(y1, 0)) >= destino_render->alto_intercambiado) {
++      destino_render->contenido_invalido = false;  // cleared: what a color swap took away is no longer needed
++      destino_render->alto_intercambiado = 0;
++    }
+     EdramReclamar(*destino_render, uint32_t(y1), destino_render->borrado_color);  // the cleared rows are this view's
+     ++borrados_;
+     const bool aplazar = REXCVAR_GET(nfsmw_dk_borrado_color_aplazado);  // read each time: the game can switch it (ds2 safe mode)
+@@ -1860,13 +1932,76 @@ void RenderDk::IntercambiarImagenes(ImagenDk& destino, ImagenDk& resuelta) {
+   ++intercambios_;
+ }
+ 
++// x360_resolver_color_sin_copia (SDK patch 0203). Color targets are max(720, pitch) tall (960x960 for a 960x540 frame)
++// and the textures resolved from them the frame's size, so the depth swap above never applies to them: run 25 at 540p
++// copied 57 color resolves a frame, 8.3 Mpix and 8.8 of the 30 ms of GPU. Here the texture gets the target's memory,
++// seen as an image of the texture's size with the target's tile height (its rows are the target's first rows), and the
++// target gets the texture's memory when it was a target's before (the steady state: the same memory goes back and
++// forth), else a new block of its size.
++bool RenderDk::IntercambiarColorConTextura(ImagenDk& destino, ImagenDk& textura) {
++  const bool memoria_de_destino = textura.memoria_alto == destino.alto && textura.flags == destino.flags &&
++                                  textura.formato == destino.formato && textura.ancho == destino.ancho;
++  deko::BloqueImagen memoria_destino = memoria_de_destino ? textura.memoria : deko::BloqueImagen{};
++  if (!memoria_de_destino) {
++    DkImage prueba;
++    uint64_t bytes = 0;
++    InicializarSobre(prueba, deko::BloqueImagen{}, destino.formato, destino.flags, destino.ancho, destino.alto,
++                     destino.alto, &bytes);
++    DkImageLayoutMaker m;
++    dkImageLayoutMakerDefaults(&m, nucleo_.dispositivo());
++    m.flags = destino.flags | DkImageFlags_CustomTileSize;
++    m.format = destino.formato;
++    m.dimensions[0] = destino.ancho;
++    m.dimensions[1] = destino.alto;
++    m.dimensions[2] = 1;
++    m.tileSize = TeselaParaFilas(destino.alto);
++    DkImageLayout disposicion;
++    dkImageLayoutInitialize(&disposicion, &m);
++    memoria_destino = nucleo_.ReservarImagen(uint32_t(bytes), dkImageLayoutGetAlignment(&disposicion));
++    if (!memoria_destino) {
++      return false;
++    }
++  }
++  DkImage imagen_destino, imagen_textura;
++  if (!InicializarSobre(imagen_destino, memoria_destino, destino.formato, destino.flags, destino.ancho, destino.alto,
++                        destino.alto) ||
++      !InicializarSobre(imagen_textura, destino.memoria, textura.formato, destino.flags, textura.ancho, textura.alto,
++                        destino.alto)) {
++    if (!memoria_de_destino) nucleo_.LiberarImagenLuego(memoria_destino);
++    return false;
++  }
++  if (!memoria_de_destino) {
++    nucleo_.LiberarImagenLuego(textura.memoria);
++  }
++  LiberarDescriptoresDe(textura.serie);
++  LiberarDescriptoresDe(destino.serie);
++  borrado_previo_.erase(destino.serie);
++  textura.imagen = imagen_textura;
++  textura.memoria = destino.memoria;
++  textura.memoria_alto = destino.alto;
++  textura.flags = destino.flags;
++  textura.serie = ++serie_imagenes_;
++  textura.borrado_pendiente = false;  // the resolve covered all of it
++  destino.imagen = imagen_destino;
++  destino.memoria = memoria_destino;
++  destino.serie = ++serie_imagenes_;
++  ++generacion_texturas_;  // the address now samples another image: the per-fetch cache looks again
++  OlvidarEstado();  // the bound target, if it was this one, is another image now
++  ++intercambios_;
++  ++intercambios_color_;
++  return true;
++}
++
+ void RenderDk::RestaurarContenido(ImagenDk& destino, bool para_resolver) {
+   if (!destino.contenido_invalido) {
+     return;
+   }
+   destino.contenido_invalido = false;
+   const auto it = resueltas_.find(destino.resuelta_base);
+-  if (it == resueltas_.end() || it->second.imagen.ancho != destino.ancho || it->second.imagen.alto != destino.alto ||
++  // A color resolve without copy gave away only the texture's rows (alto_intercambiado): those come back.
++  const uint32_t filas = destino.alto_intercambiado ? destino.alto_intercambiado : destino.alto;
++  destino.alto_intercambiado = 0;
++  if (it == resueltas_.end() || it->second.imagen.ancho != destino.ancho || it->second.imagen.alto != filas ||
+       it->second.imagen.formato != destino.formato) {
+     return;  // unknown where it went: the target keeps what it has, as the Vulkan path
+   }
+@@ -1876,19 +2011,21 @@ void RenderDk::RestaurarContenido(ImagenDk& destino, bool para_resolver) {
+   }
+   AsegurarTrabajo();
+   EmitirCieloPendiente();
+-  if (!Copiar3D(it->second.imagen, 0, 0, destino.ancho, destino.alto, destino, 0, 0)) {
++  if (!Copiar3D(it->second.imagen, 0, 0, destino.ancho, filas, destino, 0, 0)) {
+     MarcarGpu(kGpuCopias);
+-    PerfilCopia("restaurar, motor de copias", &it->second.imagen, &destino, destino.ancho, destino.alto);
++    PerfilCopia("restaurar, motor de copias", &it->second.imagen, &destino, destino.ancho, filas);
+     AntesDeTransferir();
+     const DkImageView origen_vista = VistaCompleta(it->second.imagen.imagen);
+     const DkImageView destino_vista = VistaCompleta(destino.imagen);
+-    const DkImageRect rect = {0, 0, 0, destino.ancho, destino.alto, 1};
++    const DkImageRect rect = {0, 0, 0, destino.ancho, filas, 1};
+     dkCmdBufCopyImage(nucleo_.comandos(), &origen_vista, &rect, &destino_vista, &rect, 0);
+   }
+   borrado_previo_.erase(destino.serie);
+   invalidar_zcull_ |= destino.profundidad;
+-  destino.alto_borrado = destino.alto;  // all of it holds the texture's content now: no band left
+-  destino.banda_sucia = false;
++  // All of it holds the texture's content now: no band left. After a color swap only its first rows do: the rows below
++  // (the game's resolves never reached them) are cleared to the last clear's value before anything reaches them.
++  destino.alto_borrado = filas;
++  destino.banda_sucia = filas < destino.alto;
+   ++restauraciones_;
+   OlvidarEstado();
+ }
+@@ -2862,6 +2999,7 @@ void RenderDk::InformePeriodico() {
+     informe_etapas_ = ns_etapas_;
+     informe_dedupe_bytes_ = dedupe_.bytes_ahorrados();
+     informe_intercambios_ = intercambios_;
++    informe_intercambios_color_ = intercambios_color_;
+     informe_restauraciones_ = restauraciones_;
+     informe_cubos_ = cubos_refrescados_;
+     informe_cielos_ = cielo_aplazados_;
+@@ -2980,12 +3118,13 @@ void RenderDk::InformePeriodico() {
+   const auto us = [&](uint32_t e) { return dibujos ? double(ns_etapas_[e] - informe_etapas_[e]) / double(dibujos) / 1e3 : 0.0; };
+   static constexpr const char* kFasesSm[3] = {"mirando", "APLICANDO", "apagada"};
+   X360_INFORME(
+-      "[deko3d] por fotograma: {:.2f} intercambios en vez de copias, {:.2f} restauraciones, {:.2f} cubos con caras "
++      "[deko3d] por fotograma: {:.2f} intercambios en vez de copias ({:.2f} de color), {:.2f} restauraciones, {:.2f} cubos con caras "
+       "resueltas, {:.2f} cielos aplazados (guardia {}), {:.2f} MB de vertices sin copiar (repetidos en el trabajo); "
+       "sombra por minimo: fase {}, {} ciclos ({} limpios seguidos, {} aplicados), {} diferencias; por dibujo en el "
+       "anillo: preparar {:.2f} us, texturas {:.2f}, estado {:.2f}, vertices {:.2f}, indices {:.2f}, constantes y dibujo "
+       "{:.2f}",
+       double(intercambios_ - informe_intercambios_) / fotogramas,
++      double(intercambios_color_ - informe_intercambios_color_) / fotogramas,
+       double(restauraciones_ - informe_restauraciones_) / fotogramas,
+       double(cubos_refrescados_ - informe_cubos_) / fotogramas, double(cielo_aplazados_ - informe_cielos_) / fotogramas,
+       cielo_guardia_ == kCieloAplazando ? "superada" : cielo_guardia_ == kCieloDescartado ? "descartada" : "mirando",
