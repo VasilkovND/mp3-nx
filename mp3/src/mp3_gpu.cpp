@@ -197,6 +197,9 @@ REXCVAR_DEFINE_BOOL(mp3_saltar_vs_rotos, false, "MP3",
 REXCVAR_DEFINE_STRING(mp3_omitir_vs, "", "MP3",
                       "Prueba: no dibujar los vertex shaders de estos contenedores (huellas en hex separadas por comas, "
                       "p. ej. 33041FEED58EB114: la chaqueta de Max con la tela)");
+REXCVAR_DEFINE_DOUBLE(mp3_exposicion, 0.6, "MP3",
+                      "Exposicion del tonemap: multiplica sus Exposures (c137) antes de la curva. 1 = la del juego; menos "
+                      "de 1 baja el pase de luz quemado (0.4 a 1.0)");
 REXCVAR_DEFINE_BOOL(mp3_traza_bufers, true, "MP3",
                     "En la traza completa (ZL+ZR+Left): de cada bufer de vertices que el shader lee por indice (la tela "
                     "de Max: otro bufer que el de la malla), su rango de valores, NaN e infinitos y sus primeros float4");
@@ -2047,7 +2050,25 @@ class RingGraphicsSystem final : public rex::system::IGraphicsSystem {
       ++generacion_constantes_vs_;
       request.generacion_constantes_vs = generacion_constantes_vs_;
     }
+    // mp3_exposicion: the tonemap's Exposures (c137.xy) scaled for this draw, before its curve (not a ramp on the
+    // output: the highlights keep their roll-off).
+    const float exposure = float(REXCVAR_GET(mp3_exposicion));
+    const bool exposure_scaled = exposure != 1.0f && ps_ && ps_->huella_contenedor == UINT64_C(0xCD9469857A0C532A);
+    std::array<uint32_t, 2> saved_exposures{};
+    if (exposure_scaled) {
+      for (uint32_t i = 0; i < 2; ++i) {
+        uint32_t& word = registers_[0x4000 + (256 + 137) * 4 + i];
+        saved_exposures[i] = word;
+        word = std::bit_cast<uint32_t>(std::bit_cast<float>(word) * exposure);
+      }
+      ++generacion_constantes_ps_;
+      request.generacion_constantes_ps = generacion_constantes_ps_;
+    }
     const bool drawn = destinos_->Dibujar(request);
+    if (exposure_scaled) {
+      for (uint32_t i = 0; i < 2; ++i) registers_[0x4000 + (256 + 137) * 4 + i] = saved_exposures[i];
+      ++generacion_constantes_ps_;
+    }
     if (tree_identity) {
       for (uint32_t i = 0; i < 48; ++i) registers_[0x4000 + 11 * 4 + i] = saved_sway[i];
       ++generacion_constantes_vs_;
