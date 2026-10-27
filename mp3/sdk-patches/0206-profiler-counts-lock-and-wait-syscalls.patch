@@ -1,0 +1,109 @@
+The profiler counts the lock and wait syscalls (svcArbitrateLock/Unlock, svcWaitForAddress, svcSignalToAddress, svcWaitProcessWideKeyAtomic, svcSignalProcessWideKey: calls per second and the time inside) by wrapping them like svcSleepThread; one more line in each 10 s report.
+
+diff --git a/cmake/rexglue_switch.cmake b/cmake/rexglue_switch.cmake
+index 3243a79..3e8735b 100644
+--- a/cmake/rexglue_switch.cmake
++++ b/cmake/rexglue_switch.cmake
+@@ -79,7 +79,9 @@ if(NOT TARGET rexglue_switch_startup)
+         "LINKER:--wrap=nvFenceWait,--wrap=nvGpuChannelKickoff,--wrap=nvMapCreate"
+         "LINKER:--wrap=nvAddressSpaceAllocFixed,--wrap=nvioctlNvhostAsGpu_MapBufferEx"
+         "LINKER:--wrap=armDCacheClean,--wrap=nwindowQueueBuffer,--wrap=bqDequeueBuffer"
+-        "LINKER:--wrap=svcSleepThread")
++        "LINKER:--wrap=svcSleepThread"
++        "LINKER:--wrap=svcArbitrateLock,--wrap=svcArbitrateUnlock,--wrap=svcWaitForAddress"
++        "LINKER:--wrap=svcSignalToAddress,--wrap=svcWaitProcessWideKeyAtomic,--wrap=svcSignalProcessWideKey")
+ endif()
+ 
+ function(rexglue_switch_configure_target target_name)
+diff --git a/src/ui/switch_perf.cpp b/src/ui/switch_perf.cpp
+index 548e986..ed03234 100644
+--- a/src/ui/switch_perf.cpp
++++ b/src/ui/switch_perf.cpp
+@@ -79,6 +79,12 @@ Result __real_nwindowQueueBuffer(NWindow* nw, s32 slot, const NvMultiFence* fenc
+ Result __real_bqDequeueBuffer(Binder* b, bool async, u32 width, u32 height, s32 format, u32 usage, s32* buf,
+                               NvMultiFence* fence);
+ void __real_svcSleepThread(s64 nano);
++Result __real_svcArbitrateLock(u32 wait_tag, u32* tag_location, u32 self_tag);
++Result __real_svcArbitrateUnlock(u32* tag_location);
++Result __real_svcWaitForAddress(void* address, u32 arb_type, s64 value, s64 timeout);
++Result __real_svcSignalToAddress(void* address, u32 signal_type, s32 value, s32 count);
++Result __real_svcWaitProcessWideKeyAtomic(u32* key, u32* tag_location, u32 self_tag, u64 timeout);
++void __real_svcSignalProcessWideKey(u32* key, s32 num);
+ }
+ 
+ namespace {
+@@ -165,6 +171,12 @@ enum : unsigned {
+   kSleepCeder,        // svcSleepThread(-1 o -2)
+   kSleepCorto,        // up to 1 ms
+   kSleepLargo,        // over 1 ms
++  kArbLock,           // svcArbitrateLock (a contended libnx mutex)
++  kArbUnlock,         // svcArbitrateUnlock (handing it to a waiter)
++  kEsperaDir,         // svcWaitForAddress (futex-style waits)
++  kSenalDir,          // svcSignalToAddress
++  kEsperaCond,        // svcWaitProcessWideKeyAtomic (condition variables)
++  kSenalCond,         // svcSignalProcessWideKey
+   kLlamadasCount,
+ };
+ struct Llamadas {
+@@ -545,6 +557,13 @@ void Report(u64 elapsed_ticks, u64 tick_freq, u64 counters_last[kCounterCount],
+                  n[kMapeoGpu], mb[kMapeoGpu], ms[kMapeoGpu], n[kCacheClean], mb[kCacheClean], ms[kCacheClean],
+                  n[kQueueBuffer], ms[kQueueBuffer], n[kDequeueBuffer], ms[kDequeueBuffer], n[kSleep0],
+                  n[kSleepCeder], n[kSleepCorto], ms[kSleepCorto], n[kSleepLargo]);
++    // Locks and waits: the calls themselves cost CPU (a syscall each); the time in the waits is mostly blocked.
++    std::fprintf(f,
++                 "     sincronizacion por segundo (llamadas y ms dentro): mutex con espera %.0f (%.1f ms), mutex "
++                 "entregado %.0f (%.1f ms) | esperas en direccion %.0f (%.1f ms), senales %.0f (%.1f ms) | "
++                 "esperas de condicion %.0f (%.1f ms), senales %.0f (%.1f ms)\n",
++                 n[kArbLock], ms[kArbLock], n[kArbUnlock], ms[kArbUnlock], n[kEsperaDir], ms[kEsperaDir],
++                 n[kSenalDir], ms[kSenalDir], n[kEsperaCond], ms[kEsperaCond], n[kSenalCond], ms[kSenalCond]);
+   }
+   if (frames > 0) {
+     std::fprintf(f,
+@@ -1031,6 +1050,47 @@ Result __wrap_bqDequeueBuffer(Binder* b, bool async, u32 width, u32 height, s32
+   return rc;
+ }
+ 
++Result __wrap_svcArbitrateLock(u32 wait_tag, u32* tag_location, u32 self_tag) {
++  const u64 desde = armGetSystemTick();
++  const Result rc = __real_svcArbitrateLock(wait_tag, tag_location, self_tag);
++  Anotar(kArbLock, desde);
++  return rc;
++}
++
++Result __wrap_svcArbitrateUnlock(u32* tag_location) {
++  const u64 desde = armGetSystemTick();
++  const Result rc = __real_svcArbitrateUnlock(tag_location);
++  Anotar(kArbUnlock, desde);
++  return rc;
++}
++
++Result __wrap_svcWaitForAddress(void* address, u32 arb_type, s64 value, s64 timeout) {
++  const u64 desde = armGetSystemTick();
++  const Result rc = __real_svcWaitForAddress(address, arb_type, value, timeout);
++  Anotar(kEsperaDir, desde);
++  return rc;
++}
++
++Result __wrap_svcSignalToAddress(void* address, u32 signal_type, s32 value, s32 count) {
++  const u64 desde = armGetSystemTick();
++  const Result rc = __real_svcSignalToAddress(address, signal_type, value, count);
++  Anotar(kSenalDir, desde);
++  return rc;
++}
++
++Result __wrap_svcWaitProcessWideKeyAtomic(u32* key, u32* tag_location, u32 self_tag, u64 timeout) {
++  const u64 desde = armGetSystemTick();
++  const Result rc = __real_svcWaitProcessWideKeyAtomic(key, tag_location, self_tag, timeout);
++  Anotar(kEsperaCond, desde);
++  return rc;
++}
++
++void __wrap_svcSignalProcessWideKey(u32* key, s32 num) {
++  const u64 desde = armGetSystemTick();
++  __real_svcSignalProcessWideKey(key, num);
++  Anotar(kSenalCond, desde);
++}
++
+ void __wrap_svcSleepThread(s64 nano) {
+   const u64 desde = armGetSystemTick();
+   __real_svcSleepThread(nano);
