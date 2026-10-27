@@ -308,3 +308,31 @@ With the geometry store off (`nfsmw_dk_geometria_mb = 0`: no store statistics in
 whole, Max still turned into spikes after the jump: neither the store nor the constant diffs. Both are back on. Next: a
 manual dump with the whole frame's draw trace (vertex fetch formats of Max's draws). `mp3_gamma` 0.8 meanwhile (the
 picture still too bright at 0.9).
+
+## Runs 29-31: the overexposure is not in the post-processing
+
+- The tonemap is not one shader: cutscenes use ps_cd9469857a0c532a, gameplay ps_6671591252a5bce2 and
+  ps_fe226603f40e2533. The gameplay ones blend `Exposures.x` towards `.y` (2.01 and 3.0 in the club),
+  `ToneMapParams.z` towards `.w` and the gamma towards `deSatContrastGammaIFX` (c75) by an effects mask: a 128x128
+  target (07367000) drawn from two textures (ps_7448e38c98eeb177). In the dumps that mask is white in R and B, so the
+  effect values always apply (x1.5 exposure in the club). It is not known yet whether the real console's mask is
+  white too.
+- Checked against a dump with the HDR scene and the final frame from the same frame (club): the translated tonemap
+  plus the mask reproduce the screen pixel for pixel (x1.5 fits best). The post-processing does what the game asks.
+- The FXAA pass has no color exp bias (logged: RB_COLOR_INFO 00030198, bias 0); c2d9b50's guess was wrong and
+  changes nothing.
+- What is wrong is the scene itself: the HDR target is dark (garage walls ~0.4 under a lamp, most of the scene
+  near 0), the luminance the game measures is 0.1-0.9, always below the level's AdaptedLumMin (1.5 garage, 0.71
+  club), so the adaptation is pinned at its minimum and the exposure at its maximum. A dark scene pushed up to the
+  maximum exposure: flat, grainy (noise amplified) and burnt where the few lights are. Next: the lighting passes
+  (ambient, deferred lights), which give 5-10 times less light than the levels expect.
+- `mp3_exposicion` and the 10 s exposure log now cover the gameplay tonemaps too (they only covered the cutscenes').
+
+## Run 31: every color clear was red
+
+Direct3D's clear shader writes its pixel constant c0, which holds the D3DCOLOR as A, R, G, B: the game clears with
+c0 (1 0 0 0) and RB_COLOR_CLEAR FF000000, opaque black. The clear emulation took c0 as R, G, B, A, so every
+single-sampled clear was red (000000FF). Visible where a target is drawn over only in part: the per-ped blood targets
+(64x128, 128x256: red everywhere, so dead and wounded enemies were painted red all over), and the gameplay tonemap's
+effects mask (07367000, R and B white: the effect exposure and gamma always on, x1.5 brighter). c0 is now read as
+A, R, G, B.
