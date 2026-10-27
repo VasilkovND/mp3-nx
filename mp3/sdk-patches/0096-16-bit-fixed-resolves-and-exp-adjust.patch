@@ -1,12 +1,13 @@
 --- a/include/rex/x360/deko/render.h
 +++ b/include/rex/x360/deko/render.h
-@@ -341,6 +341,10 @@
+@@ -341,6 +341,11 @@
    const ImagenDk* ResueltaConSigno(const ImagenDk& resuelta, uint32_t signos);
    // A resolved k_16_16 target read as a k_16_16 texture (fetch format 25): converted to what the hardware returns.
    const ImagenDk* ResueltaFija16(const ImagenDk& resuelta, uint32_t signos);
 +  // A resolved texture read with a fetch constant's exp_adjust (dword 3 bits 13-18): the GPU scales what it fetches by
-+  // 2^exp_adjust; a scaled copy is sampled instead (texturas.cpp).
-+  const ImagenDk* ResueltaEscalada(const ImagenDk& resuelta, int32_t exp_adjust);
++  // 2^exp_adjust; a scaled copy is sampled instead (texturas.cpp). fraccion_16: a 16-bit fixed-point fetch as a
++  // fraction (the resolve holds the 16-bit integers): / 65535 too.
++  const ImagenDk* ResueltaEscalada(const ImagenDk& resuelta, int32_t exp_adjust, bool fraccion_16);
 +  std::unordered_map<uint64_t, ConvertidaSigno> escaladas_;
    deko::Subida Reservar(uint32_t bytes, uint32_t alineacion);
  
@@ -18,29 +19,22 @@
                      "Las copias en el motor 3D seguidas comparten una barrera si ninguna lee lo que otra escribio (los "
                      "resolves del G-buffer); false = una barrera antes de cada una");
 +REXCVAR_DEFINE_BOOL(x360_resolve_16_fijo, true, "X360",
-+                    "Un resolve de un destino 7e3 a una textura de 16 bits en coma fija (k_16_16_16_16, k_16_16) guarda "
-+                    "lo que la textura devuelve: el valor escalado / 65535 (Max Payne 3: escena HDR con exp bias 11)");
++                    "Una textura resuelta leida como k_16_16_16_16 o k_16_16 en coma fija con num_format fraccion se "
++                    "divide por 65535 (el resolve guarda el entero de 16 bits); como entero, tal cual");
  REXCVAR_DEFINE_BOOL(x360_f14_sanear, true, "X360",
                      "Los resolves de destinos k_32_FLOAT (la cadena de luminancia de GTA IV) se limitan a 0..31.875 (el "
                      "maximo del HDR) y NaN a 0: un pixel de -60000 llevaba la luminancia adaptada a 0 y la exposicion "
-@@ -1529,7 +1532,15 @@
+@@ -1529,6 +1532,9 @@
        // writes its scene x8 into the 7e3 EDRAM (c0 = 8 in every scene pixel shader) and resolves it with -3; ignored,
        // the post-processing got the scene 8 times too bright and burned it white. Only the 3D engine copy scales.
        const int32_t sesgo_exp = int32_t(reg.rb_copy_dest_info << 10) >> 26;
--      const float escala_exp = std::ldexp(1.0f, sesgo_exp);
-+      float escala_exp = std::ldexp(1.0f, sesgo_exp);
-+      // A 7e3 target resolved into a 16-bit fixed-point texture (k_16_16_16_16, k_16_16): the Xenos stores the scaled
-+      // value as a 16-bit integer, which the texture fetch returns normalized (/ 65535). Max Payne 3 resolves its HDR
-+      // scene with exp bias 11 into k_16_16_16_16 (7e3's 31.875 x 2048 = 65280): kept as the float v x 2048, the
-+      // tonemap and the luminance chain read values ~65000 times too big and the scene burned white.
-+      if (REXCVAR_GET(x360_resolve_16_fijo) && (formato_destino == 26 || formato_destino == 25) &&
-+          (formato_color == 3 || formato_color == 12)) {
-+        escala_exp /= 65535.0f;
-+      }
++      // A 7e3 target resolved into a 16-bit fixed-point texture (k_16_16_16_16, k_16_16) keeps v x 2^bias, the 16-bit
++      // integer the Xenos stores: Max Payne 3 resolves its HDR scene with exp bias 11 (7e3's 31.875 x 2048 = 65280) and
++      // reads it back as integers with exp_adjust -11 or -13; a fetch as a fraction divides by 65535 (texturas.cpp).
+       const float escala_exp = std::ldexp(1.0f, sesgo_exp);
        if (sesgo_exp && sesgos_vistos_copia_.insert(sesgo_exp).second) {
          REXLOG_INFO("[deko3d] resolve con exp bias {} (x{}) desde EDRAM formato {}", sesgo_exp, escala_exp, formato_color);
-       }
-@@ -1574,7 +1585,7 @@
+@@ -1574,7 +1580,7 @@
          // A k_32_FLOAT one kept to real values (x360_f14_sanear) goes through the 3D engine's clamp even when it is read
          // back: GTA IV's luminance chain is mostly such small resolves (80x45 down to the 8x1 exposure).
          const bool sanear_f14 = formato_color == 14 && REXCVAR_GET(x360_f14_sanear);
@@ -51,10 +45,39 @@
                        formato_color == 3 || formato_color == 12 ||
 --- a/src/x360/deko/texturas.cpp
 +++ b/src/x360/deko/texturas.cpp
-@@ -310,8 +310,37 @@
-   }
-   if (c.version != resuelta.version) {
-     if (!Copiar3D(resuelta, 0, 0, resuelta.ancho, resuelta.alto, c.imagen, 0, 0, modos)) {
+@@ -57,6 +57,8 @@
+                      "Renderizador nativo: KB de memoria del invitado que las comprobaciones de texturas estables "
+                      "pueden leer en un fotograma; las que no caben esperan 1-2 fotogramas (8 veces seguidas como "
+                      "mucho). Reparte las comprobaciones que coincidian en el mismo fotograma. 0 = sin limite");
++
++REXCVAR_DECLARE(bool, x360_resolve_16_fijo);  // destinos.cpp
+ 
+ namespace rex::x360 {
+ namespace {
+@@ -319,6 +321,35 @@
+   return &c.imagen;
+ }
+ 
++const ImagenDk* RenderDk::ResueltaEscalada(const ImagenDk& resuelta, int32_t exp_adjust, bool fraccion_16) {
++  if (escaladas_.size() > 64) {  // resolves recreated at other sizes leave theirs behind
++    for (auto& [clave, c] : escaladas_) {
++      DestruirImagen(c.imagen);
++    }
++    escaladas_.clear();
++  }
++  ConvertidaSigno& c = escaladas_[(resuelta.serie << 9) | (fraccion_16 ? 0x100u : 0u) | uint32_t(exp_adjust & 0xFF)];
++  const float escala = std::ldexp(fraccion_16 ? 1.0f / 65535.0f : 1.0f, exp_adjust);
++  if (!c.imagen.viva) {
++    const bool flotante = resuelta.formato == DkImageFormat_R32_Float || resuelta.formato == DkImageFormat_RG32_Float;
++    if (!CrearImagen(c.imagen, DkImageType_2D, flotante ? resuelta.formato : DkImageFormat_RGBA16_Float, resuelta.ancho,
++                     resuelta.alto, 1, 1, DkImageFlags_UsageRender, "resuelta con exp_adjust")) {
++      return nullptr;
++    }
++    REXLOG_INFO("[deko3d] resuelta {}x{} leida con exp_adjust {}{} (x{}): copia escalada", resuelta.ancho, resuelta.alto,
++                exp_adjust, fraccion_16 ? " como fraccion de 16 bits" : "", escala);
++  }
++  if (c.version != resuelta.version) {
++    if (!Copiar3D(resuelta, 0, 0, resuelta.ancho, resuelta.alto, c.imagen, 0, 0, nullptr, false, escala)) {
 +      return nullptr;
 +    }
 +    OlvidarEstado();  // the copy bound its own target and shaders; the draw binds its pass again
@@ -64,41 +87,26 @@
 +  return &c.imagen;
 +}
 +
-+const ImagenDk* RenderDk::ResueltaEscalada(const ImagenDk& resuelta, int32_t exp_adjust) {
-+  if (escaladas_.size() > 64) {  // resolves recreated at other sizes leave theirs behind
-+    for (auto& [clave, c] : escaladas_) {
-+      DestruirImagen(c.imagen);
-+    }
-+    escaladas_.clear();
-+  }
-+  ConvertidaSigno& c = escaladas_[(resuelta.serie << 8) | uint32_t(exp_adjust & 0xFF)];
-+  if (!c.imagen.viva) {
-+    const bool flotante = resuelta.formato == DkImageFormat_R32_Float || resuelta.formato == DkImageFormat_RG32_Float;
-+    if (!CrearImagen(c.imagen, DkImageType_2D, flotante ? resuelta.formato : DkImageFormat_RGBA16_Float, resuelta.ancho,
-+                     resuelta.alto, 1, 1, DkImageFlags_UsageRender, "resuelta con exp_adjust")) {
-       return nullptr;
-     }
-+    REXLOG_INFO("[deko3d] resuelta {}x{} leida con exp_adjust {} (x{}): copia escalada", resuelta.ancho, resuelta.alto,
-+                exp_adjust, std::ldexp(1.0f, exp_adjust));
-+  }
-+  if (c.version != resuelta.version) {
-+    if (!Copiar3D(resuelta, 0, 0, resuelta.ancho, resuelta.alto, c.imagen, 0, 0, nullptr, false,
-+                  std::ldexp(1.0f, exp_adjust))) {
-+      return nullptr;
-+    }
-     OlvidarEstado();  // the copy bound its own target and shaders; the draw binds its pass again
-     c.version = resuelta.version;
-     ++c.imagen.version;
-@@ -596,6 +625,13 @@
+ const ImagenDk* RenderDk::ResueltaFija16(const ImagenDk& resuelta, uint32_t signos) {
+   // Per channel: 4 signed (value / 32), 3 unsigned (the fixed-point bits as a normalized integer).
+   int32_t modos[4] = {};
+@@ -596,6 +627,20 @@
            resuelta = recortada;
            // Looked at again on every draw: a resolve later in the frame must reach the copy.
            valido_hasta = fotograma_ ? fotograma_ - 1 : 0;
 +        }
 +      }
-+      // exp_adjust (dword 3 bits 13-18): the fetch scales by 2^exp_adjust (Max Payne 3 reads its HDR scene, resolved
-+      // into k_16_16_16_16 as v x 2048 / 65535, back with it). A scaled copy.
-+      if (const int32_t exp_adjust = int32_t(f[3] << 13) >> 26; exp_adjust && !resuelta->profundidad) {
-+        if (const ImagenDk* escalada = ResueltaEscalada(*resuelta, exp_adjust)) {
++      // exp_adjust (dword 3 bits 13-18): the fetch scales by 2^exp_adjust. A 16-bit fixed-point fetch (k_16_16_16_16,
++      // k_16_16) of a resolve holds the 16-bit integers (v x 2^copy exp bias): read as integers (num_format, dword 3
++      // bit 0) they are taken as they are, as a fraction / 65535. Max Payne 3 reads its HDR scene, resolved with exp
++      // bias 11, as integers with exp_adjust -11 or -13. A scaled copy.
++      const int32_t exp_adjust = int32_t(f[3] << 13) >> 26;
++      const bool fraccion_16 = ((f[1] & 0x3F) == 26 || (f[1] & 0x3F) == 25) && !(f[3] & 0x1) &&
++                               (resuelta->formato == DkImageFormat_RGBA16_Float ||
++                                resuelta->formato == DkImageFormat_RG16_Float) &&
++                               REXCVAR_GET(x360_resolve_16_fijo);
++      if ((exp_adjust || fraccion_16) && !resuelta->profundidad) {
++        if (const ImagenDk* escalada = ResueltaEscalada(*resuelta, exp_adjust, fraccion_16)) {
 +          resuelta = escalada;
          }
        }

@@ -93,3 +93,30 @@ large_function_threshold = 1048576
 "0x82FD7700" = {}
 "0x83000790" = {}
 "0x830F9B60" = {}
+
+# Run 14: vtable thunks called through pointers ("Call to invalid or unregistered function" at 0x82FBAFB8 and 0x82FBAFC8,
+# 18 calls each: their callers went on with nothing done, around the jump where Max fell through the ground). A
+# scan of the image for the same shape after a blr or bctr where no function started (lwz rX,N(r3), then mtctr and
+# bctr within five instructions): 22, these two among them.
+"0x82248774" = {}
+"0x822487CC" = {}
+"0x82248B4C" = {}
+"0x82286218" = {}
+"0x8268F534" = {}
+"0x826AD740" = {}
+"0x826AF834" = {}
+"0x826EA1B4" = {}
+"0x8288F858" = {}
+"0x82890490" = {}
+"0x82967D3C" = {}
+"0x82A71770" = {}
+"0x82A71794" = {}
+"0x82A717A4" = {}
+"0x82C91F84" = {}
+"0x82C91F9C" = {}
+"0x82DC6CB0" = {}
+"0x82DCEBFC" = {}
+"0x82FBAFB8" = {}
+"0x82FBAFC8" = {}
+"0x82FBAFE8" = {}
+"0x82FDD00C" = {}

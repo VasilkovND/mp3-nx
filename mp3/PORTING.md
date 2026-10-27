@@ -187,3 +187,16 @@ up to infinity) and read it as it is.
 SDK patch 0096: such resolves (7e3 into k_16_16_16_16 / k_16_16, `x360_resolve_16_fijo`) store v x 2^bias / 65535, and a
 resolved texture fetched with an exp_adjust (fetch constant dword 3 bits 13-18, ignored until now) is read through a
 copy scaled by 2^exp_adjust. `mp3_traza_vport_max` limits the draw trace to small viewports (the luminance chain).
+
+## Run 14: black instead of white; Max falls through the ground
+
+The log of run 14: "resuelta ... leida con exp_adjust -11" and "-13" for the 1280x720, 640x360 and 320x180 scene
+resolves. The game reads them as 16-bit integers (num_format integer) and scales them back itself (2^-11, 2^-13): the
+resolve's v x 2^bias was right; dividing it by 65535 made the frame black. Patch 0096 now keeps v x 2^bias at the
+resolve, scales a resolved texture's fetch by 2^exp_adjust, and divides by 65535 only for a 16-bit fixed-point fetch
+as a fraction (num_format 0).
+
+After a jump Max fell through the floor (GTA IV's car did at its start, fixed there by `patch_vmx_exact.py`, which runs
+here too). The log had 36 calls to two functions the codegen did not know (0x82FBAFB8, 0x82FBAFC8: vtable thunks, run
+only through pointers; their callers went on with nothing done). A scan for that shape (after a blr or bctr, lwz
+rX,N(r3), then mtctr and bctr) found 22, all function entries now.
