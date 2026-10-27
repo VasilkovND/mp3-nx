@@ -164,3 +164,12 @@ XDK Direct3D's `BeginTiling` is `sub_83079948` (tools/fuzzy_find.py against GTA 
 user's own executable for the comparison: 0.734, next 0.267; the same use of its arguments), named in
 `codegen/names.toml`: `src/mp3_tiling.cpp` asks for one tile, the union of the game's, as for GTA IV. Direct3D's wait
 step for the GPU (`sub_83076C70`, ds3-nx's exactly) is named too: the waiting thread yields and sleeps.
+
+## Runs 11-12: overexposed, not missing
+
+With one tile the scene is still white, but the menu captures show it drawn whole (geometry, the hero's hands, the
+bottle; shadows black, everything lit burned white): an exposure or HDR problem, as GTA IV had. All of GTA IV's
+exposure fixes are SDK patches 0057-0072 and the translator, already here. Run 10's trace up to draw 1122 (the
+G-buffer, the depth resolve 19048000 read as 8888 and as k_24_8_FLOAT, the 640x360 linear depth in k_32_FLOAT, the
+k_8 occlusion passes) shows nothing wrong yet; the lighting, luminance and tonemap passes come after it. Run 12's
+dumps never fired: with one tile a frame has ~690 draws, under `mp3_auto_volcado_dibujos` (800); 300 now.
