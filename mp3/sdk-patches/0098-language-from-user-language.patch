@@ -1,0 +1,51 @@
+XGetLanguage and XamGetLanguage return the user_language setting (they returned English always, and XamGetLanguage was a stub).
+
+--- a/src/kernel/xam/xam_info.cpp
++++ b/src/kernel/xam/xam_info.cpp
+@@ -15,6 +15,7 @@
+ #include <rex/hook.h>
+ #include <rex/types.h>
+ #include <rex/string.h>
++#include <rex/system/flags.h>
+ #include <rex/system/kernel_state.h>
+ #include <rex/system/user_module.h>
+ #include <rex/system/xenumerator.h>
+@@ -183,6 +184,12 @@
+ }
+ 
+ u32 XGetLanguage_entry() {
++  // The console's language: the user_language setting (1 English ... 12 Russian), as XCONFIG_USER_LANGUAGE gives it.
++  // It was English always (the region guess below), so a game never showed its other languages. Out of range: English.
++  const uint32_t ajustado = REXCVAR_GET(user_language);
++  if (ajustado >= uint32_t(XLanguage::kEnglish) && ajustado <= 12) {
++    return ajustado;
++  }
+   auto desired_language = XLanguage::kEnglish;
+ 
+   // Switch the language based on game region.
+--- a/src/kernel/xam/xam_locale.cpp
++++ b/src/kernel/xam/xam_locale.cpp
+@@ -356,7 +356,14 @@
+ u32 XamGetLocaleFromOnlineCountry_entry(u32 id) {
+   return xeXamGetLocaleFromOnlineCountry(static_cast<uint8_t>(id));
+ }
++
++u32 XGetLanguage_entry();  // xam_info.cpp
+ 
++// The console's language (user_language), as XGetLanguage.
++u32 XamGetLanguage_entry() {
++  return XGetLanguage_entry();
++}
++
+ u32 XamGetLanguageFromOnlineLanguage_entry(u32 id) {
+   return xeXamGetLanguageFromOnlineLanguage(static_cast<uint8_t>(id));
+ }
+@@ -418,7 +425,7 @@
+ REX_EXPORT_STUB(__imp__XamFormatSystemDateString);
+ REX_EXPORT_STUB(__imp__XamGetCountry);
+ REX_EXPORT_STUB(__imp__XamGetCurrencyFormat);
+-REX_EXPORT_STUB(__imp__XamGetLanguage);
++REX_EXPORT(__imp__XamGetLanguage, rex::kernel::xam::XamGetLanguage_entry)
+ REX_EXPORT_STUB(__imp__XamGetLanguageLocaleFallbackString);
+ REX_EXPORT_STUB(__imp__XamGetLanguageTypeface);
+ REX_EXPORT_STUB(__imp__XamGetLanguageTypefacePatch);
