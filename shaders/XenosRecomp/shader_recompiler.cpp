@@ -183,6 +183,21 @@ void ShaderRecompiler::recompile(const VertexFetchInstruction& instr, uint32_t a
         cerrarPredicado();
     const size_t marcaPredicado = out.size();
 
+    // A fetch D3D turned off (the bound vertex declaration has no such element: Max Payne 3's patched skinned shaders)
+    // writes no component from memory: only its constant 0 / 1 components, if any.
+    bool leeAlgo = false;
+    for (size_t i = 0; i < 4; i++)
+    {
+        const auto swizzle = getDestSwizzle(instr.dstSwizzle, i);
+        leeAlgo |= swizzle >= FetchDestinationSwizzle::X && swizzle <= FetchDestinationSwizzle::W;
+    }
+    if (!leeAlgo)
+    {
+        printDstSwizzle01(instr.dstRegister, instr.dstSwizzle);
+        cerrarSiEscribePredicado(marcaPredicado);
+        return;
+    }
+
     indent();
     print("r{}.", instr.dstRegister);
     printDstSwizzle(instr.dstSwizzle, false);

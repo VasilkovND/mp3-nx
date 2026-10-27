@@ -2698,8 +2698,12 @@ class RingGraphicsSystem final : public rex::system::IGraphicsSystem {
     // The pixel shader's first float constants (a material without textures shows its colour here).
     if (ps_) {
       std::string pc;
-      for (uint32_t c = 0; c < 16; ++c) {
+      // With mp3_traza_solo_quads (few draws: the post-processing) every non-zero one up to c255: Max Payne 3's tonemap
+      // reads its exposure from c88 and c137.
+      const uint32_t hasta = REXCVAR_GET(mp3_traza_solo_quads) ? 256 : 16;
+      for (uint32_t c = 0; c < hasta; ++c) {
         const uint32_t r = 0x4000 + (256 + c) * 4;
+        if (c >= 16 && !(registers_[r] | registers_[r + 1] | registers_[r + 2] | registers_[r + 3])) continue;
         pc += fmt::format(" c{}=({:g} {:g} {:g} {:g})", c, std::bit_cast<float>(registers_[r]),
                           std::bit_cast<float>(registers_[r + 1]), std::bit_cast<float>(registers_[r + 2]),
                           std::bit_cast<float>(registers_[r + 3]));
