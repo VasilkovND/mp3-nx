@@ -348,3 +348,12 @@ after the FXAA is there. The EDRAM log of the dumped frame shows no transfer bet
 final one, so the FXAA's writes to c198 f3 are lost or never happen. Both passes are a single full-screen opaque
 draw, the only ones on the HDR target's base taking x360_edram_saltar_muertas (no transfer before the pass): first
 try, that off in mp3.toml. The 0654D000 dumps are black in every run (the tonemap's output, or its copy, empty).
+
+## Run 35: black cutscenes, stripes over effects
+
+Diagnostics (SDK patches 0300, 0301) showed the tonemap and FXAA draw into the right targets and the Swap presents
+the right front buffer; run 32's "raw HDR on screen" was a dump artifact. After the FXAA, cutscenes (and effects)
+draw their post-processing as 8-bit color on base 000, the depth's EDRAM base (ps n2516, n3681, n3629), resolve it
+to 0634F000 and blend that over the frame (pass 155). The SDK took such a pass for GTA IV's depth restore
+(x360_edram_z_por_color): its draws were not recorded and the depth's bits were written into the texture as color.
+That is the black cutscene and the green-yellow stripes seen in captures. Off in mp3.toml.

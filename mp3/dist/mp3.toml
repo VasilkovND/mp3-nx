@@ -11,3 +11,8 @@ mp3_trazas_max = 0
 mp3_perfil_pilas = false
 # The FPS counter at start (ZL + ZR + Up toggles it).
 mp3_fps_al_arrancar = true
+
+# Max Payne 3 draws its cutscene and effect post-processing as 8-bit color on the depth's EDRAM base (000), which is
+# not GTA IV's depth restore: with that rule on, those draws were dropped and the depth bits went into their texture
+# (0634F000), giving black cutscenes and green-yellow stripes over effects.
+x360_edram_z_por_color = false
