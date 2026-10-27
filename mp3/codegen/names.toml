@@ -72,3 +72,9 @@ name = "mp3_TextureFactoryCreate"
 
 [functions."0x82DF3FA0"]
 name = "mp3_ReleaseRenderTarget"
+
+# XAudio2: one mono voice mixed into a 5.1 bus with a per-channel gain ramp (r3 = a job: +0 input, +4 interleaved
+# 6-channel output, +8 gains, +12 steps or 0, +20 frames, +32 add). Run 27's busiest audio function (13.5 % of a core
+# at stock clocks): src/mp3_audio_mix_neon.cpp does it in NEON (mp3_mezcla_neon).
+[functions."0x8301B028"]
+name = "mp3_XAudioMixMonoTo6"

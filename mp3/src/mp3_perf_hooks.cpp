@@ -172,6 +172,19 @@ REX_EXTERN(mp3_AudioEngineUpdate) {
 }
 #endif  // MP3_TIENE_mp3_AudioEngineUpdate
 
+#if defined(__SWITCH__)
+extern "C" void RexSwitchRegistrarHiloAudio(void);   // sdk/src/core/threading_switch.cpp (SDK patch 0204)
+extern "C" void RexSwitchAudioSoloNucleo3(int solo);
+#endif
+
+// Run 27 at stock clocks: the XAudio2 thread (~82 % of a core) and the XMA decoder (~33 %) need more than core 3, and
+// what does not fit runs on the cores of the game's main, render and ring threads. With mp3_audio_solo_nucleo3 the
+// audio threads (these two, the audio worker) may only run on core 3: the game keeps cores 0-2, and the audio may run
+// late if core 3 is not enough (to measure with x360_ab_estados). Applied at the next Swap when it changes.
+REXCVAR_DEFINE_BOOL(mp3_audio_solo_nucleo3, false, "MP3",
+                    "Los hilos de audio (XAudio2, descodificador XMA, trabajador de audio) solo en el nucleo 3, sin "
+                    "pasar a los nucleos del juego");
+
 #ifdef MP3_TIENE_mp3_AudioThreadEntry  // codegen/names.toml names it (CMakeLists.txt)
 REX_EXTERN(__imp__mp3_AudioThreadEntry);
 REX_EXTERN(mp3_AudioThreadEntry) {
@@ -186,6 +199,7 @@ REX_EXTERN(mp3_AudioThreadEntry) {
       movido = R_SUCCEEDED(svcSetThreadCoreMask(h, 3, proceso)) ||
                R_SUCCEEDED(svcSetThreadCoreMask(CUR_THREAD_HANDLE, 3, proceso));
     }
+    RexSwitchRegistrarHiloAudio();
     REXLOG_INFO("[mp3] hilo de audio: mascara del proceso {:X}, {}", proceso,
                 movido ? "prefiere el nucleo 3" : (proceso & 0x8) ? "el nucleo 3 rechazado" : "sin nucleo 3 (3 nucleos)");
   }
@@ -254,6 +268,19 @@ void Registrar(bool trabajos) {
 // Called by the ring thread at each Swap (mp3_gpu.cpp): the registered threads get the settings' priorities if they
 // changed.
 void Mp3AplicarPrioridades() {
+#if defined(__SWITCH__)
+  static int audio_solo = 0;
+  static uint32_t swaps_audio = 0;
+  const int pedido_audio = REXCVAR_GET(mp3_audio_solo_nucleo3) ? 1 : 0;
+  if (audio_solo && (++swaps_audio % 600) == 0) {
+    RexSwitchAudioSoloNucleo3(1);  // audio threads started since (the mixer starts with the game's audio)
+  }
+  if (pedido_audio != audio_solo) {
+    audio_solo = pedido_audio;
+    RexSwitchAudioSoloNucleo3(audio_solo);
+    REXLOG_INFO("[mp3] hilos de audio: {}", audio_solo ? "solo el nucleo 3" : "todo el proceso, prefieren el 3");
+  }
+#endif
   const int trabajos = PrioridadPedida(true), render = PrioridadPedida(false);
   if (trabajos == g_aplicada_trabajos && render == g_aplicada_render) {
     return;

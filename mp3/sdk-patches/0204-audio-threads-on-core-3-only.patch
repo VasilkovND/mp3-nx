@@ -1,0 +1,74 @@
+Audio threads registry (RexSwitchRegistrarHiloAudio): the XMA decoder and the audio worker register themselves, and RexSwitchAudioSoloNucleo3 puts every registered audio thread on core 3 alone or back on the whole process.
+
+--- a/src/audio/audio_system.cpp
++++ b/src/audio/audio_system.cpp
+@@ -108,6 +108,7 @@ X_STATUS AudioSystem::Setup(system::KernelState* kernel_state) {
+         if (REXCVAR_GET(audio_hilos_nucleo3)) {
+           RexSwitchPreferProcessCore(3);
+         }
++        RexSwitchRegistrarHiloAudio();
+ #endif
+         WorkerThreadMain();
+         return 0;
+--- a/src/audio/xma_decoder.cpp
++++ b/src/audio/xma_decoder.cpp
+@@ -173,6 +173,7 @@ X_STATUS XmaDecoder::Setup(system::KernelState* kernel_state) {
+         if (REXCVAR_GET(audio_hilos_nucleo3)) {
+           RexSwitchPreferProcessCore(3);
+         }
++        RexSwitchRegistrarHiloAudio();
+ #endif
+         WorkerThreadMain();
+         return 0;
+--- a/src/core/threading_switch.cpp
++++ b/src/core/threading_switch.cpp
+@@ -286,6 +286,31 @@ bool RexSwitchPreferProcessCore(int core) {
+          R_SUCCEEDED(svcSetThreadCoreMask(CUR_THREAD_HANDLE, core, proceso));
+ }
+ 
++namespace {
++std::mutex g_hilos_audio_mutex;
++Handle g_hilos_audio[8];
++int g_num_hilos_audio = 0;
++}  // namespace
++
++void RexSwitchRegistrarHiloAudio(void) {
++  Thread* yo = threadGetSelf();
++  const Handle h = (yo != nullptr) ? yo->handle : CUR_THREAD_HANDLE;
++  if (h == CUR_THREAD_HANDLE) return;  // only a real handle can be changed from another thread
++  std::lock_guard<std::mutex> lock(g_hilos_audio_mutex);
++  if (g_num_hilos_audio < 8) g_hilos_audio[g_num_hilos_audio++] = h;
++}
++
++void RexSwitchAudioSoloNucleo3(int solo) {
++  u64 proceso = 0;
++  if (R_FAILED(svcGetInfo(&proceso, InfoType_CoreMask, CUR_PROCESS_HANDLE, 0)) || !(proceso & 0x8)) {
++    return;
++  }
++  std::lock_guard<std::mutex> lock(g_hilos_audio_mutex);
++  for (int i = 0; i < g_num_hilos_audio; ++i) {
++    svcSetThreadCoreMask(g_hilos_audio[i], 3, solo ? u64(0x8) : proceso);
++  }
++}
++
+ bool RexSwitchSetCurrentThreadCore(int core) {
+   Thread* yo = threadGetSelf();
+   Handle h = (yo != nullptr) ? yo->handle : CUR_THREAD_HANDLE;
+--- a/src/core/threading_switch.h
++++ b/src/core/threading_switch.h
+@@ -173,6 +173,15 @@ bool RexSwitchPinCurrentThreadToCore(int core);
+  */
+ bool RexSwitchPreferProcessCore(int core);
+ 
++/*
++ * The audio threads (the XMA decoder, the audio worker, a game's mixer): each registers itself, and
++ * RexSwitchAudioSoloNucleo3 puts all of them on core 3 alone (1) or back on the whole process, preferring core 3 (0).
++ * On core 3 alone they cannot take the game's cores when they need more than one core; a busy core 3 can then make
++ * them late (the sound stutters), so it is a setting to measure.
++ */
++void RexSwitchRegistrarHiloAudio(void);
++void RexSwitchAudioSoloNucleo3(int solo);
++
+ /* Which core the calling thread is running on right now. It can only be asked about oneself. */
+ int RexSwitchCurrentCore(void);
+ 
