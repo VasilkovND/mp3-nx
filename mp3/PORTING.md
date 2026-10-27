@@ -246,3 +246,19 @@ The black spikes around Max are in the G-buffer itself (06A0D000): a mesh drawn 
 match "by similarity" ranked candidates by the differing code words first and the differing fetch words (the vertex
 layout, which D3D leaves alone) second: n1772 was taken at "3+5" over a "4+0" (84 times in runs 15-17), n2430 the same.
 They are ranked by the total now, and `mp3_vs_por_parecido = false` skips such draws instead, to test.
+
+## Run 18: the exposure chain works; black final frames; the spikes are patched vertex shaders
+
+The dump of the EDRAM views at 0x5A0 showed the 64x64 luminance drawn right (0-3.15). The 64x64 resolve 06F1D000 is
+written twice a frame: first from the scene (06E95000) by ps_7e6d0c02a3470149, then from a 2x2 texture at 1FCA2000 by
+ps_3c1702bfdb485e92 (a sun-ray occlusion sum, 05072000): the dumps keep the last. The exposure itself is
+`AdapLumSampler` = 05071000 (1.5 in the dump), read by the bright pass ps_08b725c9259e23cd as 1/adapted. The HDR scene
+resolve (080D0000) looks right (a dark garage with its lamps); the dumped final frame (05F45000) was black but for the
+HUD: the flashes. Next: the full-screen passes after the scene (`mp3_traza_solo_quads`: the draw trace keeps draws of
+6 vertices or fewer).
+
+The spikes: some vertex shaders still match no container exactly (n1778 "3+5", next "9+0"): Direct3D patches them
+beyond the fetch bits when it binds a vertex declaration. With `mp3_volcar_desconocidos` the console writes each such
+load as `vs_<microcode>_de_<container>.bin` in `shaders_unknown/`; `shaders/ds_parecidos.cpp` (run by tools/shaders.sh
+from `mp3/out/console_unknown/`) copies that container with the loaded microcode, so the library gets the shader as the
+game really runs it.
