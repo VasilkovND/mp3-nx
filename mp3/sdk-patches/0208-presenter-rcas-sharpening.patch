@@ -1,0 +1,94 @@
+The presenter sharpens the frame when it stretches it to the screen (540p on 720p): AMD FidelityFX FSR 1's RCAS on the bilinear samples, in the same pass (switch_nitidez, 0 to 1, default 0.5).
+
+diff --git a/src/ui/deko3d/presentador.cpp b/src/ui/deko3d/presentador.cpp
+index df95fcc..3e73ee6 100644
+--- a/src/ui/deko3d/presentador.cpp
++++ b/src/ui/deko3d/presentador.cpp
+@@ -21,6 +21,11 @@
+ 
+ // Defined with the input driver, which toggles it with ZL + ZR + Up (switch_input_driver.cpp).
+ REXCVAR_DECLARE(bool, switch_contador_fps);
++REXCVAR_DEFINE_DOUBLE(switch_nitidez, 0.5, "Switch",
++                      "Nitidez del reescalado del fotograma a la pantalla (RCAS de AMD FidelityFX FSR 1 sobre el "
++                      "estirado bilineal), solo cuando el fotograma es menor que la pantalla: 0 = sin afilar, 1 = el "
++                      "maximo")
++    .range(0.0, 1.0);
+ // The profiler's stack sampling (switch_perf.cpp), shown in the counter.
+ extern "C" bool RexSwitchPerfStacksActive(void);
+ 
+@@ -33,20 +38,43 @@ using rex::ui::Presenter;
+ 
+ // A rectangle from gl_VertexID (a triangle strip): its corners in clip space (x0, y0, x1, y1, y up) and the texture
+ // coordinates that go with them.
++// The sharpening amount goes to the fragment shader with the rectangle (0: a plain bilinear copy).
+ constexpr char kVsCopia[] = R"(#version 460
+-layout(std140, binding = 0) uniform Copia { vec4 destino; vec4 origen; } c;
++layout(std140, binding = 0) uniform Copia { vec4 destino; vec4 origen; vec4 nitidez; } c;
+ layout(location = 0) out vec2 v_uv;
++layout(location = 1) flat out float v_nitidez;
+ void main() {
+   vec2 t = vec2(float(gl_VertexID & 1), float((gl_VertexID >> 1) & 1));
+   gl_Position = vec4(mix(c.destino.xy, c.destino.zw, t), 0.0, 1.0);
+   v_uv = mix(c.origen.xy, c.origen.zw, t);
++  v_nitidez = c.nitidez.x;
+ }
+ )";
++// The frame stretched to the screen (bilinear), sharpened as AMD FidelityFX FSR 1's RCAS does it: the center and its
++// four neighbors one source texel away; the negative lobe that keeps the result inside their range (no ringing),
++// limited to -0.1875 and scaled by the sharpening amount. Here it runs on the bilinear samples of the stretch, in one
++// pass (FSR runs it after its own upscale).
+ constexpr char kFsCopia[] = R"(#version 460
+ layout(binding = 0) uniform sampler2D salida;
+ layout(location = 0) in vec2 v_uv;
++layout(location = 1) flat in float v_nitidez;
+ layout(location = 0) out vec4 o;
+-void main() { o = vec4(texture(salida, v_uv).rgb, 1.0); }
++void main() {
++  vec3 e = texture(salida, v_uv).rgb;
++  if (v_nitidez <= 0.0) { o = vec4(e, 1.0); return; }
++  vec2 px = 1.0 / vec2(textureSize(salida, 0));
++  vec3 b = texture(salida, v_uv + vec2(0.0, -px.y)).rgb;
++  vec3 d = texture(salida, v_uv + vec2(-px.x, 0.0)).rgb;
++  vec3 f = texture(salida, v_uv + vec2(px.x, 0.0)).rgb;
++  vec3 h = texture(salida, v_uv + vec2(0.0, px.y)).rgb;
++  vec3 mn4 = min(min(b, d), min(f, h));
++  vec3 mx4 = max(max(b, d), max(f, h));
++  vec3 hit_min = min(mn4, e) / max(4.0 * mx4, vec3(1.0 / 65536.0));
++  vec3 hit_max = (1.0 - max(mx4, e)) / min(4.0 * mn4 - 4.0, vec3(-1.0 / 65536.0));
++  vec3 lobe3 = max(-hit_min, hit_max);
++  float lobe = max(-0.1875, min(max(lobe3.r, max(lobe3.g, lobe3.b)), 0.0)) * v_nitidez;
++  o = vec4(clamp((lobe * (b + d + f + h) + e) / (4.0 * lobe + 1.0), 0.0, 1.0), 1.0);
++}
+ )";
+ // Dear ImGui's vertices: position in the drawer's coordinate space (y down), texture coordinate, RGBA8 color.
+ constexpr char kVsUi[] = R"(#version 460
+@@ -533,7 +561,10 @@ class PresentadorDeko3d final : public Presenter {
+         const float y1 = 1 - float(flujo.output_y + int32_t(salida_alto)) / float(alto) * 2;
+         const float u1 = float(propiedades.frontbuffer_width) / float(s.ancho);
+         const float v1 = float(propiedades.frontbuffer_height) / float(s.alto);
+-        const float datos[8] = {x0, y0, x1, y1, 0, 0, u1, v1};
++        // Sharpened only when the frame is stretched up (540p on the 720p screen).
++        const bool estirado = salida_ancho > propiedades.frontbuffer_width || salida_alto > propiedades.frontbuffer_height;
++        const float nitidez = estirado ? float(REXCVAR_GET(switch_nitidez)) : 0.0f;
++        const float datos[12] = {x0, y0, x1, y1, 0, 0, u1, v1, nitidez, 0, 0, 0};
+         const Subida ubo = nucleo_.Reservar(sizeof(datos), DK_UNIFORM_BUF_ALIGNMENT);
+         if (ubo) {
+           std::memcpy(ubo.cpu, datos, sizeof(datos));
+@@ -610,7 +641,7 @@ class PresentadorDeko3d final : public Presenter {
+     const float y0 = 1 - float(16) / float(alto) * 2;
+     const float x1 = x0 + float(kContadorAncho * kContadorEscala) / float(ancho) * 2;
+     const float y1 = y0 - float(kContadorAlto * kContadorEscala) / float(alto) * 2;
+-    const float datos[8] = {x0, y0, x1, y1, 0, 0, 1, 1};
++    const float datos[12] = {x0, y0, x1, y1, 0, 0, 1, 1, 0, 0, 0, 0};  // not sharpened
+     const Subida ubo = nucleo_.Reservar(sizeof(datos), DK_UNIFORM_BUF_ALIGNMENT);
+     if (!ubo) return;
+     std::memcpy(ubo.cpu, datos, sizeof(datos));
+@@ -653,7 +684,7 @@ class PresentadorDeko3d final : public Presenter {
+     const uint32_t escala = std::max<uint32_t>(2, std::min(ancho * 9 / 10 / kMenuAncho, alto / 3 / kMenuAlto));
+     const float w = float(kMenuAncho * escala) / float(ancho) * 2, h = float(kMenuAlto * escala) / float(alto) * 2;
+     const float x0 = -w / 2, y0 = h / 2;
+-    const float datos[8] = {x0, y0, x0 + w, y0 - h, 0, 0, 1, 1};
++    const float datos[12] = {x0, y0, x0 + w, y0 - h, 0, 0, 1, 1, 0, 0, 0, 0};  // not sharpened
+     const Subida ubo = nucleo_.Reservar(sizeof(datos), DK_UNIFORM_BUF_ALIGNMENT);
+     if (!ubo) return;
+     std::memcpy(ubo.cpu, datos, sizeof(datos));
