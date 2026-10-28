@@ -47,22 +47,23 @@ REX_EXTERN(mp3_XMemCpy) {
 }
 #endif
 
-// XMemDecompress and its stream variant (r3 context, r4 destination, r5 address of the destination size, which the
-// call sets to the bytes written).
+// XMemDecompress (r3 context, r4 destination, r5 address of the destination size, which the call sets to the bytes
+// written; r6 source, r7 its size): its one caller passes r3-r10.
 #ifdef MP3_TIENE_mp3_XMemDecompress
 REX_EXTERN(__imp__mp3_XMemDecompress);
 REX_EXTERN(mp3_XMemDecompress) {
   const uint32_t destino = ctx.r4.u32, tam = ctx.r5.u32;
   __imp__mp3_XMemDecompress(ctx, base);
-  if (tam) Marcar(destino, rex::memory::load_and_swap<uint32_t>(base + tam));
+  if (tam >= 0x10000) Marcar(destino, rex::memory::load_and_swap<uint32_t>(base + tam));
 }
 #endif
 
+// 0x8309DA98, named mp3_XMemDecompressStream after Dead Space 2's twin wrapper, is not a decompression: its caller
+// passes the context alone (r3), it resets the context (XMemResetDecompressionContext). Read as the stream variant, r5
+// was stale and the game crashed at start. Kept as a plain call so codegen/names.toml does not change.
 #ifdef MP3_TIENE_mp3_XMemDecompressStream
 REX_EXTERN(__imp__mp3_XMemDecompressStream);
 REX_EXTERN(mp3_XMemDecompressStream) {
-  const uint32_t destino = ctx.r4.u32, tam = ctx.r5.u32;
   __imp__mp3_XMemDecompressStream(ctx, base);
-  if (tam) Marcar(destino, rex::memory::load_and_swap<uint32_t>(base + tam));
 }
 #endif
