@@ -409,3 +409,11 @@ Direct3D's clear pixel shader (shaders_unknown/ps_d40dc7ffe00e2108, 36 bytes) is
 with itself into oC0. Its vertex shader (vs_6d38cfa50aa12e68) fetches the vertex's float4 color
 (k_32_32_32_32_FLOAT, swizzle xyzw) and exports it. EmulateClear now packs that color as R, G, B, A bytes for 8-bit
 targets, and logs it in the "clear draw" lines.
+
+## Run 43 (aa0f4fe): colors right, the screen still flickers
+
+The blood targets are now cleared transparent (enemies' background 0 0 127 alpha 0, their blood red), no green
+pools in the three dumps, enemies not black. The clear log confirms the vertex color: the normal-map clear's vertex
+color (0.498 0.498 1 1) matches the bits the game writes through the depth path to the same target (FFFF7F7F). The
+whole-screen flicker cannot be seen in one-frame dumps. mp3_rafaga (12) saves the next frames presented after a capture
+(ZL + ZR + Down) or a dump (ZL + ZR + Left) as capturas/rafaga_NNN_KK.bmp, one after another.

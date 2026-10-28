@@ -140,6 +140,10 @@ std::atomic<bool> g_mp3_query_waited{false};
 
 REXCVAR_DEFINE_INT32(mp3_auto_captura_s, 15, "MP3",
                      "Cada cuantos segundos se guarda una captura reducida (640x360) en capturas/auto_NNNN.bmp; 0 = nunca");
+REXCVAR_DEFINE_INT32(mp3_rafaga, 12, "MP3",
+                     "Tras una captura (ZL + ZR + Down) o un volcado (ZL + ZR + Left), los siguientes N fotogramas "
+                     "presentados seguidos en capturas/rafaga_NNN_KK.bmp, a mitad de tamano: el parpadeo de toda la "
+                     "imagen se ve en cual de ellos cambia; 0 = ninguno");
 REXCVAR_DEFINE_INT32(mp3_auto_volcado_primero_s, 120, "MP3",
                      "Segundo de juego del primer volcado automatico de las texturas resueltas de un fotograma");
 REXCVAR_DEFINE_INT32(mp3_auto_volcado_cada_s, 300, "MP3", "Segundos entre volcados automaticos; 0 = solo el primero");
@@ -1130,6 +1134,7 @@ class RingGraphicsSystem final : public rex::system::IGraphicsSystem {
           if (REXCVAR_GET(switch_volcado_pedido)) {
             REXCVAR_SET(switch_volcado_pedido, false);
             destinos_->PedirVolcado();
+            StartBurst();
             // And every draw of that frame in the log, whatever its size (FrameTraceSwap ends it at the next Swap), when
             // mp3_volcado_con_dibujos asks: a 2400-draw frame of Max Payne 3 took a minute of SD writes.
             draw_tracing_ = REXCVAR_GET(mp3_volcado_con_dibujos);
@@ -1149,6 +1154,11 @@ class RingGraphicsSystem final : public rex::system::IGraphicsSystem {
           if (REXCVAR_GET(switch_captura_pedida)) {
             REXCVAR_SET(switch_captura_pedida, false);
             SaveCapture();
+            StartBurst();
+          }
+          if (burst_left_) {
+            --burst_left_;
+            SaveCapture(true, burst_index_, burst_frame_++);
           }
         }
         break;
@@ -2633,7 +2643,19 @@ class RingGraphicsSystem final : public rex::system::IGraphicsSystem {
     }
   }
 
-  void SaveCapture(bool small = false) {
+  // A burst (mp3_rafaga): the next frames presented, one after another.
+  void StartBurst() {
+    const int32_t n = REXCVAR_GET(mp3_rafaga);
+    if (n <= 0) return;
+    burst_left_ = uint32_t(std::min(n, 60));
+    burst_frame_ = 0;
+    ++burst_index_;
+    REXLOG_INFO("[gpu] burst {}: the next {} frames presented go to capturas/rafaga_{:03}_*.bmp", burst_index_,
+                burst_left_, burst_index_);
+  }
+
+  // `burst` > 0: frame `burst_frame` of that burst (half size, rafaga_NNN_KK.bmp).
+  void SaveCapture(bool small = false, uint32_t burst = 0, uint32_t burst_frame = 0) {
     rex::ui::RawImage image;
     if (!presenter_ || !presenter_->CaptureGuestOutput(image) || !image.width || !image.height) {
       REXLOG_WARN("[gpu] capture: no guest output to capture");
@@ -2645,7 +2667,11 @@ class RingGraphicsSystem final : public rex::system::IGraphicsSystem {
     char name[32];
     std::filesystem::path path;
     if (small) {
-      std::snprintf(name, sizeof(name), "auto_%04u.bmp", auto_captures_++);
+      if (burst) {
+        std::snprintf(name, sizeof(name), "rafaga_%03u_%02u.bmp", burst, burst_frame);
+      } else {
+        std::snprintf(name, sizeof(name), "auto_%04u.bmp", auto_captures_++);
+      }
       path = folder / name;
       // Half size: each 2x2 block averaged into the top-left texel, then compacted (0.7 MB instead of 2.7 MB).
       const uint32_t w = image.width / 2, h = image.height / 2;
@@ -2700,7 +2726,7 @@ class RingGraphicsSystem final : public rex::system::IGraphicsSystem {
     // wait for them (the game stalls with it).
     std::vector<uint8_t> file(header, header + sizeof(header));
     file.insert(file.end(), data.begin(), data.end());
-    const bool log = !small || auto_captures_ % 12 == 1;  // the automatic ones once a minute in the log
+    const bool log = !small || (!burst && auto_captures_ % 12 == 1) || (burst && burst_frame == 0);  // the automatic ones once a minute in the log
     rex::x360::EncolarEscrituraSd([path, file = std::move(file), log, w = image.width, h = image.height]() {
       if (FILE* f = std::fopen(path.string().c_str(), "wb")) {
         std::fwrite(file.data(), 1, file.size(), f);
@@ -3274,6 +3300,7 @@ class RingGraphicsSystem final : public rex::system::IGraphicsSystem {
   uint32_t rect_unexpanded_logged_ = 0;
   double next_auto_capture_s_ = 10, next_auto_dump_s_ = -1;  // AutomaticCollection
   uint32_t auto_captures_ = 0, auto_dumps_ = 0;
+  uint32_t burst_left_ = 0, burst_frame_ = 0, burst_index_ = 0;  // StartBurst
   uint64_t depth_greater_ = 0, depth_less_ = 0, clears_ = 0, clears_logged_ = 0, msaa_draws_ = 0;
   // Per depth buffer: draws testing GREATER/GEQUAL and LESS/LEQUAL into it (EmulateClear's far value).
   std::unordered_map<uint32_t, std::pair<uint64_t, uint64_t>> depth_direction_;
