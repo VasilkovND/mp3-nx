@@ -1,0 +1,47 @@
+SDK patch 0310 (Max Payne 3 port): scaled resolves stay finite. A resolve into a half float texture holds up to 65504;
+Max Payne 3 resolves its HDR scene and bloom with exp bias 11 (7e3's 31.875 x 2048 = 65280) and reads the bloom with
+exp_adjust +2 too. The x4 copy of the fetch (and the exp_previo of patch 0309) went past half float to infinity: a
+white glow over the frame. A copy scaled up is RGBA32_Float now, and a resolve bakes in only as much of the expected
+exp_adjust as stays finite (none into an 8 or 10-bit texture, which would clamp or lose it).
+
+--- a/src/x360/deko/destinos.cpp
++++ b/src/x360/deko/destinos.cpp
+@@ -1619,6 +1619,22 @@
+         const bool entera = dx == 0 && dy == 0 && ancho == resuelta->imagen.ancho && alto == resuelta->imagen.alto;
+         exp_previo = entera ? (resuelta->imagen.exp_leida_valida ? resuelta->imagen.exp_leida : 0)
+                             : resuelta->imagen.exp_previo;
++      }
++      // Only into a float texture, and into a half float one only as far as the target's largest value stays finite:
++      // 7e3's 31.875 resolved with exp bias 11 is 65280, next to half float's 65504. Max Payne 3 also reads its bloom
++      // with exp_adjust +2: x8192 was infinity there and the glow burned the frame white. The fetch scales the rest.
++      if (exp_previo) {
++        const DkImageFormat f = resuelta->imagen.formato;
++        const bool media = f == DkImageFormat_RGBA16_Float || f == DkImageFormat_RG16_Float;
++        if (!media && f != DkImageFormat_R32_Float && f != DkImageFormat_RG32_Float) {
++          exp_previo = 0;
++        } else if (media) {
++          const float tope = formato_color == 3 || formato_color == 12  ? 31.875f
++                             : formato_color == 4 || formato_color == 5 ? 32.0f
++                             : formato_color <= 2 || formato_color == 10 ? 1.0f
++                                                                         : 65504.0f;
++          while (exp_previo > 0 && tope * std::ldexp(escala_exp, exp_previo) > 65504.0f) --exp_previo;
++        }
+       }
+       if (frontal && uint32_t(x0) < destino_render->ancho && ancho && alto) {
+         if (frontal_.pendiente && frontal_.base != base_resuelta) {
+--- a/src/x360/deko/texturas.cpp
++++ b/src/x360/deko/texturas.cpp
+@@ -341,7 +341,12 @@
+   const float escala = std::ldexp(fraccion_16 ? 1.0f / 65535.0f : 1.0f, exp_adjust);
+   if (!c.imagen.viva) {
+     const bool flotante = resuelta.formato == DkImageFormat_R32_Float || resuelta.formato == DkImageFormat_RG32_Float;
+-    if (!CrearImagen(c.imagen, DkImageType_2D, flotante ? resuelta.formato : DkImageFormat_RGBA16_Float, resuelta.ancho,
++    // Scaled up, 32-bit: a half float resolve holds up to 65504 (Max Payne 3's HDR x2048), and its bloom read with
++    // exp_adjust +2 went past it to infinity in a half float copy, a white glow over the frame.
++    const DkImageFormat formato = flotante ? resuelta.formato
++                                  : escala > 1.0f ? DkImageFormat_RGBA32_Float
++                                                  : DkImageFormat_RGBA16_Float;
++    if (!CrearImagen(c.imagen, DkImageType_2D, formato, resuelta.ancho,
+                      resuelta.alto, 1, 1, DkImageFlags_UsageRender, "resuelta con exp_adjust")) {
+       return nullptr;
+     }
