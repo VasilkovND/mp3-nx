@@ -2663,8 +2663,10 @@ class RingGraphicsSystem final : public rex::system::IGraphicsSystem {
       // The same EDRAM bytes are target i's color: cleared to those bits too (mp3_borrar_color_de_alias). Max Payne 3
       // clears its G-buffer's c1-c3 (1B0, 288, 360) this way; with only the depth view cleared, the color views took
       // the HDR scene's and the bloom's tiles at the next G-buffer pass (EDRAM transfers reinterpreting 16F as 8888,
-      // about 1.5 ms of GPU a frame), and the sky kept them.
-      if (REXCVAR_GET(mp3_borrar_color_de_alias) && !msaa && last_depth_value_ != UINT32_MAX) {
+      // about 1.5 ms of GPU a frame), and the sky kept them. Only at the scene's pitch: the same MRT clear at pitch 320
+      // (many a frame in fights) is not the G-buffer, and there it only added a clear of each view.
+      if (REXCVAR_GET(mp3_borrar_color_de_alias) && !msaa && last_depth_value_ != UINT32_MAX &&
+          (base.rb_surface_info & 0x3FFF) >= rex::x360::g_ancho_escena.load(std::memory_order_relaxed)) {
         rex::x360::RegistrosCopia c = base;
         c.rb_copy_control = i | (1u << 8) | kNullCommand | (1u << 31);
         c.rb_color_clear = last_depth_value_;
