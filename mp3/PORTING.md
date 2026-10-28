@@ -415,5 +415,7 @@ targets, and logs it in the "clear draw" lines.
 The blood targets are now cleared transparent (enemies' background 0 0 127 alpha 0, their blood red), no green
 pools in the three dumps, enemies not black. The clear log confirms the vertex color: the normal-map clear's vertex
 color (0.498 0.498 1 1) matches the bits the game writes through the depth path to the same target (FFFF7F7F). The
-whole-screen flicker cannot be seen in one-frame dumps. mp3_rafaga (12) saves the next frames presented after a capture
-(ZL + ZR + Down) or a dump (ZL + ZR + Left) as capturas/rafaga_NNN_KK.bmp, one after another.
+whole-screen flicker cannot be seen in one-frame dumps, and it lasts one frame: too short to press anything during it.
+mp3_grabacion (90) keeps the last frames presented: a thread of its own copies each new guest output at half size into
+a ring. ZL + ZR + Down writes them as capturas/grabacion_NNN_KKK.bmp, and the log line gives the Swap count of each, so
+the flicker can be looked for after it was seen.
