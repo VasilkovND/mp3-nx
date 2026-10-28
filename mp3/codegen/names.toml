@@ -52,3 +52,18 @@ name = "mp3_D3D_QueryFramesInFlight"
 # (the console's hbl.nsp opens it to homebrew), as GTA IV's gta4_AudioThreadEntry did, so cores 0-2 are left to the game.
 [functions."0x83037B30"]
 name = "mp3_AudioThreadEntry"
+
+# The XDK's copy and decompression functions (tools/fuzzy_find.py against Dead Space 2's named tree, ratio 1.0 each):
+# the game puts streamed texture data in place with them. src/mp3_texture_writes.cpp marks the physical range each
+# one wrote, so the texture cache rechecks those textures at once (x360_texturas_por_escritura).
+[functions."0x8309B808"]
+name = "mp3_XMemCpyStreaming"
+
+[functions."0x8309B8B8"]
+name = "mp3_XMemCpy"
+
+[functions."0x8309DAC0"]
+name = "mp3_XMemDecompress"
+
+[functions."0x8309DA98"]
+name = "mp3_XMemDecompressStream"

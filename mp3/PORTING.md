@@ -360,3 +360,14 @@ That is the black cutscene and the green-yellow stripes seen in captures. Off in
 Run 36: x360_edram_z_por_color off broke the main menu and darkened gameplay (Max Payne 3 does restore depth that way
 too). Back on; SDK patch 0302 instead takes such a pass for a depth restore only when its pixel shader samples a
 depth (k_24_8 or a resolved depth), so the cutscene post-processing, drawn from color textures, is drawn.
+
+## Textures rechecked when the game writes them
+
+Max Payne 3 streams textures into memory other textures used (Max in an enemy's black jacket, flicker, missing
+textures). The renderer only learned of it on its periodic recheck (up to 39 frames; patch 0303 capped it, which cost
+9-12 MB of hashing a frame). Now the XDK functions the game places data with are hooked (codegen/names.toml:
+XMemCpyStreaming 0x8309B808, XMemCpy 0x8309B8B8, XMemDecompress 0x8309DAC0 / 0x8309DA98, found with
+tools/fuzzy_find.py against Dead Space 2's named tree at ratio 1.0), src/mp3_texture_writes.cpp marks the physical
+range each one wrote, and SDK patch 0306 rechecks the textures there at their next use. The periodic recheck stays as a
+safety net at its default. The report line "texturas por escritura" gives the changes found with and without a write
+before them: the second number says whether the hooks cover everything.
