@@ -1,0 +1,31 @@
+The sampled texture recheck and the per-frame budget take "stable" relative to x360_texturas_intervalo_max (min(8, cap)):
+with Max Payne 3's cap of 4 nothing reached 8, every recheck hashed whole textures (9-12 MB a frame instead of ~1).
+
+--- a/src/x360/deko/texturas.cpp
++++ b/src/x360/deko/texturas.cpp
+@@ -1000,11 +1000,14 @@
+       // sample would read more than half of their bytes.
+       const uint64_t bytes_completa = extension + extension_mips;
+       const uint64_t bytes_de_muestra = BytesMuestra(extension) + BytesMuestra(extension_mips);
+-      const bool con_muestra = muestreo_huellas_ > 0 && textura.con_contenido && textura.intervalo >= 4 &&
++      // "Stable" is relative to the longest interval (x360_texturas_intervalo_max): with 4, nothing reached 8 and every
++      // recheck hashed the whole texture (12 MB a frame in Max Payne 3).
++      const uint32_t estable = std::min<uint32_t>(8, uint32_t(std::clamp(REXCVAR_GET(x360_texturas_intervalo_max), 1, 32)));
++      const bool con_muestra = muestreo_huellas_ > 0 && textura.con_contenido && textura.intervalo >= std::max(estable / 2, 1u) &&
+                                !textura.nivel_vacio &&
+                                bytes_de_muestra * 2 <= bytes_completa &&
+                                (bases_sin_muestra_.empty() || !bases_sin_muestra_.count(uint32_t(base)));
+-      const bool muestra_util = con_muestra && textura.intervalo >= 8 && textura.muestra_valida;
++      const bool muestra_util = con_muestra && textura.intervalo >= estable && textura.muestra_valida;
+       const bool solo_muestra = muestra_util && muestras_comprobadas_ >= kMuestrasAComprobar &&
+                                 textura.muestras_seguidas + 1u < uint32_t(muestreo_huellas_);
+       const uint64_t bytes_huella = solo_muestra ? bytes_de_muestra : bytes_completa + (con_muestra ? bytes_de_muestra : 0);
+@@ -1015,7 +1018,7 @@
+         fotograma_huellas_ = fotograma_;
+         bytes_huella_fotograma_ = 0;
+       }
+-      if (presupuesto_huellas_ && textura.con_contenido && textura.intervalo >= 8 && !textura.nivel_vacio &&
++      if (presupuesto_huellas_ && textura.con_contenido && textura.intervalo >= estable && !textura.nivel_vacio &&
+           textura.aplazamientos < kAplazamientoMax && bytes_huella_fotograma_ > 0 &&
+           bytes_huella_fotograma_ + bytes_huella > presupuesto_huellas_) {
+         ++textura.aplazamientos;
