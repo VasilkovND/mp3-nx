@@ -249,7 +249,7 @@ REXCVAR_DEFINE_BOOL(mp3_volcado_con_dibujos, false, "MP3",
                     "miles de dibujos (un minuto en Max Payne 3). false = solo la estructura del fotograma");
 REXCVAR_DEFINE_INT32(mp3_traza_cada_s, 60, "MP3", "Segundos entre trazas de la estructura de un fotograma pesado");
 REXCVAR_DEFINE_INT32(mp3_trazas_max, 20, "MP3", "Trazas de fotograma como mucho");
-REXCVAR_DEFINE_BOOL(mp3_ver_texturas, true, "MP3",
+REXCVAR_DEFINE_BOOL(mp3_ver_texturas, false, "MP3",
                     "Diagnostico: ZL + ZR + derecha muestra en pantalla la siguiente textura de color resuelta del "
                     "fotograma anterior en vez del fotograma (y vuelve al fotograma tras la ultima), con una linea "
                     "[ver] en el log y una captura");
@@ -1240,7 +1240,7 @@ class RingGraphicsSystem final : public rex::system::IGraphicsSystem {
               }
               search_ps_ = REXCVAR_GET(mp3_busqueda_ps);
               REXLOG_INFO("[gpu] search: {} {} shaders:{}", search_vs_.size(),
-                          search_ps_ ? "base-pass pixel" : "depth-writing vertex", names);
+                          search_ps_ ? "HDR scene pixel" : "depth-writing vertex", names);
             }
             if (skip_mode_ >= kSkipModesFixed && skip_mode_ - kSkipModesFixed >= search_vs_.size()) {
               skip_mode_ = 0;
@@ -2053,11 +2053,14 @@ class RingGraphicsSystem final : public rex::system::IGraphicsSystem {
       return;
     }
     // The search modes' candidates: vertex shaders writing depth while drawing color and depth.
-    // (pixel search: the base pass, color into 2D0 format 3 with depth on)
+    // (pixel search: every pixel shader drawing into Max Payne 3's HDR scene, EDRAM 198 as 7e3, formats 3 and 12:
+    // the ambient and sun passes, the lamps, the fog, the transparents; one press leaves one of them out, to see which
+    // one burns the picture)
     if (REXCVAR_GET(mp3_busqueda_ps)) {
+      const uint32_t hdr_format = (Register(g::XE_GPU_REG_RB_COLOR_INFO) >> 16) & 0xF;
       if (ps_ && (Register(g::XE_GPU_REG_RB_MODECONTROL) & 0x7) == 4 &&
-          (Register(g::XE_GPU_REG_RB_COLOR_INFO) & 0xFFF) == 0x2D0 &&
-          ((Register(g::XE_GPU_REG_RB_COLOR_INFO) >> 16) & 0xF) == 3 && depth_vs_frame_.size() < 256) {
+          (Register(g::XE_GPU_REG_RB_COLOR_INFO) & 0xFFF) == 0x198 && (hdr_format == 3 || hdr_format == 12) &&
+          depth_vs_frame_.size() < 256) {
         // Weighted by vertices: the big meshes (the ground) are one or two draws each.
         depth_vs_frame_[ps_->numero] += std::max<uint32_t>(Register(g::XE_GPU_REG_VGT_DRAW_INITIATOR) >> 16, 1);
       }
