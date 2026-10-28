@@ -1,0 +1,184 @@
+Kernel object lookups (ObjectTable::LookupObject) take a reader lock of the table instead of the process-wide global critical region; the table's changes take it as the writer inside the global lock. Run 46 at stock: the main thread spent ~4 % of its time queued on the global lock (2.9 thousand contended locks a second).
+
+diff --git a/include/rex/system/util/object_table.h b/include/rex/system/util/object_table.h
+index df9bad4..3de5a1d 100644
+--- a/include/rex/system/util/object_table.h
++++ b/include/rex/system/util/object_table.h
+@@ -10,6 +10,7 @@
+  * @modified    Tom Clay, 2026 - Adapted for ReXGlue runtime
+  */
+ 
++#include <atomic>
+ #include <string>
+ #include <unordered_map>
+ #include <vector>
+@@ -96,6 +97,20 @@ class ObjectTable {
+   bool Resize(uint32_t new_capacity);
+ 
+   rex::thread::global_critical_region global_critical_region_;
++  // Run 46 at stock clocks: every wait on a handle looked its object up under the process-wide global critical region,
++  // and the game's main thread spent ~4 % of its time queued on it (2.9 thousand contended locks a second). A lookup
++  // now takes only this reader lock; the changes of the table (its memory, an entry's object) take it as the writer,
++  // inside the global lock as before, and never nested. >= 0: readers inside; -1: a writer.
++  std::atomic<int32_t> lectores_{0};
++  void EmpezarLectura();
++  void AcabarLectura() { lectores_.fetch_sub(1, std::memory_order_release); }
++  void EmpezarEscritura();
++  void AcabarEscritura() { lectores_.store(0, std::memory_order_release); }
++  struct Escritura {
++    ObjectTable* t;
++    explicit Escritura(ObjectTable* tabla) : t(tabla) { t->EmpezarEscritura(); }
++    ~Escritura() { t->AcabarEscritura(); }
++  };
+   std::mutex name_mutex_;
+   uint32_t table_capacity_ = 0;
+   ObjectTableEntry* table_ = nullptr;
+diff --git a/src/system/util/object_table.cpp b/src/system/util/object_table.cpp
+index 6fbabd2..53e2994 100644
+--- a/src/system/util/object_table.cpp
++++ b/src/system/util/object_table.cpp
+@@ -10,6 +10,7 @@
+  */
+ 
+ #include <algorithm>
++#include <chrono>
+ #include <cstring>
+ 
+ #include <rex/logging.h>
+@@ -17,6 +18,7 @@
+ #include <rex/system/util/object_table.h>
+ #include <rex/system/xobject.h>
+ #include <rex/system/xthread.h>
++#include <rex/thread.h>
+ 
+ namespace rex::system::util {
+ 
+@@ -26,6 +28,28 @@ ObjectTable::~ObjectTable() {
+   Reset();
+ }
+ 
++// The lock is held for a few instructions; a waiter spins, then sleeps 1 us at a time (on Horizon a yield does not
++// let a lower-priority holder on the same core run).
++void ObjectTable::EmpezarLectura() {
++  for (uint32_t vueltas = 0;; ++vueltas) {
++    int32_t v = lectores_.load(std::memory_order_relaxed);
++    if (v >= 0 && lectores_.compare_exchange_weak(v, v + 1, std::memory_order_acquire, std::memory_order_relaxed)) {
++      return;
++    }
++    if (vueltas > 64) rex::thread::Sleep(std::chrono::microseconds(1));
++  }
++}
++
++void ObjectTable::EmpezarEscritura() {
++  for (uint32_t vueltas = 0;; ++vueltas) {
++    int32_t cero = 0;
++    if (lectores_.compare_exchange_weak(cero, -1, std::memory_order_acquire, std::memory_order_relaxed)) {
++      return;
++    }
++    if (vueltas > 64) rex::thread::Sleep(std::chrono::microseconds(1));
++  }
++}
++
+ void ObjectTable::Reset() {
+   auto global_lock = global_critical_region_.Acquire();
+ 
+@@ -37,6 +61,7 @@ void ObjectTable::Reset() {
+     }
+   }
+ 
++  Escritura escritura(this);  // the releases above may run destructors: not under the writer lock
+   table_capacity_ = 0;
+   last_free_entry_ = 0;
+   free(table_);
+@@ -104,12 +129,18 @@ X_STATUS ObjectTable::AddHandle(XObject* object, X_HANDLE* out_handle) {
+ 
+     // Find a free slot.
+     uint32_t slot = 0;
+-    result = FindFreeSlot(&slot);
++    {
++      Escritura escritura(this);  // FindFreeSlot may move the table (Resize)
++      result = FindFreeSlot(&slot);
++    }
+ 
+     // Stash.
+     if (XSUCCEEDED(result)) {
+       ObjectTableEntry& entry = table_[slot];
+-      entry.object = object;
++      {
++        Escritura escritura(this);
++        entry.object = object;
++      }
+       entry.handle_ref_count = 1;
+       handle = XObject::kHandleBase + (slot << 2);
+       object->handles().push_back(handle);
+@@ -191,7 +222,11 @@ X_STATUS ObjectTable::RemoveHandle(X_HANDLE handle) {
+   auto global_lock = global_critical_region_.Acquire();
+   if (entry->object) {
+     auto object = entry->object;
+-    entry->object = nullptr;
++    {
++      // A lookup that took the object before this keeps its own reference; the table's goes below.
++      Escritura escritura(this);
++      entry->object = nullptr;
++    }
+     assert_zero(entry->handle_ref_count);
+     entry->handle_ref_count = 0;
+ 
+@@ -235,9 +270,12 @@ void ObjectTable::PurgeAllObjects() {
+     auto& entry = table_[slot];
+     if (entry.object && !entry.object->is_host_object()) {
+       entry.handle_ref_count = 0;
+-      entry.object->Release();
+-
+-      entry.object = nullptr;
++      XObject* object = entry.object;
++      {
++        Escritura escritura(this);
++        entry.object = nullptr;
++      }
++      object->Release();
+     }
+   }
+ }
+@@ -274,8 +312,10 @@ XObject* ObjectTable::LookupObject(X_HANDLE handle, bool already_locked) {
+   }
+ 
+   XObject* object = nullptr;
++  // Without the global lock: the reader lock keeps the table and the entry's object from changing until it is retained
++  // (with the global lock held, no change can run: they take it too).
+   if (!already_locked) {
+-    global_critical_region_.mutex().lock();
++    EmpezarLectura();
+   }
+ 
+   // Lower 2 bits are ignored.
+@@ -295,7 +335,7 @@ XObject* ObjectTable::LookupObject(X_HANDLE handle, bool already_locked) {
+   }
+ 
+   if (!already_locked) {
+-    global_critical_region_.mutex().unlock();
++    AcabarLectura();
+   }
+ 
+   return object;
+@@ -384,6 +424,8 @@ bool ObjectTable::Save(stream::ByteStream* stream) {
+ }
+ 
+ bool ObjectTable::Restore(stream::ByteStream* stream) {
++  auto global_lock = global_critical_region_.Acquire();
++  Escritura escritura(this);
+   Resize(stream->Read<uint32_t>());
+   for (uint32_t i = 0; i < table_capacity_; i++) {
+     auto& entry = table_[i];
+@@ -400,8 +442,10 @@ X_STATUS ObjectTable::RestoreHandle(X_HANDLE handle, XObject* object) {
+ 
+   if (table_capacity_ > slot) {
+     auto& entry = table_[slot];
+-    entry.object = object;
+     object->Retain();
++    auto global_lock = global_critical_region_.Acquire();
++    Escritura escritura(this);
++    entry.object = object;
+   }
+ 
+   return X_STATUS_SUCCESS;

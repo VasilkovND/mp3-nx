@@ -32,6 +32,12 @@ REXCVAR_DEFINE_BOOL(mp3_sin_particulas, false, "MP3",
                     "Parametro noptfx del juego: sin particulas (humo, chispas, sangre, cristales). Cambia en marcha");
 REXCVAR_DEFINE_BOOL(mp3_render_temporal, false, "MP3",
                     "Parametro temporalrender del juego (efecto por medir). Cambia en marcha");
+REXCVAR_DEFINE_BOOL(mp3_sin_tela, false, "MP3",
+                    "Parametros noclothupdate y noEnvCloth del juego: la tela (ropa, banderas, cortinas) no se simula y "
+                    "queda quieta; menos trabajo para los hilos de trabajos. Cambia en marcha");
+REXCVAR_DEFINE_BOOL(mp3_sin_caras, false, "MP3",
+                    "Parametros disableBlendshapes y noAnimExpressions del juego: sin formas de mezcla ni expresiones "
+                    "faciales (caras quietas en las escenas). Cambia en marcha");
 REXCVAR_DEFINE_DOUBLE(mp3_lod_peds, 1.0, "MP3",
                       "Escala de la distancia del modelo detallado de los personajes (ped.lod.distance.high y "
                       "pedincar.lod.distance.high). 1 = la del juego; menos = pasan antes al modelo sencillo")
@@ -43,6 +49,13 @@ constexpr uint32_t kQuitarMips = 0x8384FE38;
 constexpr uint32_t kAudioBarato = 0x8373CEA0;
 constexpr uint32_t kSinParticulas = 0x834A2210;
 constexpr uint32_t kRenderTemporal = 0x8352FF38;
+// Cloth: noclothupdate (sub_82FE0A90 and sub_82FE0B80 return at once) and noEnvCloth (sub_82BF0230); faces:
+// disableBlendshapes (sub_8251C098, sub_828DFB30, sub_828E1080) and noAnimExpressions (sub_825A64B0). All tested while
+// the game runs (run 46 at stock: the job threads ~80 % of a core).
+constexpr uint32_t kSinTela = 0x83881510;
+constexpr uint32_t kSinTelaEntorno = 0x8372E51C;
+constexpr uint32_t kSinFormas = 0x834BCD9C;
+constexpr uint32_t kSinExpresiones = 0x8350FF04;
 // "1" in the image: the value text a flag gets.
 constexpr uint32_t kTextoUno = 0x82002904;
 
@@ -108,6 +121,10 @@ void Mp3AplicarDetalle(uint8_t* base) {
   if (!base) return;
   Bandera(base, kSinParticulas, REXCVAR_GET(mp3_sin_particulas), "noptfx");
   Bandera(base, kRenderTemporal, REXCVAR_GET(mp3_render_temporal), "temporalrender");
+  Bandera(base, kSinTela, REXCVAR_GET(mp3_sin_tela), "noclothupdate");
+  Bandera(base, kSinTelaEntorno, REXCVAR_GET(mp3_sin_tela), "noEnvCloth");
+  Bandera(base, kSinFormas, REXCVAR_GET(mp3_sin_caras), "disableBlendshapes");
+  Bandera(base, kSinExpresiones, REXCVAR_GET(mp3_sin_caras), "noAnimExpressions");
   const double escala = REXCVAR_GET(mp3_lod_peds);
   for (Lod& l : g_lods) {
     const float actual = LeerF(base, l.direccion);
