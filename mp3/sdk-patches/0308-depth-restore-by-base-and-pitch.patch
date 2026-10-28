@@ -1,0 +1,48 @@
+SDK patch 0308 (Max Payne 3 port): the depth restore (EdramZPorColor) finds the last depth resolve of its EDRAM base
+and pitch, not of its base alone. Max Payne 3 resolves its lamps' shadow maps (pitch 320 and 160) from the scene
+depth's base after the scene depth; the restore then found the 128x128 shadow map, was skipped ("la resuelta tiene
+otro ancho"), and in those frames the lights, which test the stencil the restore writes, drew nothing: 2-3 dark
+frames every 10-20 in fights.
+
+--- a/include/rex/x360/deko/render.h
++++ b/include/rex/x360/deko/render.h
+@@ -490,8 +490,10 @@
+   uint64_t edram_borrados_ = 0, edram_estencil_pasadas_ = 0;
+   std::set<uint64_t> edram_avisos_;
+   uint32_t edram_diag_encuadres_ = 0;
+-  // The last depth resolve from each EDRAM base: the texture's address (CopiarProfundidad), for EdramZPorColor.
++  // The last depth resolve from each EDRAM base and pitch: the texture's address (CopiarProfundidad), for
++  // EdramZPorColor.
+   std::unordered_map<uint32_t, uint32_t> z_resuelta_por_base_;
++  static uint32_t ClaveZPorColor(uint32_t base, uint32_t pitch) { return (base & 0xFFF) | (pitch << 12); }
+   uint32_t edram_z_por_color_registrados_ = 0;
+   // x360_edram_diag_cada: one ordinary frame in that many logs its passes, the rows each view drew, every claim,
+   // transfer and resolve ("[edram-diag]"), with each view's identity (Vista). Not the dump frame: that one behaves
+--- a/src/x360/deko/destinos.cpp
++++ b/src/x360/deko/destinos.cpp
+@@ -2057,10 +2057,12 @@
+   if (!resuelta) {
+     return;
+   }
+-  // EdramZPorColor: the texture's own key (a band lands in an earlier texture at another address), whole ones only.
++  // EdramZPorColor: the texture's own key (a band lands in an earlier texture at another address), whole ones only,
++  // by base and pitch: Max Payne 3 resolves its lamps' shadow maps (pitch 320 and 160) from the scene depth's base
++  // after the scene depth itself, and the scene depth's restore then found the 128x128 shadow map, not 191E2000.
+   if (dy == 0 && y0 == 0) {
+     for (const auto& [b, r] : resueltas_) {
+-      if (&r == resuelta) z_resuelta_por_base_[info & 0xFFF] = b;
++      if (&r == resuelta) z_resuelta_por_base_[ClaveZPorColor(info & 0xFFF, pitch)] = b;
+     }
+   }
+   RectanguloEnPantalla(reg, x0, y0, x1, y1);
+--- a/src/x360/deko/edram.cpp
++++ b/src/x360/deko/edram.cpp
+@@ -806,7 +806,7 @@
+ 
+ bool RenderDk::EdramZPorColor(ImagenDk& z) {
+   if (!EdramActiva() || !REXCVAR_GET(x360_edram_z_por_color) || !z.edram_bpp) return false;
+-  const auto base = z_resuelta_por_base_.find(z.edram_base);
++  const auto base = z_resuelta_por_base_.find(ClaveZPorColor(z.edram_base, z.edram_pitch));
+   const auto it = base == z_resuelta_por_base_.end() ? resueltas_.end() : resueltas_.find(base->second);
+   const char* falta = base == z_resuelta_por_base_.end()  ? "ninguna resuelta de profundidad de esa base"
+                       : it == resueltas_.end()             ? "la resuelta ya no existe"
