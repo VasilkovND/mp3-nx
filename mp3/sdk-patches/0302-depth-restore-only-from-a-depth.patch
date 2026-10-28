@@ -1,0 +1,45 @@
+x360_edram_z_por_color_lee_z: an 8-bit color pass on the depth's EDRAM base is GTA IV's depth restore only when its pixel
+shader samples a depth (k_24_8 or a resolved depth). Max Payne 3 draws its cutscene and effect post-processing there
+from color textures: taken for a restore, those draws were dropped and the depth bits went into their texture (black
+cutscenes, green-yellow stripes over the frame).
+
+--- a/src/x360/deko/dibujos.cpp
++++ b/src/x360/deko/dibujos.cpp
+@@ -128,6 +128,10 @@
+                     "deko3d: la variante exacta de un vertex shader que no esta en la cache se compila en segundo "
+                     "plano; mientras, dibuja la que conserva todos los interpoladores. false = se compila en el acto")
+     .lifecycle(rex::cvar::Lifecycle::kInitOnly);
++REXCVAR_DEFINE_BOOL(x360_edram_z_por_color_lee_z, true, "X360",
++                    "Un pase de color de 8 bits sobre la base de la profundidad solo se toma por la restauracion de la "
++                    "profundidad de GTA IV (x360_edram_z_por_color) si su pixel shader lee una profundidad resuelta: Max "
++                    "Payne 3 dibuja ahi su posproceso de cinematicas desde texturas de color");
+ REXCVAR_DEFINE_STRING(x360_diag_ps, "", "X360",
+                       "Diagnostico: los dibujos con estos pixel shaders (huellas de contenedor en hex, separadas por "
+                       "comas) escriben en el log por donde salen de Dibujar y con que pase, encuadre y destino (40 "
+@@ -1752,8 +1756,25 @@
+     // target is taken from RB_DEPTH_INFO.
+     const uint32_t info_c0 = r[gr::XE_GPU_REG_RB_COLOR_INFO];
+     const uint32_t info_z = r[gr::XE_GPU_REG_RB_DEPTH_INFO];
++    // Only a pass whose pixel shader samples a resolved depth (x360_edram_z_por_color_lee_z): Max Payne 3 draws its
++    // cutscene and effect post-processing as 8-bit color on the depth's base too, from color textures; taken for a
++    // depth restore, its draws were not recorded and the depth's bits went into its texture (black cutscenes,
++    // green-yellow stripes over the frame).
++    auto lee_profundidad = [&]() {
++      if (!REXCVAR_GET(x360_edram_z_por_color_lee_z)) return true;
++      if (!ps) return false;
++      for (const SamplerShader& sampler : ps->samplers) {
++        if (sampler.registro >= 16) continue;
++        const uint32_t* fetch = r + kRegFetch + uint32_t(sampler.registro) * 6;
++        const uint32_t formato = fetch[1] & 0x3F;
++        if (formato == 22 || formato == 23) return true;  // k_24_8, k_24_8_FLOAT
++        if (const ImagenDk* t = TexturaResuelta((fetch[1] & ~0xFFFu) & 0x1FFFFFFF); t && t->profundidad) return true;
++      }
++      return false;
++    };
+     if (claves[0] && (r[gr::XE_GPU_REG_RB_COLOR_MASK] & 0xF) && ((info_c0 >> 16) & 0xF) == 0 &&
+-        (info_c0 & 0xFFF) == (info_z & 0xFFF) && !((r[gr::XE_GPU_REG_RB_SURFACE_INFO] >> 16) & 0x3)) {
++        (info_c0 & 0xFFF) == (info_z & 0xFFF) && !((r[gr::XE_GPU_REG_RB_SURFACE_INFO] >> 16) & 0x3) &&
++        lee_profundidad()) {
+       if (ImagenDk* z = DestinoProfundidad(info_z & 0xFFF, (info_z >> 16) & 0x1, pitch, 0)) {
+         z_por_color_pase_ = EdramZPorColor(*z);
+       }
