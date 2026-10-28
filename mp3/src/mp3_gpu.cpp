@@ -144,10 +144,11 @@ REXCVAR_DEFINE_INT32(mp3_auto_captura_s, 15, "MP3",
 REXCVAR_DEFINE_BOOL(mp3_rampa_juego, true, "MP3",
                     "La rampa de gamma que el juego programa para la salida de video (registros DC_LUT): la imagen se "
                     "muestra a traves de ella, como en la consola. false = rampa identidad, como antes");
-REXCVAR_DEFINE_INT32(mp3_grabacion, 90, "MP3",
+REXCVAR_DEFINE_INT32(mp3_grabacion, 0, "MP3",
                      "Grabadora de los ultimos fotogramas presentados (un hilo aparte los copia a mitad de tamano, sin "
                      "parar el anillo): con ZL + ZR + Down se guardan los N ultimos en capturas/grabacion_NNN_KKK.bmp. "
-                     "Un parpadeo de un solo fotograma se ve despues de haberlo visto. 0 = apagada");
+                     "Un parpadeo de un solo fotograma se ve despues de haberlo visto. 0 = apagada (cuesta una copia y "
+                     "una espera de la GPU por fotograma; 90 para diagnosticar)");
 REXCVAR_DEFINE_INT32(mp3_auto_volcado_primero_s, 120, "MP3",
                      "Segundo de juego del primer volcado automatico de las texturas resueltas de un fotograma");
 REXCVAR_DEFINE_INT32(mp3_auto_volcado_cada_s, 300, "MP3", "Segundos entre volcados automaticos; 0 = solo el primero");
