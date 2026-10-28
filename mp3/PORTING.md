@@ -438,3 +438,13 @@ the recordings are other camera angles (the game's own flash cuts: 1, 4, 5). The
 (FlashCheck). For the first three dark frames it logs every frame's mean and traces the structure of the next 30
 frames ("[frame] end ... (Swap N)" against "[flash] Swap N: mean M"), and it writes the recording 40 frames later
 without a button. The dark ones can then be compared with the frames around them.
+
+## Run 46 (00752c9): the dark frames are frames that redraw a lamp's shadow map
+
+The dark-frame trap traced 30 frames. The dark ones (Swap 2869-2870, 2850-2853) are exactly those where the game
+redraws a lamp's shadow map after the G-buffer: depth passes at pitch 320 and 160 on the scene depth's EDRAM base,
+resolved to 0808A000 and 081BA000. The game then restores the scene depth with a color pass on its base
+(EdramZPorColor), which looked for the last depth resolve of base 000. That was the 128x128 shadow map, so the restore
+was skipped (log: "profundidad 000 (960) por color: no se restaura, la resuelta tiene otro ancho"). The lights test
+the stencil that restore writes (0xFF on geometry), so they drew nothing and only particles and the HUD were left.
+SDK patch 0308 keys the resolve by base and pitch. The first two trap windows were loading screens (false alarms).
