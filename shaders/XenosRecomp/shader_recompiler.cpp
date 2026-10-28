@@ -339,6 +339,35 @@ void ShaderRecompiler::recompile(const VertexFetchInstruction& instr, uint32_t a
 
 void ShaderRecompiler::recompile(const TextureFetchInstruction& instr, bool bicubic)
 {
+    // getGradients: the derivatives of the source coordinates (no texture is read). It was left out: Max Payne 3's
+    // lamp shadow casters (ps_50f32f31f1688e2e) scale it by -3.9 for their depth bias, read the stale register (the
+    // depth itself) instead and wrote -10 to -27 for 0..1, so the lamps lit inside the peds' shadows and not around.
+    // Pixel shaders only: a vertex shader has no derivatives (0, as no fetch was written before).
+    if (instr.opcode == FetchOpcode::GetTextureGradients)
+    {
+        if (!isPixelShader)
+            return;
+        if (instr.isPredicated)
+            abrirPredicado(instr.predCondition);
+        else
+            cerrarPredicado();
+        const size_t marcaGradientes = out.size();
+        indent();
+        print("r{}.", instr.dstRegister);
+        printDstSwizzle(instr.dstSwizzle, false);
+        out += " = getGradients(";
+        if (instr.dimension == TextureDimension::Texture1D)
+            print("float2(r{}.{}, 0.0)", instr.srcRegister, SWIZZLES[instr.srcSwizzle & 0x3]);
+        else
+            print("r{}.{}{}", instr.srcRegister, SWIZZLES[instr.srcSwizzle & 0x3], SWIZZLES[(instr.srcSwizzle >> 2) & 0x3]);
+        out += ").";
+        printDstSwizzle(instr.dstSwizzle, true);
+        out += ";\n";
+        printDstSwizzle01(instr.dstRegister, instr.dstSwizzle);
+        cerrarSiEscribePredicado(marcaGradientes);
+        return;
+    }
+
     if (instr.opcode != FetchOpcode::TextureFetch && instr.opcode != FetchOpcode::GetTextureWeights)
         return;
 
