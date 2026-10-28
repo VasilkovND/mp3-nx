@@ -429,3 +429,12 @@ rooftop) made the renderer bind only the targets it had, packed: c2 at slot 1, c
 oCi to slot i, so c3 got oC2 (the decal's specular terms) and c2 got oC1 (normals). SDK patch 0307 binds each target at
 its own slot and fills a gap with another bound target's view under a write mask of 0. libdeko3d's
 dkCmdBufBindRenderTargets reads every entry (objdump: no null check), so an empty slot cannot be passed.
+
+## Run 45 (fdcf473): green gone; the flicker is 2-3 dark frames every 10-20
+
+Recording 2 (a fight, Max on the ground) has, every 10 to 20 frames, 2 or 3 frames where the scene is dark navy: no
+lighting, only particles, blood, the HUD and Max's black silhouette, then the normal frame again. The other jumps in
+the recordings are other camera angles (the game's own flash cuts: 1, 4, 5). The recorder now checks each frame's mean
+(FlashCheck). For the first three dark frames it logs every frame's mean and traces the structure of the next 30
+frames ("[frame] end ... (Swap N)" against "[flash] Swap N: mean M"), and it writes the recording 40 frames later
+without a button. The dark ones can then be compared with the frames around them.
