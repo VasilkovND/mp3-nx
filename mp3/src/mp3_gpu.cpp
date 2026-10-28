@@ -141,6 +141,10 @@ std::atomic<bool> g_mp3_query_waited{false};
 
 REXCVAR_DEFINE_INT32(mp3_auto_captura_s, 15, "MP3",
                      "Cada cuantos segundos se guarda una captura reducida (640x360) en capturas/auto_NNNN.bmp; 0 = nunca");
+REXCVAR_DEFINE_BOOL(mp3_borrar_color_de_alias, true, "MP3",
+                    "Un borrado de Direct3D con c1-c3 sobre otra base (que se borran por la ruta de la profundidad) borra "
+                    "tambien el color de esas bases, como en la consola (son los mismos bytes de EDRAM): el G-buffer de "
+                    "Max Payne 3 recibia la escena HDR y el bloom por transferencias (1,5 ms de GPU)");
 REXCVAR_DEFINE_BOOL(mp3_rampa_juego, true, "MP3",
                     "La rampa de gamma que el juego programa para la salida de video (registros DC_LUT): la imagen se "
                     "muestra a traves de ella, como en la consola. false = rampa identidad, como antes");
@@ -1886,7 +1890,9 @@ class RingGraphicsSystem final : public rex::system::IGraphicsSystem {
     if ((c.rb_copy_control & 0x7) > 3 || ((c.rb_copy_control >> 20) & 0x3) == 3) return;  // depth, clear only
     const uint32_t base = c.rb_copy_dest_base & 0x1FFFF000u;
     const uint32_t width = c.rb_copy_dest_pitch & 0x3FFF, height = (c.rb_copy_dest_pitch >> 16) & 0x3FFF;
-    if (width < 160 || height < 90) return;
+    // Screen-sized ones only (G-buffer, HDR scene, tonemap, FXAA, the cutscenes' film passes, the front buffer): about
+    // ten presses through a frame instead of fifty.
+    if (width < 480 || height < 270) return;
     for (const auto& r : resolves_frame_) {
       if (r.base == base) return;
     }
@@ -2595,6 +2601,7 @@ class RingGraphicsSystem final : public rex::system::IGraphicsSystem {
       if (REXCVAR_GET(mp3_z_borrado_del_juego) && game_vertices && game_z >= 0.0f && game_z <= 1.0f) {
         depth_value = (D24(game_z) << 8) | stencil;
       }
+      last_depth_value_ = depth_value;
       rex::x360::RegistrosCopia c = base;
       c.rb_depth_info = (depth_info & ~uint32_t(0xFFF)) | (edram_base & 0xFFF);
       c.rb_copy_control = 4u | (1u << 9) | kNullCommand | (only_stencil ? 1u << 30 : 0u);
@@ -2653,6 +2660,18 @@ class RingGraphicsSystem final : public rex::system::IGraphicsSystem {
       if (std::find(aliased_depth, aliased_depth + n_aliased, b) != aliased_depth + n_aliased) continue;
       aliased_depth[n_aliased++] = b;
       clear_depth_at(b, what);
+      // The same EDRAM bytes are target i's color: cleared to those bits too (mp3_borrar_color_de_alias). Max Payne 3
+      // clears its G-buffer's c1-c3 (1B0, 288, 360) this way; with only the depth view cleared, the color views took
+      // the HDR scene's and the bloom's tiles at the next G-buffer pass (EDRAM transfers reinterpreting 16F as 8888,
+      // about 1.5 ms of GPU a frame), and the sky kept them.
+      if (REXCVAR_GET(mp3_borrar_color_de_alias) && !msaa && last_depth_value_ != UINT32_MAX) {
+        rex::x360::RegistrosCopia c = base;
+        c.rb_copy_control = i | (1u << 8) | kNullCommand | (1u << 31);
+        c.rb_color_clear = last_depth_value_;
+        c.rb_color_clear_lo = last_depth_value_;
+        destinos_->Copiar(c);
+        what += fmt::format(" c{}={:03X}={:08X} (alias)", i, b, last_depth_value_);
+      }
     }
     const uint32_t z_base = depth_info & 0xFFF;
     const bool z_written = depth_only || (depth_control & 0x4) || (depth_control & 0x1);
@@ -3533,6 +3552,7 @@ class RingGraphicsSystem final : public rex::system::IGraphicsSystem {
   std::vector<RecordedFrame> recorder_ring_;
   size_t recorder_next_ = 0;
   uint32_t recordings_ = 0;
+  uint32_t last_depth_value_ = UINT32_MAX;  // EmulateClear: the bits clear_depth_at last wrote
   // GammaRampWrite (any thread) and ApplyGammaRamp (the ring thread)
   std::mutex gamma_mutex_;
   std::array<std::array<uint16_t, 3>, 256> gamma_table_{};
