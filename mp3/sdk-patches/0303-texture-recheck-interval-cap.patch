@@ -1,0 +1,28 @@
+x360_texturas_intervalo_max: the longest interval between two rechecks of a stable texture (was a fixed 32 frames).
+Max Payne 3 streams other textures into the same memory: Max wore an enemy's black jacket for seconds, scene textures
+went missing and flickered.
+
+--- a/src/x360/deko/texturas.cpp
++++ b/src/x360/deko/texturas.cpp
+@@ -58,6 +58,9 @@
+                      "pueden leer en un fotograma; las que no caben esperan 1-2 fotogramas (8 veces seguidas como "
+                      "mucho). Reparte las comprobaciones que coincidian en el mismo fotograma. 0 = sin limite");
+ 
++REXCVAR_DEFINE_INT32(x360_texturas_intervalo_max, 32, "X360",
++                     "Fotogramas como mucho entre dos recomprobaciones de una textura estable (1 a 32): un juego que "
++                     "carga otra textura en la misma memoria la ve como mucho este tiempo con el contenido viejo");
+ REXCVAR_DECLARE(bool, x360_resolve_16_fijo);  // destinos.cpp
+ 
+ namespace rex::x360 {
+@@ -974,7 +977,10 @@
+     if (dir_base + extension <= kMemoriaFisica) {
+       // At the maximum interval, from 32 to 39 depending on the texture, so they do not coincide.
+       auto sin_cambios = [&] {
+-        textura.intervalo = textura.nivel_vacio ? 1 : std::min<uint32_t>(textura.intervalo * 2, 32);
++        // x360_texturas_intervalo_max: Max Payne 3 streams other textures into the same memory (a ped's diffuse
++        // swapped for another's): at 32 frames Max wore an enemy's black jacket for seconds.
++        const uint32_t tope = uint32_t(std::clamp(REXCVAR_GET(x360_texturas_intervalo_max), 1, 32));
++        textura.intervalo = textura.nivel_vacio ? 1 : std::min<uint32_t>(textura.intervalo * 2, tope);
+         textura.siguiente = fotograma_ + textura.intervalo + (textura.intervalo == 32 ? (clave >> 7) & 7 : 0);
+         return listo();
+       };

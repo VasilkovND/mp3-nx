@@ -11,3 +11,7 @@ mp3_trazas_max = 0
 mp3_perfil_pilas = false
 # The FPS counter at start (ZL + ZR + Up toggles it).
 mp3_fps_al_arrancar = true
+
+# Max Payne 3 streams other textures into the same memory: stable textures rechecked at least every 4 frames (SDK patch
+# 0303; the default 32 left Max in an enemy's jacket for seconds).
+x360_texturas_intervalo_max = 4
