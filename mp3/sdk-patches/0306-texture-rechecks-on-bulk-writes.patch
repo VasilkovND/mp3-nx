@@ -1,0 +1,186 @@
+x360_texturas_por_escritura: a game's bulk writes to physical memory (escrituras.h, marked by the port's hooks of
+XMemCpy, XMemCpyStreaming and XMemDecompress) make the texture cache recheck the textures there at their next use,
+instead of on a timer; the draws' per-fetch cache holds for one frame. The report says how many content changes were
+found with and without a write before them (the hooks' coverage).
+
+--- /dev/null
++++ b/include/rex/x360/escrituras.h
+@@ -0,0 +1,53 @@
++#pragma once
++
++// Guest physical memory the CPU wrote in bulk (a game's XMemCpy / XMemCpyStreaming / XMemDecompress, hooked by the
++// game's port): 64 KB pages stamped with a counter. The texture cache (texturas.cpp) rechecks a texture as soon as its
++// bytes were written, instead of waiting for its periodic recheck: Max Payne 3 streams textures into memory another
++// texture used, and with only the periodic check the old one was shown for up to 39 frames.
++
++#include <array>
++#include <algorithm>
++#include <atomic>
++#include <cstdint>
++
++namespace rex::x360 {
++
++inline constexpr uint32_t kEscrituraPaginaLog2 = 16;
++inline constexpr uint32_t kEscrituraPaginas = 0x20000000u >> kEscrituraPaginaLog2;
++
++// The stamp of the last bulk write to each page (0: never), and the counter the stamps come from.
++inline std::array<std::atomic<uint32_t>, kEscrituraPaginas> g_escritura_paginas{};
++inline std::atomic<uint32_t> g_escritura_contador{1};
++inline std::atomic<uint64_t> g_escritura_bytes{0};  // marked so far (the renderer reports it)
++
++// A bulk write of `bytes` at guest physical address `fisica` (any thread).
++inline void MarcarEscritura(uint32_t fisica, uint32_t bytes) {
++  if (!bytes) return;
++  fisica &= 0x1FFFFFFFu;
++  const uint32_t marca = g_escritura_contador.fetch_add(1, std::memory_order_relaxed) + 1;
++  const uint64_t fin = uint64_t(fisica) + bytes - 1;
++  const uint32_t primera = fisica >> kEscrituraPaginaLog2;
++  const uint32_t ultima = uint32_t(std::min<uint64_t>(fin, 0x1FFFFFFFu) >> kEscrituraPaginaLog2);
++  for (uint32_t p = primera; p <= ultima; ++p) {
++    g_escritura_paginas[p].store(marca, std::memory_order_release);
++  }
++  g_escritura_bytes.fetch_add(bytes, std::memory_order_relaxed);
++}
++
++// The counter now: a check that reads the bytes after taking it sees every write stamped up to it.
++inline uint32_t MarcaEscrituraActual() { return g_escritura_contador.load(std::memory_order_acquire); }
++
++// Whether [fisica, fisica + bytes) was written after `desde` (a MarcaEscrituraActual taken before reading it).
++inline bool EscritoDesde(uint32_t fisica, uint32_t bytes, uint32_t desde) {
++  if (!bytes) return false;
++  fisica &= 0x1FFFFFFFu;
++  const uint64_t fin = uint64_t(fisica) + bytes - 1;
++  const uint32_t primera = fisica >> kEscrituraPaginaLog2;
++  const uint32_t ultima = uint32_t(std::min<uint64_t>(fin, 0x1FFFFFFFu) >> kEscrituraPaginaLog2);
++  for (uint32_t p = primera; p <= ultima; ++p) {
++    if (g_escritura_paginas[p].load(std::memory_order_acquire) >= desde) return true;
++  }
++  return false;
++}
++
++}  // namespace rex::x360
+--- a/include/rex/x360/deko/render.h
++++ b/include/rex/x360/deko/render.h
+@@ -156,6 +156,10 @@
+   bool nivel_vacio = false;
+   uint64_t bytes = 0;
+   std::array<uint64_t, 6> caras_version{};  // a cubemap of resolved faces: the version of each face it holds
++  // x360_texturas_por_escritura (escrituras.h): the guest ranges its last check read and the write stamp taken before
++  // reading them; a bulk write there since makes the next use check it again at once.
++  uint32_t escritura_marca = 0;
++  uint32_t escritura_base = 0, escritura_bytes = 0, escritura_mips = 0, escritura_mips_bytes = 0;
+ };
+ 
+ // The vertex input of a vertex shader with the fetches D3D patched into it (the Vulkan backend's EntradaVertices,
+@@ -284,6 +288,10 @@
+   ImagenDk* EdramVistaReducible(const ImagenDk& vista, uint32_t filas);
+   bool rop_sin_barrera_ = true;
+   uint32_t diag_swaps_ = 0;  // x360_diag_swaps
++  // x360_texturas_por_escritura: rechecks a bulk write caused, and content changes found with and without one.
++  uint64_t texturas_por_escritura_ = 0, cambios_con_escritura_ = 0, cambios_sin_escritura_ = 0;
++  uint64_t informe_texturas_por_escritura_ = 0, informe_cambios_con_escritura_ = 0, informe_cambios_sin_escritura_ = 0;
++  uint64_t informe_escritura_bytes_ = 0;
+   bool copia3d_pendiente_ = false;
+   // The 3D copies since the last barrier: the images they wrote and read (series). Another copy needs a barrier only
+   // when it reads what one of them wrote or writes what one of them reads: GTA IV resolves its G-buffer five times in a
+--- a/src/x360/deko/texturas.cpp
++++ b/src/x360/deko/texturas.cpp
+@@ -20,6 +20,7 @@
+ #include <cstring>
+ 
+ #include <rex/x360/deko/render.h>
++#include <rex/x360/escrituras.h>
+ #include <rex/x360/xenos.h>
+ 
+ REXCVAR_DEFINE_BOOL(nfsmw_dk_16_16_fijo, false, "NFSMW",
+@@ -61,6 +62,10 @@
+ REXCVAR_DEFINE_INT32(x360_texturas_intervalo_max, 32, "X360",
+                      "Fotogramas como mucho entre dos recomprobaciones de una textura estable (1 a 32): un juego que "
+                      "carga otra textura en la misma memoria la ve como mucho este tiempo con el contenido viejo");
++REXCVAR_DEFINE_BOOL(x360_texturas_por_escritura, true, "X360",
++                    "Una textura cuya memoria el juego escribio en bloque (XMemCpy, XMemDecompress; el port los "
++                    "engancha) se recomprueba en su siguiente uso, no al cumplirse su intervalo; la cache por fetch de "
++                    "los dibujos solo vale un fotograma");
+ REXCVAR_DECLARE(bool, x360_resolve_16_fijo);  // destinos.cpp
+ 
+ namespace rex::x360 {
+@@ -947,8 +952,9 @@
+   }
+   const uint32_t ranura = VistaDe(textura.imagen, swizzle, tf.swizzle_host, formato_vista);
+   // Until its next check nothing about it changes: the draws' per-fetch cache keeps the answer that long.
++  const bool por_escritura = REXCVAR_GET(x360_texturas_por_escritura);
+   auto listo = [&]() {
+-    valido_hasta = textura.siguiente > fotograma_ ? textura.siguiente - 1 : fotograma_;
++    valido_hasta = por_escritura ? fotograma_ : textura.siguiente > fotograma_ ? textura.siguiente - 1 : fotograma_;
+     return ranura;
+   };
+   ancho_out = textura.imagen.ancho;
+@@ -956,7 +962,15 @@
+   if (textura.fotograma == fotograma_) {
+     return listo();  // already checked this frame
+   }
+-  if (textura.con_contenido && fotograma_ < textura.siguiente) {
++  // Its bytes written in bulk since its last check (escrituras.h): checked now, whatever its interval.
++  bool escrita = false;
++  if (por_escritura && textura.con_contenido && textura.escritura_marca &&
++      (EscritoDesde(textura.escritura_base, textura.escritura_bytes, textura.escritura_marca) ||
++       EscritoDesde(textura.escritura_mips, textura.escritura_mips_bytes, textura.escritura_marca))) {
++    escrita = true;
++    ++texturas_por_escritura_;
++  }
++  if (textura.con_contenido && fotograma_ < textura.siguiente && !escrita) {
+     return listo();
+   }
+   textura.fotograma = fotograma_;
+@@ -1029,6 +1043,11 @@
+       textura.aplazamientos = 0;
+       bytes_huella_fotograma_ += bytes_huella;
+       bytes_huella_ += bytes_huella;
++      textura.escritura_marca = MarcaEscrituraActual();  // before reading: a write from here on is seen
++      textura.escritura_base = uint32_t(dir_base);
++      textura.escritura_bytes = uint32_t(extension);
++      textura.escritura_mips = uint32_t(dir_mips);
++      textura.escritura_mips_bytes = uint32_t(extension_mips);
+       const uint8_t* const crudo_base = memoria_->TranslatePhysical(uint32_t(dir_base));
+       const uint8_t* const crudo_mips = extension_mips ? memoria_->TranslatePhysical(uint32_t(dir_mips)) : nullptr;
+       uint64_t muestra = 0;
+@@ -1091,6 +1110,9 @@
+       }
+       textura.muestra_valida = false;  // new content: its sample is taken at the next whole check
+       textura.muestras_seguidas = 0;
++      if (textura.con_contenido) {
++        ++(escrita ? cambios_con_escritura_ : cambios_sin_escritura_);
++      }
+       textura.huella_cruda = huella;
+     }
+   }
+--- a/src/x360/deko/destinos.cpp
++++ b/src/x360/deko/destinos.cpp
+@@ -2,6 +2,7 @@
+ // the game's gamma ramp, the DKSH cache file and the statistics. See nfsmw_dk_render.h.
+ 
+ #include <rex/x360/deko/destinos.h>
++#include <rex/x360/escrituras.h>
+ 
+ #include <map>
+ #include <cstdlib>
+@@ -3058,6 +3059,19 @@
+       double(huellas_aplazadas_ - informe_huellas_aplazadas_) / fotogramas,
+       muestreo_huellas_ > 0 ? "activo" : muestreo_huellas_ == 0 ? "APAGADO" : "sin empezar", muestras_comprobadas_,
+       muestras_distintas_, dibujos ? 100.0 * double(texturas_reusadas_ - informe_texturas_reusadas_) / double(dibujos) : 0.0);
++  {
++    const uint64_t escritos = g_escritura_bytes.load(std::memory_order_relaxed);
++    X360_INFORME("[deko3d] texturas por escritura: {:.2f} MB escritos en bloque por fotograma, {:.1f} recomprobaciones "
++                 "por escritura; cambios hallados {:.2f} con escritura y {:.2f} SIN ella por fotograma",
++                 double(escritos - informe_escritura_bytes_) / 1048576.0 / fotogramas,
++                 double(texturas_por_escritura_ - informe_texturas_por_escritura_) / fotogramas,
++                 double(cambios_con_escritura_ - informe_cambios_con_escritura_) / fotogramas,
++                 double(cambios_sin_escritura_ - informe_cambios_sin_escritura_) / fotogramas);
++    informe_escritura_bytes_ = escritos;
++    informe_texturas_por_escritura_ = texturas_por_escritura_;
++    informe_cambios_con_escritura_ = cambios_con_escritura_;
++    informe_cambios_sin_escritura_ = cambios_sin_escritura_;
++  }
+   if (geometria_.activo()) {
+     const deko::AlmacenGeometria::Estadisticas& g = geometria_.estadisticas();
+     const deko::AlmacenGeometria::Estadisticas& a = informe_geometria_;

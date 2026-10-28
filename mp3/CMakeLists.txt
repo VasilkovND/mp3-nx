@@ -105,3 +105,6 @@ if(REXGLUE_PLATFORM_SWITCH)
         AUTHOR "VasilkovND"
         VERSION "${MP3_VERSION}")
 endif()
+
+# The game's bulk writes to GPU-visible memory reported to the texture cache (XMemCpy*, XMemDecompress; codegen/names.toml).
+target_sources(mp3 PRIVATE src/mp3_texture_writes.cpp)

@@ -114,3 +114,18 @@ name = "mp3_AudioLimiterMp3"
 # series flag +277), ~2-3 %: mp3_dsp_biquad_mp3.
 [functions."0x82C735E0"]
 name = "mp3_AudioBiquadMp3"
+
+# The XDK's copy and decompression functions (tools/fuzzy_find.py against Dead Space 2's named tree, ratio 1.0 each):
+# the game puts streamed texture data in place with them. src/mp3_texture_writes.cpp marks the physical range each
+# one wrote, so the texture cache rechecks those textures at once (x360_texturas_por_escritura).
+[functions."0x8309B808"]
+name = "mp3_XMemCpyStreaming"
+
+[functions."0x8309B8B8"]
+name = "mp3_XMemCpy"
+
+[functions."0x8309DAC0"]
+name = "mp3_XMemDecompress"
+
+[functions."0x8309DA98"]
+name = "mp3_XMemDecompressStream"
