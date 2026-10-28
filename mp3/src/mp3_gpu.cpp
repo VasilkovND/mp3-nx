@@ -226,7 +226,7 @@ REXCVAR_DEFINE_BOOL(mp3_velocidad_sin_z, false, "MP3",
                     "la profundidad reducida (5A0, 640x360)");
 REXCVAR_DEFINE_BOOL(mp3_velocidad_prueba, false, "MP3",
                     "ZL+ZR+Right cambia mp3_velocidad_sin_z con una captura, en vez de los modos de busqueda");
-REXCVAR_DEFINE_BOOL(mp3_sesgo_prueba, true, "MP3",
+REXCVAR_DEFINE_BOOL(mp3_sesgo_prueba, false, "MP3",
                     "ZL+ZR+Right cambia mp3_sesgo_7e3 con una captura, en vez de los modos de busqueda y de mp3_ver_texturas");
 // Run 53: with the color exp bias applied to the lights' k_2_10_10_10_FLOAT_AS_16_16_16_16 target (x4) the frame burned
 // under every lamp while rooms without lamps looked right; without it the menu looks as on the console. Without it on
@@ -3051,8 +3051,37 @@ class RingGraphicsSystem final : public rex::system::IGraphicsSystem {
            huella == UINT64_C(0xFE226603F40E2533);
   }
 
+  // The lamps' shadows, every 10 s (a wall lit inside a ped's silhouette and dark around it, run 55): the shadow map
+  // fill (ps_71a67230a40a5d84), the casters (ps_50f32f31f1688e2e) and the spot light (ps_db621d1604a4228f), with
+  // gShadowParam0123 (PS c54) and gShadowMatrix (c57-c60 of the PS, and of the VS for the casters).
+  void LogShadowConstants() {
+    static constexpr uint64_t kFill = UINT64_C(0x71A67230A40A5D84), kCaster = UINT64_C(0x50F32F31F1688E2E),
+                              kSpot = UINT64_C(0xDB621D1604A4228F);
+    const uint64_t h = ps_->huella_contenedor;
+    const int kind = h == kFill ? 0 : h == kCaster ? 1 : h == kSpot ? 2 : -1;
+    if (kind < 0) return;
+    const auto now = Clock::now();
+    if (now < next_shadow_log_[kind]) return;
+    next_shadow_log_[kind] = now + std::chrono::seconds(10);
+    auto c = [&](uint32_t bank, uint32_t n) {
+      const uint32_t r = 0x4000 + (bank + n) * 4;
+      return fmt::format("({:g} {:g} {:g} {:g})", std::bit_cast<float>(registers_[r]),
+                         std::bit_cast<float>(registers_[r + 1]), std::bit_cast<float>(registers_[r + 2]),
+                         std::bit_cast<float>(registers_[r + 3]));
+    };
+    static constexpr const char* kNames[3] = {"fill", "caster", "spot light"};
+    REXLOG_INFO("[sombras] {} vs n{}: RB_COLOR_INFO {:08X} mask {:04X} depthctl {:08X} clip {:08X} | PS c54 {} c57 {} "
+                "c58 {} c59 {} c60 {} | VS c57 {} c58 {} c59 {} c60 {}",
+                kNames[kind], vs_ ? int(vs_->numero) : -1, registers_[rex::graphics::XE_GPU_REG_RB_COLOR_INFO],
+                registers_[rex::graphics::XE_GPU_REG_RB_COLOR_MASK], registers_[rex::graphics::XE_GPU_REG_RB_DEPTHCONTROL],
+                registers_[rex::graphics::XE_GPU_REG_PA_CL_CLIP_CNTL], c(256, 54), c(256, 57), c(256, 58), c(256, 59),
+                c(256, 60), c(0, 57), c(0, 58), c(0, 59), c(0, 60));
+  }
+  std::array<Clock::time_point, 3> next_shadow_log_{};
+
   void LogExposureConstants() {
     static constexpr uint64_t kAdaptation = UINT64_C(0x7067B48D822DF127);
+    LogShadowConstants();
     const bool tonemap = IsTonemap(ps_->huella_contenedor);
     if (!tonemap && ps_->huella_contenedor != kAdaptation) return;
     Clock::time_point& next = tonemap ? next_tonemap_log_ : next_adaptation_log_;
