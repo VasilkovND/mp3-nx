@@ -419,3 +419,13 @@ whole-screen flicker cannot be seen in one-frame dumps, and it lasts one frame: 
 mp3_grabacion (90) keeps the last frames presented: a thread of its own copies each new guest output at half size into
 a ring. ZL + ZR + Down writes them as capturas/grabacion_NNN_KKK.bmp, and the log line gives the Swap count of each, so
 the flicker can be looked for after it was seen.
+
+## Run 44 (7b655dc): the green on floors is the decals' oC2 in the wrong target
+
+G-buffer target 3 (0850A000, the lights' gDeferredLightSampler0P) is green in every dump since run 41: red 0, blue a
+fixed 0.39 of green within a frame. That is not a color the dynamic environment map (05976000: dark, neutral) can give.
+The decals that write c0, c2 and c3 with c1's mask 0 (ps_232fdc717e5e401f, library n528, 126 draws a frame on the
+rooftop) made the renderer bind only the targets it had, packed: c2 at slot 1, c3 at slot 2. The pixel shader writes
+oCi to slot i, so c3 got oC2 (the decal's specular terms) and c2 got oC1 (normals). SDK patch 0307 binds each target at
+its own slot and fills a gap with another bound target's view under a write mask of 0. libdeko3d's
+dkCmdBufBindRenderTargets reads every entry (objdump: no null check), so an empty slot cannot be passed.

@@ -1,0 +1,110 @@
+SDK patch 0307 (Max Payne 3 port): each color target is bound at its own slot. A pass that leaves a slot out
+(c0, c2, c3 with c1's mask 0: Max Payne 3's decals) packed the others together, so c3 got the pixel shader's oC2 and
+c2 its oC1: green light on floors and wrong normals. The gap gets another bound target's view with a write mask of 0
+(deko3d reads every slot it is given).
+
+--- a/src/x360/deko/dibujos.cpp
++++ b/src/x360/deko/dibujos.cpp
+@@ -851,18 +851,27 @@
+   AntesDe3D();
+   // Creating a target records its first clear and forgets the emitted state: the binding comes after.
+   uint32_t ancho = UINT32_MAX, alto = UINT32_MAX;
++  // Each target at its own slot: the pixel shader writes oCi to slot i. A slot the pass leaves out (Max Payne 3's
++  // decals write c0, c2 and c3 with c1's mask 0) gets another bound target's view with a write mask of 0 (deko3d
++  // takes no empty slot). Packed together, c3 went to slot 2 and got the shader's oC2 (the decals' specular: the
++  // green pools of light on floors), and c2 got the normals of oC1.
+   DkImageView vistas[4];
+   const DkImageView* colores[4] = {};
+   uint32_t n = 0;
++  int32_t relleno = -1;
+   for (uint32_t i = 0; i < 4; ++i) {
+     if (imagenes[i]) {
+-      dkImageViewDefaults(&vistas[n], &imagenes[i]->imagen);
+-      colores[n] = &vistas[n];
+-      ++n;
++      dkImageViewDefaults(&vistas[i], &imagenes[i]->imagen);
++      colores[i] = &vistas[i];
++      n = i + 1;
++      if (relleno < 0) relleno = int32_t(i);
+       ancho = std::min(ancho, imagenes[i]->ancho);
+       alto = std::min(alto, imagenes[i]->alto);
+     }
+   }
++  for (uint32_t i = 0; i < n; ++i) {
++    if (!colores[i]) colores[i] = &vistas[relleno];
++  }
+   DkImageView vista_z;
+   if (imagenes[4]) {
+     dkImageViewDefaults(&vista_z, &imagenes[4]->imagen);
+@@ -878,17 +887,16 @@
+   // The clears the game asked for when it resolved, done now that the targets are bound (nfsmw_dk_borrado_z_aplazado,
+   // nfsmw_dk_borrado_color_aplazado): the depth's ZCULL data starts the pass valid. Only the useful area.
+   bool borrado = false;
+-  for (uint32_t i = 0, indice = 0; i < 4; ++i) {
++  for (uint32_t i = 0; i < 4; ++i) {
+     if (imagenes[i]) {
+       if (imagenes[i]->borrado_pendiente) {
+         if (!borrado && !borrar_z) {
+           MarcarGpu(kGpuBorrados);
+         }
+         imagenes[i]->borrado_pendiente = false;
+-        BorrarFilas(*imagenes[i], indice, 0, AltoDeBorrado(*imagenes[i]));
++        BorrarFilas(*imagenes[i], i, 0, AltoDeBorrado(*imagenes[i]));
+         borrado = true;
+       }
+-      ++indice;
+     }
+   }
+   if (borrar_z) {
+@@ -1853,9 +1861,9 @@
+                   imagenes_pase_[0] ? Vista(*imagenes_pase_[0]) : std::string("-"), p.vs ? int64_t(p.vs->numero) : -1,
+                   ps ? int64_t(ps->numero) : -1);
+     }
+-    for (uint32_t i = 0, indice = 0; i < 4; ++i) {
++    for (uint32_t i = 0; i < 4; ++i) {
+       if (ImagenDk* imagen = imagenes_pase_[i]) {
+-        CompletarBanda(*imagen, hasta, true, indice++);
++        CompletarBanda(*imagen, hasta, true, i);
+         // The rows this view writes (edram.cpp): those of a target the draw writes to.
+         if ((mascaras >> (i * 4)) & 0xF) {
+           imagen->edram_filas = std::max(imagen->edram_filas, hasta);
+@@ -2091,8 +2099,7 @@
+     DkColorWriteState cw = Ceros<DkColorWriteState>();
+     cw.masks = 0;
+     std::array<DkBlendState, 4> mezclas{};
+-    uint32_t n_colores = 0;
+-    for (uint32_t i = 0; i < 4; ++i) {
++    for (uint32_t i = 0; i < 4; ++i) {  // by slot, as the targets are bound
+       if (!claves[i]) {
+         continue;
+       }
+@@ -2104,9 +2111,9 @@
+       const bool color_directo = fuente_c == 1 && destino_c == 0 && op == 0;
+       const bool alfa_directo = fuente_a == 1 && destino_a == 0 && op_a == 0;
+       const bool mezcla = ((mascara & 0x7) && !color_directo) || ((mascara & 0x8) && !alfa_directo);
+-      dkColorStateSetBlendEnable(&cs, n_colores, mezcla);
+-      dkColorWriteStateSetMask(&cw, n_colores, mascara);
+-      DkBlendState& b = mezclas[n_colores];
++      dkColorStateSetBlendEnable(&cs, i, mezcla);
++      dkColorWriteStateSetMask(&cw, i, mascara);
++      DkBlendState& b = mezclas[i];
+       b = Ceros<DkBlendState>();
+       if (mezcla) {
+         b.colorBlendOp = OperacionDe(op);
+@@ -2116,7 +2123,6 @@
+         b.srcAlphaBlendFactor = FactorDe(fuente_a);
+         b.dstAlphaBlendFactor = FactorDe(destino_a);
+       }
+-      ++n_colores;
+     }
+     repetible = cs.blendEnableMask == 0;
+     if (!g_.valido || !Iguales(cs, g_.color)) {
+@@ -2127,7 +2133,7 @@
+       dkCmdBufBindColorWriteState(cmd, &cw);
+       g_.mascaras = cw;
+     }
+-    for (uint32_t i = 0; i < n_colores; ++i) {
++    for (uint32_t i = 0; i < 4; ++i) {
+       if ((cs.blendEnableMask >> i) & 0x1) {
+         if (!g_.valido || !Iguales(mezclas[i], g_.mezclas[i])) {
+           dkCmdBufBindBlendState(cmd, i, &mezclas[i]);
