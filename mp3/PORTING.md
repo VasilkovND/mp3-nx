@@ -482,3 +482,13 @@ owners, and the sky kept them. mp3_borrar_color_de_alias (default true) now clea
 
 mp3_ver_texturas (ZL + ZR + Right) lists only screen-sized resolves now: G-buffer, HDR, tonemap, FXAA, the cutscenes'
 film passes and the front buffer. Each press shows the next one on screen, captures it and logs which it is.
+
+## Overexposure: scaled resolves overflowed half float
+
+Run 49 (139bfe1): in gameplay 15-20% of the tonemap's output pixels (05F53000, before FXAA) are pure white. The final
+pass does not add it. The bloom and HDR resolves (7e3 targets, written x4 by their color exp bias 2) are resolved with
+copy exp bias 11 into k_16_16_16_16 and stored in RGBA16F images, up to 65280. Besides the -13 and -11 reads, the game
+also reads the 240x135 bloom textures with exp_adjust +2. ResueltaEscalada made that x4 copy in RGBA16F, so every
+value above 16376 became infinity: the glow around lights and windows went white. Patch 0309's exp_previo baked the
+same +2 into the resolve itself. SDK patch 0310: copies scaled up go to RGBA32F, and a resolve bakes in only as much of
+the expected exp_adjust as stays finite in half float. Nothing goes into an 8 or 10-bit texture, which would clamp it.
