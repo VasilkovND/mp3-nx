@@ -2377,6 +2377,14 @@ class RingGraphicsSystem final : public rex::system::IGraphicsSystem {
     return false;
   }
 
+  // A clear's z as the 24-bit depth the EDRAM gets, rounded: the same bits whether they land in the depth target or,
+  // through the depth over a color target's EDRAM, in the color. Max Payne 3 clears its blood targets' depth (4x, over
+  // the 1x color) to 007F00: truncated, the color got 7EFF, green 255 and blue 126 instead of green 0 and blue 127, and
+  // every half-painted blood texel on Max came out green (the ped shader's blood color is red, green, min of both).
+  static uint32_t D24(float z) {
+    return uint32_t(std::clamp(std::llround(double(z) * 16777215.0), 0ll, 16777215ll));
+  }
+
   // A Direct3D clear draw, as the renderer's clears. Direct3D's fast clear binds c0 (the color to clear) and, for the
   // depth buffer, c1-c3 over the depth buffer's EDRAM written as color, with a placeholder depth target that may even
   // sit on c0's base (Dead Space 2's light buffer clear: c0 2D0, c1-c3 000, depth 2D0). So: c0 is cleared as color
@@ -2475,7 +2483,7 @@ class RingGraphicsSystem final : public rex::system::IGraphicsSystem {
       // frame's shadow maps test LESS): every G-buffer draw, testing GEQUAL, failed and the world came out black.
       uint32_t depth_value = (reversed_here ? 0u : 0xFFFFFF00u) | stencil;
       if (REXCVAR_GET(mp3_z_borrado_del_juego) && game_vertices && game_z >= 0.0f && game_z <= 1.0f) {
-        depth_value = (uint32_t(game_z * float(0xFFFFFF) + 0.5f) << 8) | stencil;
+        depth_value = (D24(game_z) << 8) | stencil;
       }
       rex::x360::RegistrosCopia c = base;
       c.rb_depth_info = (depth_info & ~uint32_t(0xFFF)) | (edram_base & 0xFFF);
@@ -2544,11 +2552,7 @@ class RingGraphicsSystem final : public rex::system::IGraphicsSystem {
         if (game_vertices) {
           const bool d24fs = (depth_info >> 16) & 0x1;
           const float z = std::clamp(game_z, 0.0f, d24fs ? 1.99999988f : 1.0f);
-          // Truncated, in double: GTA IV's splash screens clear their 7e3 target to black through the depth path with a z
-          // that, rounded as float, gave C00001 for C00000. That last bit is the red channel's lowest exponent bit in
-          // 7e3 (0.5): the logo and legal screens came out on dark red.
-          const uint32_t d24 = d24fs ? xenos::Float32To20e4(z, true)
-                                     : uint32_t(std::min(double(z) * 16777215.0, 16777215.0));
+          const uint32_t d24 = d24fs ? xenos::Float32To20e4(z, true) : D24(z);
           bits = (d24 << 8) | (stencil & 0xFF);
         }
         rex::x360::RegistrosCopia c = base;

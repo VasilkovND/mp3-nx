@@ -378,3 +378,24 @@ The texture write tracking found no texture whose content changed in a whole run
 write): the flicker is not stale textures. The clear shader's c0 is (1 0 0 0) for every clear, so it is not the color;
 RB_COLOR_CLEAR is (FF000000 for the G-buffer, 0 for the rest). From c0 the per-ped blood targets started opaque: enemies
 black (blood everywhere, colour 0), and before ec6a1f4 red. Now from RB_COLOR_CLEAR.
+
+## Run 41, read again: green blood and the green pools on the floor
+
+Max's blood target (512x1024, resolved as k_4_4_4_4 to 0820A000) is cleared twice: as color, then its depth through
+a 4x view of the same EDRAM (depth-only mode). The second clear's bits are the color the target keeps: z = 007F00 (the
+log's "c0=000=007EFF00 (by the depth over it)"). Truncated, the color bits were 7EFF00: green 255 and blue 126 instead of
+green 0 and blue 127. The ped shaders' blood color is (red, green, min of both), so every half-painted blood texel came
+out green. EmulateClear now rounds the depth (D24) in both places: the color gets the same bits as the depth.
+
+The large green patches on the floor and tables are the blood pool decals (ps_f82a9ef07114419e, library n3733). They
+read the enemies' blood targets (64x128 k_8_8_8_8) and are clipped where the target's alpha is 0. From c0 those
+targets were cleared opaque black (alpha 1), so each pool decal was drawn whole: a big ellipse showing the room's
+reflection. 61aecfd (RB_COLOR_CLEAR, 0 for them) already fixes that.
+
+Ruled out from the same data: auto-exposure (the adapted luminance stays at its minimum 0.71); textures changing
+(0 changes); occlusion queries (none counted during play). The lamps' shadow maps are read correctly: 3x3 manual PCF
+with point taps. The cached ones (16_16_FLOAT, restored each frame through oDepth by ps_71a67230a40a5d84) are read as
+the game reads them.
+
+Shader library numbers (the log's n) map to containers in the library's order: the scratch script that rebuilt the
+table compared each entry's original bytes with out/shaders/contenedores.
