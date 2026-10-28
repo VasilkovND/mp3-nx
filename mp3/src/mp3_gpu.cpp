@@ -2487,18 +2487,14 @@ class RingGraphicsSystem final : public rex::system::IGraphicsSystem {
     std::string what;
     const uint32_t c0_base = base.rb_color_info[0] & 0xFFF;
     const bool c0_written = !depth_only && (mask & 0xF);
-    // The color: the multisampled ones were all seen clearing to 0. A single-sampled one takes what Direct3D's clear
-    // shader writes, the pixel shader's c0, which holds the D3DCOLOR as A, R, G, B: Max Payne 3 clears with c0
-    // (1 0 0 0) and RB_COLOR_CLEAR FF000000, opaque black. Taken as R, G, B, A every clear was red: the blood targets
-    // (dead enemies red all over) and the effects mask the gameplay tonemap reads (its effect exposure always on).
+    // The color: RB_COLOR_CLEAR, the D3DCOLOR (A, R, G, B from the top byte) Direct3D sets for the clear. Not the clear
+    // shader's c0: Max Payne 3 has (1 0 0 0) there for every clear, with RB_COLOR_CLEAR FF000000 for the G-buffer and 0
+    // for the rest. Taken from c0, every clear was red (as R, G, B, A: dead enemies red all over) or opaque black (as
+    // A, R, G, B: the per-ped blood targets fully opaque, enemies black, the effects mask always on).
     uint32_t color = 0;
-    if (!msaa) {
-      static constexpr uint32_t kCanal[4] = {24, 0, 8, 16};  // c0.x = A, .y = R, .z = G, .w = B
-      for (uint32_t j = 0; j < 4; ++j) {
-        float v;
-        std::memcpy(&v, &registers_[0x4400 + j], 4);
-        color |= uint32_t(std::lround(std::clamp(v, 0.0f, 1.0f) * 255.0f)) << kCanal[j];
-      }
+    {
+      const uint32_t argb = r[g::XE_GPU_REG_RB_COLOR_CLEAR];
+      color = ((argb >> 16) & 0xFF) | (argb & 0xFF00) | ((argb & 0xFF) << 16) | (argb & 0xFF000000u);
     }
     // A k_16_16 target: the clear rectangle's vertex color (its pixel shader's c0 holds 8, not the color: as the color,
     // the velocity buffer was filled with "a moving object everywhere" and the whole screen smeared) as the target's
