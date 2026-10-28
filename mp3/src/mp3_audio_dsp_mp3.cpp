@@ -965,3 +965,469 @@ REX_EXTERN(mp3_AudioBiquadMp3) {
 #endif
 }
 #endif  // MP3_TIENE_mp3_AudioBiquadMp3
+
+// ---------------------------------------------------------------------------------------------------------------------
+// sub_8303ECE0 (mp3_XAudioResampleMp3): XAudio2's resampler of 16-bit PCM to float by linear interpolation, ~5 % of a
+// core at stock clocks.
+//   f1 = the rate (source samples per output sample, double), r3 = the source (big-endian int16), r4 = the output
+//   (floats), r5 = the number of output samples, r6 = a float: the fractional position in the source, read at the
+//   start and written back at the end. Returns in r3 the source samples it advanced (int32, the difference of the
+//   source pointers halved by srawi: XER.CA from it).
+// The position is 32.32 fixed point: step = fctidz(f1 * 2^32), pos = fctidz(*r6 * 2^32) (the constants at 0x821139C8
+// and 0x821139C0 are 2^32 and 2^-32, read from guest memory as the guest does). Output i is
+//   s0 = src[pos >> 32] / 32768, s1 = src[(pos >> 32) + 1] / 32768, f = float(lo32(pos) >> 1) * 2^-31,
+//   out = fma(s1 - s0, f, s0)   (vcsxwfp / vcuxwfp, vsubfp, vmaddfp: single precision, one rounding in the fma)
+// where lo32(pos) advances by lo32(step) in a vector of its own. The guest's loops: 16 outputs per iteration while 16
+// remain (two chains of 8 samples gathered with lvlx + vsldoi: outputs 0-7 from the source pointer, 8-15 from that
+// pointer plus 2 * hi32(pos + 8 * step), the pointer then advanced by the integer part and the position left with its
+// fraction), then 4 at a time (stvlx / stvrx), then 1 at a time (stvewx: the word at r4 & ~3). The integer parts are
+// taken as 32-bit words and doubled within 32 bits (rlwinm), added to the 64-bit pointer: the same here. The final
+// fraction goes back to *r6 through the u64 -> double helper at 0x82FFE980 (its f1, r5, cr0 are left as it leaves
+// them) times 2^-32, rounded to single.
+// Here the 16-output iterations but the last load each sample with the next one (4 bytes) straight into a vector lane
+// and compute 4 outputs per NEON operation; the last iteration of each loop is done register by register (on ctx's
+// vector registers in place), so that every register the guest writes ends as the guest leaves it. The stores to the
+// stack the guest does (saved LR at sp - 8, the back chain, step and position at frame + 80/88 that two lvlx read back,
+// the helper's word at frame - 8) are done too, and loads and stores keep the guest's order per iteration (all the
+// gathers of an iteration before its stores), so an output that overlaps the source, *r6 or the stack gives the same
+// bytes. Written back: every volatile register the function writes (r3-r12, f0, f1, f9-f13, v0-v13, v27-v63, cr0,
+// cr6, XER, CTR, LR), with the guest's values: the set the generated function writes back once codegen/names.toml
+// names it (without the name it writes back fewer; the others are volatile, dead after the call). The original runs
+// for an odd source pointer (an lvlx at the last byte of a block would read half a sample), an output range that wraps
+// around 4 GB or crosses 0xE0000000 (the physical mirror's host offset), and with FPCR.FZ not fixed.
+REXCVAR_DEFINE_BOOL(mp3_dsp_remuestreo_mp3, true, "MP3",
+                    "El remuestreo PCM de 16 bits de XAudio2 (sub_8303ECE0: interpolacion lineal a float) en NEON "
+                    "nativo en vez del codigo VMX recompilado (mismas muestras y registros, bit a bit)");
+
+#ifdef MP3_TIENE_mp3_XAudioResampleMp3  // codegen/names.toml names it (CMakeLists.txt)
+REX_EXTERN(__imp__mp3_XAudioResampleMp3);
+#if MP3_DSP_NEON
+namespace {
+
+// Vector operations of the resampler on guest vectors in ctx lane order.
+template <int N>
+inline PPCVRegister RsSld(const PPCVRegister& a, const PPCVRegister& b) {  // vsldoi a, b, N
+  PPCVRegister r;
+  vst1q_u8(r.u8, vextq_u8(vld1q_u8(b.u8), vld1q_u8(a.u8), 16 - N));
+  return r;
+}
+inline PPCVRegister RsUnpackHigh(const PPCVRegister& x) {  // halfwords 0-3, sign-extended
+  PPCVRegister r;
+  vst1q_s32(r.s32, vmovl_s16(vget_high_s16(vld1q_s16(x.s16))));
+  return r;
+}
+inline PPCVRegister RsUnpackLow(const PPCVRegister& x) {  // halfwords 4-7
+  PPCVRegister r;
+  vst1q_s32(r.s32, vmovl_s16(vget_low_s16(vld1q_s16(x.s16))));
+  return r;
+}
+inline PPCVRegister RsSample(const PPCVRegister& x) {  // vcsxwfp x, 15
+  PPCVRegister r;
+  vst1q_f32(r.f32, vmulq_f32(vcvtq_f32_s32(vld1q_s32(x.s32)), vdupq_n_f32(0x1p-15f)));
+  return r;
+}
+inline PPCVRegister RsShift1(const PPCVRegister& x) {  // vsrw x, splat(1)
+  PPCVRegister r;
+  vst1q_u32(r.u32, vshrq_n_u32(vld1q_u32(x.u32), 1));
+  return r;
+}
+inline PPCVRegister RsFraction(const PPCVRegister& x) {  // vcuxwfp x, 31 (x below 2^31: the signed conversion)
+  PPCVRegister r;
+  vst1q_f32(r.f32, vmulq_f32(vcvtq_f32_s32(vld1q_s32(x.s32)), vdupq_n_f32(0x1p-31f)));
+  return r;
+}
+inline PPCVRegister RsAdd(const PPCVRegister& a, const PPCVRegister& b) {  // vadduwm
+  PPCVRegister r;
+  vst1q_u32(r.u32, vaddq_u32(vld1q_u32(a.u32), vld1q_u32(b.u32)));
+  return r;
+}
+inline PPCVRegister RsSub(const PPCVRegister& a, const PPCVRegister& b) {  // vsubfp
+  PPCVRegister r;
+  vst1q_f32(r.f32, vsubq_f32(vld1q_f32(a.f32), vld1q_f32(b.f32)));
+  return r;
+}
+inline PPCVRegister RsMadd(const PPCVRegister& a, const PPCVRegister& b, const PPCVRegister& c) {  // vmaddfp a*b+c
+  PPCVRegister r;
+  vst1q_f32(r.f32, vfmaq_f32(vld1q_f32(c.f32), vld1q_f32(b.f32), vld1q_f32(a.f32)));
+  return r;
+}
+inline PPCVRegister RsSplatWord(const PPCVRegister& x, uint32_t word) {  // vspltisw
+  PPCVRegister r;
+  vst1q_u32(r.u32, vdupq_n_u32(word));
+  return r;
+}
+inline PPCVRegister RsSplat0(const PPCVRegister& x) {  // vspltw x, 0
+  PPCVRegister r;
+  vst1q_u32(r.u32, vdupq_laneq_u32(vld1q_u32(x.u32), 3));
+  return r;
+}
+// stvlx + stvrx at ea: the 16 bytes from ea (no wrap and no 0xE0000000 crossing: checked).
+inline void RsStore16(uint8_t* base, uint32_t ea, const PPCVRegister& v) {
+  const uint8x16_t reverse = {15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0};
+  vst1q_u8(REX_RAW_ADDR(ea), vqtbl1q_u8(vld1q_u8(v.u8), reverse));
+}
+// The doubled integer part of a 32.32 position, as rldicl + rlwinm leave it.
+inline uint32_t RsTwiceHigh(uint64_t pos) { return uint32_t(pos >> 32) << 1; }
+// A source sample and the next one, as their 4 bytes in guest order (even addresses: each sample's two bytes are in the
+// block its lvlx reads). One load unless the pair straddles 0xE0000000 or 4 GB (and some harmless multiples of 512 MB).
+inline uint32_t RsPair(uint8_t* base, uint32_t ea) {
+  uint32_t w;
+  if (((ea + 2) & 0x1FFFFFFFu) != 0) [[likely]] {
+    std::memcpy(&w, REX_RAW_ADDR(ea), 4);
+  } else {
+    uint16_t a, b;
+    std::memcpy(&a, REX_RAW_ADDR(ea), 2);
+    std::memcpy(&b, REX_RAW_ADDR(uint32_t(ea + 2)), 2);
+    w = uint32_t(a) | uint32_t(b) << 16;
+  }
+  return w;
+}
+inline uint32x4_t RsReverse(uint32x4_t v) { return vextq_u32(vrev64q_u32(v), vrev64q_u32(v), 2); }
+inline int64_t RsFctidz(double d) {
+  return std::isnan(d) ? int64_t(0x8000000000000000ULL)
+         : (d > double(LLONG_MAX)) ? LLONG_MAX
+                                   : simde_mm_cvttsd_si64(simde_mm_load_sd(&d));
+}
+
+}  // namespace
+#endif
+
+REX_EXTERN(mp3_XAudioResampleMp3) {
+#if MP3_DSP_NEON
+  const uint32_t n = ctx.r5.u32;
+  const uint32_t out_at = ctx.r4.u32;
+  const uint64_t out_end = uint64_t(out_at) + 4ull * n;
+  const uint64_t out_limit = (out_at & ~3u) < 0xE0000000u ? 0xE0000000ull : 0x100000000ull;
+  if (!kFlushFixed || !REXCVAR_GET(mp3_dsp_remuestreo_mp3) || (ctx.r3.u32 & 1) != 0 || out_end > out_limit) {
+    __imp__mp3_XAudioResampleMp3(ctx, base);
+    return;
+  }
+
+  // Prologue: LR saved, the frame (208 bytes; stwu sets the low word of r1).
+  const uint64_t r1 = ctx.r1.u64;
+  const uint32_t sp = uint32_t(r1);
+  const uint32_t frame = sp - 208;
+  const uint64_t r1_frame = (r1 & 0xFFFFFFFF00000000ull) | frame;
+  REX_SSTORE_U32(sp - 8, uint32_t(ctx.lr));
+  REX_STORE_U32(frame, sp);
+  const uint64_t source = ctx.r3.u64;  // r22, r31 at the start
+  const uint32_t position_at = ctx.r6.u32;
+  const double f13_in = LoadF32AsF64(base, position_at);
+  const double two32 = std::bit_cast<double>(REX_LOAD_U64(0x821139C8));
+  const double f12 = ctx.f1.f64 * two32;
+  const double f11 = f13_in * two32;
+  const int64_t f10 = RsFctidz(f12);
+  const int64_t f9 = RsFctidz(f11);
+  REX_SSTORE_U64(frame + 80, uint64_t(f10));
+  const uint64_t step = REX_SLOAD_U64(frame + 80);  // r11
+  REX_SSTORE_U64(frame + 80, step);
+  REX_SSTORE_U64(frame + 88, uint64_t(f9));
+  ctx.v56 = Lvlx(base, frame + 84);
+  uint64_t r3 = REX_SLOAD_U64(frame + 88);  // the position
+  REX_SSTORE_U64(frame + 88, r3);
+  ctx.v55 = Lvlx(base, frame + 92);
+  const uint64_t step8 = __builtin_rotateleft64(step, 3) & ~7ull;  // r26
+  uint64_t r31 = source, r4 = ctx.r4.u64;
+  uint64_t r6 = r1_frame + 88, r7 = r1_frame + 80, r8 = 4, r9 = n & 0xFFFFFFF0u, r10 = 2;
+  uint64_t ctr = ctx.ctr.u64;
+  const uint32_t r25 = n & 0xC, r24 = n & 3;
+  // The fractions of the first 16 outputs (v0, v12, v11, v10) and their increments.
+  ctx.v63 = RsSplatWord(ctx.v63, 0);
+  ctx.v27 = RsSplat0(ctx.v56);
+  ctx.v12 = RsSplat0(ctx.v55);
+  ctx.v0 = RsAdd(ctx.v27, ctx.v27);
+  ctx.v54 = RsSld<4>(ctx.v63, ctx.v27);
+  ctx.v13 = RsAdd(ctx.v27, ctx.v0);
+  ctx.v53 = RsSld<4>(ctx.v54, ctx.v0);
+  ctx.v28 = RsAdd(ctx.v0, ctx.v0);
+  ctx.v0 = RsSld<4>(ctx.v53, ctx.v13);
+  ctx.v10 = RsAdd(ctx.v28, ctx.v28);
+  ctx.v11 = RsAdd(ctx.v0, ctx.v28);
+  ctx.v0 = RsAdd(ctx.v0, ctx.v12);
+  ctx.v13 = RsAdd(ctx.v10, ctx.v10);
+  ctx.v12 = RsAdd(ctx.v11, ctx.v12);
+  ctx.v11 = RsAdd(ctx.v0, ctx.v10);
+  ctx.v10 = RsAdd(ctx.v12, ctx.v10);
+
+  if (r9 != 0) {  // 16 outputs per iteration
+    ctx.v63 = RsSplatWord(ctx.v63, 1);
+    uint64_t r30 = r4 + 32;
+    const uint32_t iterations = uint32_t(r9) >> 4;
+    // All but the last: NEON.
+    if (iterations > 1) {
+      uint32x4_t frac[4] = {RsReverse(vld1q_u32(ctx.v0.u32)), RsReverse(vld1q_u32(ctx.v12.u32)),
+                            RsReverse(vld1q_u32(ctx.v11.u32)), RsReverse(vld1q_u32(ctx.v10.u32))};
+      const uint32x4_t advance = vld1q_u32(ctx.v13.u32);
+      const uint8x16_t reverse = {3, 2, 1, 0, 7, 6, 5, 4, 11, 10, 9, 8, 15, 14, 13, 12};
+      uint32x4_t pairs[4] = {};  // per lane: sample | next sample << 16 (after the vrev16)
+      for (uint32_t it = 0; it + 1 < iterations; ++it) {
+        uint64_t a = r3;
+        const uint32_t base_a = uint32_t(r31);
+        const uint64_t q0 = r3 + step8;
+        const uint64_t b_base = r31 + RsTwiceHigh(q0);
+        const uint32_t base_b = uint32_t(b_base);
+        uint64_t q = uint32_t(q0);
+#define MP3_RS_GATHER(m, k, ea) pairs[m] = vsetq_lane_u32(RsPair(base, ea), pairs[m], k)
+        MP3_RS_GATHER(0, 0, base_a + RsTwiceHigh(a));
+        MP3_RS_GATHER(0, 1, base_a + RsTwiceHigh(a += step));
+        MP3_RS_GATHER(0, 2, base_a + RsTwiceHigh(a += step));
+        MP3_RS_GATHER(0, 3, base_a + RsTwiceHigh(a += step));
+        MP3_RS_GATHER(1, 0, base_a + RsTwiceHigh(a += step));
+        MP3_RS_GATHER(1, 1, base_a + RsTwiceHigh(a += step));
+        MP3_RS_GATHER(1, 2, base_a + RsTwiceHigh(a += step));
+        MP3_RS_GATHER(1, 3, base_a + RsTwiceHigh(a += step));
+        MP3_RS_GATHER(2, 0, base_b + RsTwiceHigh(q));
+        MP3_RS_GATHER(2, 1, base_b + RsTwiceHigh(q += step));
+        MP3_RS_GATHER(2, 2, base_b + RsTwiceHigh(q += step));
+        MP3_RS_GATHER(2, 3, base_b + RsTwiceHigh(q += step));
+        MP3_RS_GATHER(3, 0, base_b + RsTwiceHigh(q += step));
+        MP3_RS_GATHER(3, 1, base_b + RsTwiceHigh(q += step));
+        MP3_RS_GATHER(3, 2, base_b + RsTwiceHigh(q += step));
+        MP3_RS_GATHER(3, 3, base_b + RsTwiceHigh(q += step));
+#undef MP3_RS_GATHER
+        q += step;
+        r31 = b_base + RsTwiceHigh(q);
+        r3 = uint32_t(q);
+        for (int m = 0; m < 4; ++m) {
+          const int32x4_t both = vreinterpretq_s32_u8(vrev16q_u8(vreinterpretq_u8_u32(pairs[m])));
+          const float32x4_t x0 =
+              vmulq_f32(vcvtq_f32_s32(vshrq_n_s32(vshlq_n_s32(both, 16), 16)), vdupq_n_f32(0x1p-15f));
+          const float32x4_t x1 = vmulq_f32(vcvtq_f32_s32(vshrq_n_s32(both, 16)), vdupq_n_f32(0x1p-15f));
+          const float32x4_t f = vmulq_f32(vcvtq_f32_s32(vreinterpretq_s32_u32(vshrq_n_u32(frac[m], 1))),
+                                          vdupq_n_f32(0x1p-31f));
+          const float32x4_t out = vfmaq_f32(x0, vsubq_f32(x1, x0), f);
+          vst1q_u8(REX_RAW_ADDR(uint32_t(r4 + 16 * m)), vqtbl1q_u8(vreinterpretq_u8_f32(out), reverse));
+          frac[m] = vaddq_u32(frac[m], advance);
+        }
+        r4 += 64;
+        r30 += 64;
+      }
+      // The guest's sample windows after that iteration (halfword h = sample h of the chain: v60 / v59 the samples and
+      // the next ones of outputs 0-7, v62 / v61 of 8-15) and fractions.
+      for (int c = 0; c < 2; ++c) {
+        const uint16x8_t both = vreinterpretq_u16_u8(vrev16q_u8(vreinterpretq_u8_u32(pairs[2 * c])));
+        const uint16x8_t both_hi = vreinterpretq_u16_u8(vrev16q_u8(vreinterpretq_u8_u32(pairs[2 * c + 1])));
+        // lane order: samples 0..7 as uzp1 (low halves) / uzp2 (high halves); the window holds sample h in lane 7 - h.
+        const uint16x8_t s0 = vuzp1q_u16(both, both_hi), s1 = vuzp2q_u16(both, both_hi);
+        const uint8x16_t rev16 = {14, 15, 12, 13, 10, 11, 8, 9, 6, 7, 4, 5, 2, 3, 0, 1};
+        vst1q_u8((c ? ctx.v62 : ctx.v60).u8, vqtbl1q_u8(vreinterpretq_u8_u16(s0), rev16));
+        vst1q_u8((c ? ctx.v61 : ctx.v59).u8, vqtbl1q_u8(vreinterpretq_u8_u16(s1), rev16));
+      }
+      vst1q_u32(ctx.v0.u32, RsReverse(frac[0]));
+      vst1q_u32(ctx.v12.u32, RsReverse(frac[1]));
+      vst1q_u32(ctx.v11.u32, RsReverse(frac[2]));
+      vst1q_u32(ctx.v10.u32, RsReverse(frac[3]));
+    }
+    // The last, register by register.
+    {
+      const uint64_t base_a = r31;
+      const uint64_t q0 = r3 + step8;
+      const uint64_t b_base = r31 + RsTwiceHigh(q0);
+      const uint64_t q = uint32_t(q0);
+      for (int j = 0; j < 2; ++j) {
+        const uint64_t a = r3 + 4 * j * step, b = q + 4 * j * step;
+        uint32_t ea[4], eb[4];
+        for (int k = 0; k < 4; ++k) {
+          ea[k] = uint32_t(base_a) + RsTwiceHigh(a + k * step);
+          eb[k] = uint32_t(b_base) + RsTwiceHigh(b + k * step);
+        }
+        ctx.v52 = Lvlx(base, ea[0]);
+        ctx.v51 = Lvlx(base, ea[0] + 2);
+        ctx.v50 = RsSld<2>(ctx.v60, ctx.v52);
+        ctx.v49 = RsSld<2>(ctx.v59, ctx.v51);
+        ctx.v48 = Lvlx(base, eb[0]);
+        ctx.v47 = Lvlx(base, eb[0] + 2);
+        ctx.v46 = Lvlx(base, eb[1]);
+        ctx.v45 = Lvlx(base, eb[1] + 2);
+        ctx.v43 = RsSld<2>(ctx.v61, ctx.v47);
+        ctx.v44 = RsSld<2>(ctx.v62, ctx.v48);
+        ctx.v42 = Lvlx(base, eb[2]);
+        ctx.v41 = Lvlx(base, eb[2] + 2);
+        ctx.v40 = Lvlx(base, eb[3]);
+        ctx.v39 = RsSld<2>(ctx.v44, ctx.v46);
+        ctx.v38 = RsSld<2>(ctx.v43, ctx.v45);
+        ctx.v37 = Lvlx(base, eb[3] + 2);
+        ctx.v36 = Lvlx(base, ea[1]);
+        ctx.v35 = Lvlx(base, ea[1] + 2);
+        ctx.v34 = RsSld<2>(ctx.v50, ctx.v36);
+        ctx.v33 = RsSld<2>(ctx.v49, ctx.v35);
+        ctx.v32 = RsSld<2>(ctx.v39, ctx.v42);
+        ctx.v61 = RsSld<2>(ctx.v38, ctx.v41);
+        ctx.v60 = Lvlx(base, ea[2]);
+        ctx.v59 = Lvlx(base, ea[2] + 2);
+        ctx.v56 = RsSld<2>(ctx.v34, ctx.v60);
+        ctx.v55 = RsSld<2>(ctx.v33, ctx.v59);
+        ctx.v54 = Lvlx(base, ea[3]);
+        ctx.v53 = Lvlx(base, ea[3] + 2);
+        ctx.v62 = RsSld<2>(ctx.v32, ctx.v40);
+        ctx.v61 = RsSld<2>(ctx.v61, ctx.v37);
+        ctx.v60 = RsSld<2>(ctx.v56, ctx.v54);
+        ctx.v59 = RsSld<2>(ctx.v55, ctx.v53);
+      }
+      const uint64_t end = q + 8 * step;
+      r6 = base_a + RsTwiceHigh(r3 + 6 * step);
+      r7 = end >> 32;
+      r3 = uint32_t(end);
+      r31 = b_base + RsTwiceHigh(end);
+      ctx.v52 = RsUnpackHigh(ctx.v60);
+      ctx.v51 = RsShift1(ctx.v0);
+      ctx.v50 = RsUnpackHigh(ctx.v59);
+      ctx.v49 = RsShift1(ctx.v12);
+      ctx.v48 = RsUnpackLow(ctx.v60);
+      ctx.v47 = RsShift1(ctx.v11);
+      ctx.v46 = RsUnpackLow(ctx.v59);
+      ctx.v45 = RsShift1(ctx.v10);
+      ctx.v44 = RsUnpackHigh(ctx.v62);
+      ctx.v9 = RsSample(ctx.v52);
+      ctx.v43 = RsUnpackHigh(ctx.v61);
+      ctx.v42 = RsSample(ctx.v50);
+      ctx.v41 = RsUnpackLow(ctx.v62);
+      ctx.v8 = RsSample(ctx.v48);
+      ctx.v40 = RsUnpackLow(ctx.v61);
+      ctx.v39 = RsSample(ctx.v46);
+      ctx.v7 = RsSample(ctx.v44);
+      ctx.v38 = RsSample(ctx.v43);
+      ctx.v6 = RsSample(ctx.v41);
+      ctx.v0 = RsAdd(ctx.v0, ctx.v13);
+      ctx.v37 = RsSample(ctx.v40);
+      ctx.v12 = RsAdd(ctx.v12, ctx.v13);
+      ctx.v4 = RsFraction(ctx.v51);
+      ctx.v11 = RsAdd(ctx.v11, ctx.v13);
+      ctx.v2 = RsFraction(ctx.v49);
+      ctx.v10 = RsAdd(ctx.v10, ctx.v13);
+      ctx.v31 = RsFraction(ctx.v47);
+      ctx.v29 = RsFraction(ctx.v45);
+      ctx.v5 = RsSub(ctx.v42, ctx.v9);
+      ctx.v3 = RsSub(ctx.v39, ctx.v8);
+      ctx.v1 = RsSub(ctx.v38, ctx.v7);
+      ctx.v30 = RsSub(ctx.v37, ctx.v6);
+      ctx.v9 = RsMadd(ctx.v5, ctx.v4, ctx.v9);
+      ctx.v8 = RsMadd(ctx.v3, ctx.v2, ctx.v8);
+      ctx.v7 = RsMadd(ctx.v1, ctx.v31, ctx.v7);
+      ctx.v6 = RsMadd(ctx.v30, ctx.v29, ctx.v6);
+      r9 = r30 - 16;
+      r8 = r30 + 16;
+      RsStore16(base, uint32_t(r4), ctx.v9);
+      RsStore16(base, uint32_t(r9), ctx.v8);
+      RsStore16(base, uint32_t(r30), ctx.v7);
+      RsStore16(base, uint32_t(r8), ctx.v6);
+      r4 += 64;
+      r30 += 64;
+      ctr = 0;
+    }
+  }
+
+  if (r25 != 0) {  // 4 outputs per iteration
+    ctx.v63 = RsSplatWord(ctx.v63, 1);
+    r7 = 32;
+    for (uint32_t g = 0; g < r25 / 4; ++g) {
+      uint32_t e[4];
+      for (int k = 0; k < 4; ++k) e[k] = uint32_t(r31) + RsTwiceHigh(r3 + k * step);
+      const uint64_t next = r3 + 4 * step;
+      ctx.v36 = Lvlx(base, e[0]);
+      ctx.v35 = Lvlx(base, e[0] + 2);
+      ctx.v34 = RsSld<2>(ctx.v58, ctx.v36);
+      ctx.v33 = RsSld<2>(ctx.v57, ctx.v35);
+      ctx.v32 = Lvlx(base, e[1]);
+      ctx.v62 = Lvlx(base, e[1] + 2);
+      ctx.v61 = RsSld<2>(ctx.v34, ctx.v32);
+      ctx.v60 = RsSld<2>(ctx.v33, ctx.v62);
+      ctx.v58 = Lvlx(base, e[2] + 2);
+      ctx.v59 = Lvlx(base, e[2]);
+      ctx.v56 = RsSld<2>(ctx.v60, ctx.v58);
+      ctx.v57 = RsSld<2>(ctx.v61, ctx.v59);
+      ctx.v55 = Lvlx(base, e[3]);
+      ctx.v54 = Lvlx(base, e[3] + 2);
+      ctx.v58 = RsSld<2>(ctx.v57, ctx.v55);
+      ctx.v57 = RsSld<2>(ctx.v56, ctx.v54);
+      ctx.v53 = RsUnpackLow(ctx.v58);
+      ctx.v52 = RsShift1(ctx.v0);
+      ctx.v51 = RsUnpackLow(ctx.v57);
+      ctx.v0 = RsAdd(ctx.v0, ctx.v28);
+      ctx.v13 = RsSample(ctx.v53);
+      ctx.v50 = RsSample(ctx.v51);
+      ctx.v11 = RsFraction(ctx.v52);
+      ctx.v12 = RsSub(ctx.v50, ctx.v13);
+      ctx.v13 = RsMadd(ctx.v12, ctx.v11, ctx.v13);
+      RsStore16(base, uint32_t(r4), ctx.v13);
+      r4 += 16;
+      r6 = (r3 + 3 * step) >> 32;
+      r8 = r31 + RsTwiceHigh(r3 + 3 * step);
+      r9 = RsTwiceHigh(next);
+      r31 += r9;
+      r3 = uint32_t(next);
+    }
+    ctr = 0;
+  }
+
+  if (r24 != 0) {  // 1 output per iteration
+    ctx.v63 = RsSplatWord(ctx.v63, 1);
+    for (uint32_t i = 0; i < r24; ++i) {
+      ctx.v49 = RsShift1(ctx.v0);
+      ctx.v0 = RsAdd(ctx.v0, ctx.v27);
+      ctx.v11 = RsFraction(ctx.v49);
+      const uint64_t next = r3 + step;
+      r8 = r31 + RsTwiceHigh(r3);
+      r7 = next >> 32;
+      r9 = RsTwiceHigh(next);
+      r3 = uint32_t(next);
+      r31 += r9;
+      ctx.v48 = Lvlx(base, uint32_t(r8));
+      ctx.v47 = Lvlx(base, uint32_t(r8) + 2);
+      ctx.v46 = RsUnpackHigh(ctx.v48);
+      ctx.v45 = RsUnpackHigh(ctx.v47);
+      ctx.v13 = RsSample(ctx.v46);
+      ctx.v44 = RsSample(ctx.v45);
+      ctx.v12 = RsSub(ctx.v44, ctx.v13);
+      ctx.v13 = RsMadd(ctx.v12, ctx.v11, ctx.v13);
+      ctx.v43 = RsSplat0(ctx.v13);
+      REX_STORE_U32(uint32_t(r4) & ~3u, ctx.v43.u32[0]);
+      r4 += 4;
+    }
+    ctr = 0;
+  }
+
+  // The fraction left to *r6: the u64 -> double helper (its registers), times 2^-32, single.
+  {
+    uint64_t r5 = r3 == 0 ? 64 : __builtin_clzll(r3);
+    uint64_t x = (r5 & 0x40) ? 0 : (r3 << (r5 & 0x7F));
+    ctx.cr0.compare<int64_t>(int64_t(x), 0, ctx.xer);
+    if (!ctx.cr0.eq) {
+      ctx.xer.ca = uint32_t(r5) <= 1086;
+      r5 = 1086 - r5;
+      x = __builtin_rotateleft64(x, 53) & 0xFFFFFFFFFFFFFull;
+      x = (__builtin_rotateleft64(r5, 52) & 0x7FF0000000000000ull) | (x & 0x800FFFFFFFFFFFFFull);
+    }
+    REX_SSTORE_U64(frame - 8, x);
+    ctx.f1.u64 = REX_SLOAD_U64(frame - 8);
+    ctx.r5.u64 = r5;
+  }
+  const uint64_t r10_end = r31 - source;
+  ctx.xer.ca = (int32_t(r10_end) < 0) & ((r10_end & 1) != 0);
+  ctx.r3.s64 = int32_t(r10_end) >> 1;
+  ctx.f0.f64 = ctx.f1.f64 * std::bit_cast<double>(REX_LOAD_U64(0x821139C0));
+  ctx.f13.f64 = double(float(ctx.f0.f64));
+  StoreF32(base, position_at, float(ctx.f13.f64));
+  ctx.r1.u64 = r1_frame + 208;
+  ctx.r12.u64 = REX_SLOAD_U32(sp - 8);
+  ctx.lr = ctx.r12.u64;
+  (void)r10;
+
+  ctx.r4.u64 = r4;
+  ctx.r6.u64 = r6;
+  ctx.r7.u64 = r7;
+  ctx.r8.u64 = r8;
+  ctx.r9.u64 = r9;
+  ctx.r10.u64 = r10_end;
+  ctx.r11.s64 = -2112815104;
+  ctx.f9.s64 = f9;
+  ctx.f10.s64 = f10;
+  ctx.f11.f64 = f11;
+  ctx.f12.f64 = f12;
+  ctx.cr6.compare<uint32_t>(r24, 0, ctx.xer);
+  ctx.ctr.u64 = ctr;
+#else
+  __imp__mp3_XAudioResampleMp3(ctx, base);
+#endif
+}
+#endif  // MP3_TIENE_mp3_XAudioResampleMp3

@@ -115,6 +115,12 @@ name = "mp3_AudioLimiterMp3"
 [functions."0x82C735E0"]
 name = "mp3_AudioBiquadMp3"
 
+# XAudio2's resampler of 16-bit PCM to float (linear interpolation, 32.32 fixed-point position; f1 = rate, r3 the
+# source, r4 the output, r5 outputs, r6 the float fractional position, r3 back = source samples advanced), ~5 %:
+# mp3_dsp_remuestreo_mp3.
+[functions."0x8303ECE0"]
+name = "mp3_XAudioResampleMp3"
+
 # The XDK's copy and decompression functions (tools/fuzzy_find.py against Dead Space 2's named tree, ratio 1.0 each):
 # the game puts streamed texture data in place with them. src/mp3_texture_writes.cpp marks the physical range each
 # one wrote, so the texture cache rechecks those textures at once (x360_texturas_por_escritura).
