@@ -448,3 +448,16 @@ resolved to 0808A000 and 081BA000. The game then restores the scene depth with a
 was skipped (log: "profundidad 000 (960) por color: no se restaura, la resuelta tiene otro ancho"). The lights test
 the stencil that restore writes (0xFF on geometry), so they drew nothing and only particles and the HUD were left.
 SDK patch 0308 keys the resolve by base and pitch. The first two trap windows were loading screens (false alarms).
+
+## Overexposure: the display's gamma ramp was never applied
+
+The exposure chain is consistent. The scene target's color exp bias (x4) and the resolve's (x2048) are undone by the
+tonemap's fetch (exp_adjust -13). The adapted luminance sits at AdaptedLumMin (0.71): the luminance measured is a
+bright-pass average and stays under it, and with AdaptedLumMax 0.80 the exposure can move only about 12% anyway. The
+effects mask (07367000, the DeathSampler) is 1 everywhere, but in the normal state Exposures.x == .y and the two
+gammas match, so it changes nothing. What was missing is the last step of the console's output: the Xenos scans the
+front buffer out through the gamma ramp the game programs in DC_LUT_* (256 entries of 10-bit RGB, or 128
+piecewise-linear entries). The renderer always had RampaGamma, but nothing in the port fed it, so the frame went out
+through an identity ramp. GammaRampWrite now collects the ramp from MMIO and ring writes (Xenia's command processor
+logic; examples in register_table.inc). ApplyGammaRamp gives it to the renderer at the next Swap and logs it ("[gamma]
+the game's ... ramp"). mp3_rampa_juego = false goes back to the identity.
