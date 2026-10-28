@@ -52,12 +52,14 @@ REX_EXTERN(__imp__mp3_DeviceSetup);
 REX_EXTERN(mp3_DeviceSetup) {
   static std::atomic<int> llamadas{0};
   const uint32_t lr = uint32_t(ctx.lr);
-  if (mp3::resolucion::Aplicada() == 540) {
+  if (mp3::resolucion::Aplicada() != 720) {
+    const std::string ancho = std::to_string(mp3::resolucion::Ancho(mp3::resolucion::Aplicada()));
+    const std::string alto = std::to_string(mp3::resolucion::Alto(mp3::resolucion::Aplicada()));
     const struct {
       uint32_t parametro;
       const char* antes;
       const char* nuevo;
-    } kParametros[] = {{0x8384C688u, "1280", "960"}, {0x8384C760u, "720", "540"}};
+    } kParametros[] = {{0x8384C688u, "1280", ancho.c_str()}, {0x8384C760u, "720", alto.c_str()}};
     for (const auto& p : kParametros) {
       const uint32_t texto = REX_LOAD_U32(p.parametro + 4);
       if (!texto) continue;

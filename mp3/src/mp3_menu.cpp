@@ -40,7 +40,7 @@ constexpr uint64_t kCombinacion = 0, kIzquierda = 0, kDerecha = 0, kAceptar = 0,
 struct Estado {
   std::mutex candado;
   bool abierto = false;
-  uint32_t resolucion = 720;        // the value shown (720 or 540)
+  uint32_t resolucion = 720;        // the value shown (720, 540 or 432)
   std::string aviso;                // the last line: what happened
   std::array<uint64_t, 8> antes{};  // buttons held at each slot's previous poll
 };
@@ -51,11 +51,15 @@ Estado& ElEstado() {
 
 void Pintar(const Estado& e) {
   const uint32_t guardada = resolucion::Guardada();
-  const char* ahora = resolucion::Aplicada() == 540 ? "960x540" : "1280x720";
+  const std::string ahora =
+      std::to_string(resolucion::Ancho(resolucion::Aplicada())) + "x" + std::to_string(resolucion::Alto(resolucion::Aplicada()));
+  const char* opcion = e.resolucion == 720   ? "720P  1280x720  (OVERCLOCK)"
+                       : e.resolucion == 540 ? "540P   960x540  (STOCK CLOCKS)"
+                                             : "432P   768x432  (STOCK, FASTEST)";
   std::vector<std::string> lineas = {
       "MAX PAYNE 3 - OPTIONS",
       std::string("> RESOLUTION:  < ") +
-          (e.resolucion == 720 ? "720P  1280x720  (OVERCLOCK)" : "540P   960x540  (STOCK CLOCKS)") + " >",
+          opcion + " >",
       std::string("    NOW ") + ahora + ", SAVED " +
           (guardada ? std::to_string(guardada) + "P" : std::string("AUTO")) + " (APPLIES AT THE NEXT START)",
       "",
@@ -87,7 +91,11 @@ bool Filtro(size_t ranura, uint64_t botones) {
     return true;
   }
   if (nuevos & (kIzquierda | kDerecha)) {
-    e.resolucion = e.resolucion == 720 ? 540 : 720;
+    // 720 -> 540 -> 432 going right, the other way going left.
+    const bool derecha = (nuevos & kDerecha) != 0;
+    e.resolucion = e.resolucion == 720 ? (derecha ? 540 : 432)
+                   : e.resolucion == 540 ? (derecha ? 432 : 720)
+                                         : (derecha ? 720 : 540);
     e.aviso.clear();
     Pintar(e);
   } else if (nuevos & kAceptar) {
