@@ -371,3 +371,10 @@ tools/fuzzy_find.py against Dead Space 2's named tree at ratio 1.0), src/mp3_tex
 range each one wrote, and SDK patch 0306 rechecks the textures there at their next use. The periodic recheck stays as a
 safety net at its default. The report line "texturas por escritura" gives the changes found with and without a write
 before them: the second number says whether the hooks cover everything.
+
+## Run 41: the clear color is RB_COLOR_CLEAR
+
+The texture write tracking found no texture whose content changed in a whole run (0 changes with or without a
+write): the flicker is not stale textures. The clear shader's c0 is (1 0 0 0) for every clear, so it is not the color;
+RB_COLOR_CLEAR is (FF000000 for the G-buffer, 0 for the rest). From c0 the per-ped blood targets started opaque: enemies
+black (blood everywhere, colour 0), and before ec6a1f4 red. Now from RB_COLOR_CLEAR.
