@@ -226,14 +226,15 @@ REXCVAR_DEFINE_BOOL(mp3_velocidad_sin_z, false, "MP3",
                     "la profundidad reducida (5A0, 640x360)");
 REXCVAR_DEFINE_BOOL(mp3_velocidad_prueba, false, "MP3",
                     "ZL+ZR+Right cambia mp3_velocidad_sin_z con una captura, en vez de los modos de busqueda");
-REXCVAR_DEFINE_BOOL(mp3_sesgo_prueba, false, "MP3",
+REXCVAR_DEFINE_BOOL(mp3_sesgo_prueba, true, "MP3",
                     "ZL+ZR+Right cambia mp3_sesgo_7e3 con una captura, en vez de los modos de busqueda y de mp3_ver_texturas");
 // Run 53: with the color exp bias applied to the lights' k_2_10_10_10_FLOAT_AS_16_16_16_16 target (x4) the frame burned
 // under every lamp while rooms without lamps looked right; without it the menu looks as on the console. Without it on
 // k_2_10_10_10_FLOAT too (the ambient and fog passes, read back with exp_adjust -13) the frame went almost black.
 REXCVAR_DEFINE_INT32(mp3_sesgo_7e3, 1, "MP3",
                      "El exp bias de color (RB_COLOR_INFO bits 20-25) en los destinos 7e3: 0 = aplicado (x4 en la escena), "
-                     "1 = no en k_2_10_10_10_FLOAT_AS_16_16_16_16 (las luces), 2 = no en ningun 7e3");
+                     "1 = no en k_2_10_10_10_FLOAT_AS_16_16_16_16 (las luces), 2 = no en ningun 7e3, 3 = no en los "
+                     "volumenes de luz de ese formato (mas de 6 vertices), 4 = no en sus pasadas de pantalla completa");
 REXCVAR_DEFINE_BOOL(mp3_arboles_prueba, false, "MP3",
                     "ZL+ZR+Right cambia el modo de los arboles (0, 1, 2) con una captura, en vez de los modos de busqueda");
 REXCVAR_DEFINE_INT32(mp3_auto_volcado_dibujos, 800, "MP3",
@@ -1185,9 +1186,11 @@ class RingGraphicsSystem final : public rex::system::IGraphicsSystem {
           // mp3_sesgo_prueba: ZL + ZR + Right cycles mp3_sesgo_7e3 (taken before the view mode sees the press).
           if (REXCVAR_GET(switch_omitir_pedido) && REXCVAR_GET(mp3_sesgo_prueba)) {
             REXCVAR_SET(switch_omitir_pedido, false);
-            REXCVAR_SET(mp3_sesgo_7e3, (REXCVAR_GET(mp3_sesgo_7e3) + 1) % 3);
-            static constexpr const char* kModos[3] = {"applied (as before)", "not on the lights' 7e3 (format 12)",
-                                                      "not on any 7e3 (formats 3 and 12)"};
+            REXCVAR_SET(mp3_sesgo_7e3, (REXCVAR_GET(mp3_sesgo_7e3) + 1) % 5);
+            static constexpr const char* kModos[5] = {"applied (as before)", "not on the lights' 7e3 (format 12)",
+                                                      "not on any 7e3 (formats 3 and 12)",
+                                                      "not on format 12's light volumes (more than 6 vertices)",
+                                                      "not on format 12's full-screen passes (6 vertices or fewer)"};
             REXLOG_INFO("[gpu] 7e3 color exp bias mode {}: {} (the next capture shows it)", REXCVAR_GET(mp3_sesgo_7e3),
                         kModos[REXCVAR_GET(mp3_sesgo_7e3)]);
             tree_capture_after_ = 3;
@@ -2216,9 +2219,13 @@ class RingGraphicsSystem final : public rex::system::IGraphicsSystem {
     // the lamps, where the picture burns while rooms without lamps look right.
     const uint32_t color_format = (color_info >> 16) & 0xF;
     const int32_t sesgo_7e3 = REXCVAR_GET(mp3_sesgo_7e3);
+    // Modes 3 and 4 split format 12's draws: the lamps' volumes, and the full-screen passes (ambient, sun).
+    const bool quad = (registers_[rex::graphics::XE_GPU_REG_VGT_DRAW_INITIATOR] >> 16) <= 6;
     const bool bias_7e3_off = (color_info & (0x3Fu << 20)) &&
                               ((sesgo_7e3 == 1 && color_format == 12) ||
-                               (sesgo_7e3 == 2 && (color_format == 3 || color_format == 12)));
+                               (sesgo_7e3 == 2 && (color_format == 3 || color_format == 12)) ||
+                               (sesgo_7e3 == 3 && color_format == 12 && !quad) ||
+                               (sesgo_7e3 == 4 && color_format == 12 && quad));
     const bool fxaa_unbiased = (fxaa_bias && REXCVAR_GET(mp3_fxaa_sin_sesgo)) || bias_7e3_off;
     if (fxaa_unbiased) registers_[rex::graphics::XE_GPU_REG_RB_COLOR_INFO] = color_info & ~(0x3Fu << 20);
     const bool drawn = destinos_->Dibujar(request);
