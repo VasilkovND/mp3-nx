@@ -1,0 +1,13 @@
+Resolves into k_4_4_4_4 kept as RGBA8 (as 5_6_5): Max Payne 3 resolves its per-ped blood targets into 4_4_4_4; rejected
+(cause 215, 2-3 a frame), a wounded Max's jacket went black.
+
+--- a/src/x360/deko/destinos.cpp
++++ b/src/x360/deko/destinos.cpp
+@@ -1103,6 +1103,7 @@
+     case 8:   // k_8_8_8_8_A
+     case 50:  // k_8_8_8_8_AS_16_16_16_16
+     case 4:   // k_5_6_5
++    case 15:  // k_4_4_4_4 (Max Payne 3's per-ped blood targets: rejected, a wounded Max's jacket went black)
+       host = DkImageFormat_RGBA8_Unorm;
+       return true;
+     case 7:   // k_2_10_10_10
