@@ -461,3 +461,24 @@ piecewise-linear entries). The renderer always had RampaGamma, but nothing in th
 through an identity ramp. GammaRampWrite now collects the ramp from MMIO and ring writes (Xenia's command processor
 logic; examples in register_table.inc). ApplyGammaRamp gives it to the renderer at the next Swap and logs it ("[gamma]
 the game's ... ramp"). mp3_rampa_juego = false goes back to the identity.
+
+## GPU: the HDR scene's resolve and read were two full copies
+
+The GPU profile (run 46/47) shows 46-56 3D copies a frame. Among the costliest (0.5 ms each) are 960x540 RGBA16F
+copies of the HDR scene: the resolve multiplies by 2^11 (its copy exp bias), then every fetch with exp_adjust -13 makes
+another full copy multiplied by 2^-13 (ResueltaEscalada). SDK patch 0309 (x360_resolve_exp_previsto) writes the resolve
+already scaled by the exp_adjust its texture's last fetch used, so that fetch samples it directly. A fetch with another
+exp_adjust still gets a copy, scaled by the difference only. Not for resolves read back to guest memory, shrunk with a
+blit or presented lazily.
+
+## GPU: EDRAM reinterpreting transfers into the G-buffer
+
+The real (not "as a clear") EDRAM transfers in the logs are mostly into the G-buffer's color views. Examples:
+198 f3 960 -> 1B0 f0 960, 198 f3 960 -> 288 f0 960, 330 f3 240 -> 288/360 f0 960. These are the HDR scene's and the
+bloom's tiles reinterpreted from 16F to 8888, about 1.5 ms of GPU a frame. Direct3D's clear of the G-buffer clears
+c1-c3 through the depth path (EmulateClear's clear_depth_at), which on the console writes the same EDRAM bytes as
+their color. Only the depth view was cleared, so at the next G-buffer pass the color views took the tiles' older
+owners, and the sky kept them. mp3_borrar_color_de_alias (default true) now clears those color views to the same bits.
+
+mp3_ver_texturas (ZL + ZR + Right) lists only screen-sized resolves now: G-buffer, HDR, tonemap, FXAA, the cutscenes'
+film passes and the front buffer. Each press shows the next one on screen, captures it and logs which it is.
