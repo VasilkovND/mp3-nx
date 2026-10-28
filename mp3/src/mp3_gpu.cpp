@@ -44,6 +44,7 @@ void mp3_log_main_thread();  // src/mp3_guards.cpp
 #include <cstring>
 #include <iterator>
 #include <mutex>
+#include <thread>
 #include <vector>
 
 #include <rex/graphics/registers.h>
@@ -140,10 +141,10 @@ std::atomic<bool> g_mp3_query_waited{false};
 
 REXCVAR_DEFINE_INT32(mp3_auto_captura_s, 15, "MP3",
                      "Cada cuantos segundos se guarda una captura reducida (640x360) en capturas/auto_NNNN.bmp; 0 = nunca");
-REXCVAR_DEFINE_INT32(mp3_rafaga, 12, "MP3",
-                     "Tras una captura (ZL + ZR + Down) o un volcado (ZL + ZR + Left), los siguientes N fotogramas "
-                     "presentados seguidos en capturas/rafaga_NNN_KK.bmp, a mitad de tamano: el parpadeo de toda la "
-                     "imagen se ve en cual de ellos cambia; 0 = ninguno");
+REXCVAR_DEFINE_INT32(mp3_grabacion, 90, "MP3",
+                     "Grabadora de los ultimos fotogramas presentados (un hilo aparte los copia a mitad de tamano, sin "
+                     "parar el anillo): con ZL + ZR + Down se guardan los N ultimos en capturas/grabacion_NNN_KKK.bmp. "
+                     "Un parpadeo de un solo fotograma se ve despues de haberlo visto. 0 = apagada");
 REXCVAR_DEFINE_INT32(mp3_auto_volcado_primero_s, 120, "MP3",
                      "Segundo de juego del primer volcado automatico de las texturas resueltas de un fotograma");
 REXCVAR_DEFINE_INT32(mp3_auto_volcado_cada_s, 300, "MP3", "Segundos entre volcados automaticos; 0 = solo el primero");
@@ -456,6 +457,7 @@ class RingGraphicsSystem final : public rex::system::IGraphicsSystem {
   }
 
   void Shutdown() override {
+    StopRecorder();
     if (!active_.exchange(false)) {
       DestroyPresentation();
       return;
@@ -1134,7 +1136,6 @@ class RingGraphicsSystem final : public rex::system::IGraphicsSystem {
           if (REXCVAR_GET(switch_volcado_pedido)) {
             REXCVAR_SET(switch_volcado_pedido, false);
             destinos_->PedirVolcado();
-            StartBurst();
             // And every draw of that frame in the log, whatever its size (FrameTraceSwap ends it at the next Swap), when
             // mp3_volcado_con_dibujos asks: a 2400-draw frame of Max Payne 3 took a minute of SD writes.
             draw_tracing_ = REXCVAR_GET(mp3_volcado_con_dibujos);
@@ -1154,12 +1155,10 @@ class RingGraphicsSystem final : public rex::system::IGraphicsSystem {
           if (REXCVAR_GET(switch_captura_pedida)) {
             REXCVAR_SET(switch_captura_pedida, false);
             SaveCapture();
-            StartBurst();
+            SaveRecording();
           }
-          if (burst_left_) {
-            --burst_left_;
-            SaveCapture(true, burst_index_, burst_frame_++);
-          }
+          swaps_seen_.fetch_add(1, std::memory_order_release);
+          StartRecorder();
         }
         break;
       case xenos::PM4_INDIRECT_BUFFER:
@@ -2643,19 +2642,107 @@ class RingGraphicsSystem final : public rex::system::IGraphicsSystem {
     }
   }
 
-  // A burst (mp3_rafaga): the next frames presented, one after another.
-  void StartBurst() {
-    const int32_t n = REXCVAR_GET(mp3_rafaga);
-    if (n <= 0) return;
-    burst_left_ = uint32_t(std::min(n, 60));
-    burst_frame_ = 0;
-    ++burst_index_;
-    REXLOG_INFO("[gpu] burst {}: the next {} frames presented go to capturas/rafaga_{:03}_*.bmp", burst_index_,
-                burst_left_, burst_index_);
+  // The recorder (mp3_grabacion): a thread of its own copies the latest presented frame whenever a new one was
+  // presented, half size, into a ring of the last N; ZL + ZR + Down writes them out. Each one carries the Swap count it
+  // was taken after, so a frame the recorder missed shows as a gap in the numbers.
+  struct RecordedFrame {
+    uint64_t swap = 0;
+    uint32_t width = 0, height = 0;
+    std::vector<uint8_t> rgb;  // bottom-up BGR rows, ready for a BMP
+  };
+  void StartRecorder() {
+    if (recorder_started_ || REXCVAR_GET(mp3_grabacion) <= 0 || !presenter_) return;
+    recorder_started_ = true;
+    recorder_ring_.resize(size_t(std::min(REXCVAR_GET(mp3_grabacion), 300)));
+    recorder_thread_ = std::thread([this] {
+      uint64_t last = 0;
+      while (recorder_run_.load(std::memory_order_acquire)) {
+        const uint64_t swap = swaps_seen_.load(std::memory_order_acquire);
+        if (swap == last) {
+          std::this_thread::sleep_for(std::chrono::milliseconds(2));
+          continue;
+        }
+        rex::ui::RawImage image;
+        if (!presenter_->CaptureGuestOutput(image) || image.width < 2 || image.height < 2) {
+          std::this_thread::sleep_for(std::chrono::milliseconds(20));
+          continue;
+        }
+        last = swap;
+        RecordedFrame f;
+        f.swap = swap;
+        f.width = image.width / 2;
+        f.height = image.height / 2;
+        const uint32_t row = (f.width * 3 + 3) & ~3u;
+        f.rgb.assign(size_t(row) * f.height, 0);
+        for (uint32_t y = 0; y < f.height; ++y) {
+          uint8_t* d = f.rgb.data() + size_t(f.height - 1 - y) * row;
+          const uint8_t* s0 = image.data.data() + size_t(2 * y) * image.stride;
+          for (uint32_t x = 0; x < f.width; ++x, d += 3) {
+            const uint8_t* p = s0 + size_t(2 * x) * 4;
+            d[0] = p[2];  // a sample, not an average: the recorder's time goes to the copy
+            d[1] = p[1];
+            d[2] = p[0];
+          }
+        }
+        std::lock_guard<std::mutex> lock(recorder_mutex_);
+        recorder_ring_[recorder_next_++ % recorder_ring_.size()] = std::move(f);
+      }
+    });
+  }
+  void StopRecorder() {
+    recorder_run_.store(false, std::memory_order_release);
+    if (recorder_thread_.joinable()) recorder_thread_.join();
+  }
+  // ZL + ZR + Down: the recorded frames, oldest first, as capturas/grabacion_NNN_KKK.bmp (KKK in order) and one log
+  // line with the Swap count of each.
+  void SaveRecording() {
+    if (!recorder_started_) return;
+    std::vector<RecordedFrame> frames;
+    {
+      std::lock_guard<std::mutex> lock(recorder_mutex_);
+      const size_t n = recorder_ring_.size();
+      for (size_t i = 0; i < n; ++i) {
+        RecordedFrame& f = recorder_ring_[(recorder_next_ + i) % n];
+        if (!f.rgb.empty()) frames.push_back(std::move(f));
+        f = RecordedFrame{};
+      }
+    }
+    if (frames.empty()) return;
+    const uint32_t take = ++recordings_;
+    std::string swaps;
+    for (const RecordedFrame& f : frames) swaps += fmt::format(" {}", f.swap);
+    REXLOG_INFO("[gpu] recording {}: {} frames to capturas/grabacion_{:03}_*.bmp, after Swaps:{}", take,
+                frames.size(), take, swaps);
+    const auto folder = rex::filesystem::GetExecutableFolder() / "capturas";
+    std::error_code ec;
+    std::filesystem::create_directories(folder, ec);
+    for (size_t k = 0; k < frames.size(); ++k) {
+      char name[48];
+      std::snprintf(name, sizeof(name), "grabacion_%03u_%03u.bmp", take, uint32_t(k));
+      const auto path = folder / name;
+      RecordedFrame f = std::move(frames[k]);
+      uint8_t header[54] = {'B', 'M'};
+      auto put32 = [&](size_t at, uint32_t v) { std::memcpy(header + at, &v, 4); };
+      put32(2, uint32_t(sizeof(header) + f.rgb.size()));
+      put32(10, sizeof(header));
+      put32(14, 40);
+      put32(18, f.width);
+      put32(22, f.height);
+      header[26] = 1;
+      header[28] = 24;
+      put32(34, uint32_t(f.rgb.size()));
+      std::vector<uint8_t> file(header, header + sizeof(header));
+      file.insert(file.end(), f.rgb.begin(), f.rgb.end());
+      rex::x360::EncolarEscrituraSd([path, file = std::move(file)]() {
+        if (FILE* out = std::fopen(path.string().c_str(), "wb")) {
+          std::fwrite(file.data(), 1, file.size(), out);
+          std::fclose(out);
+        }
+      });
+    }
   }
 
-  // `burst` > 0: frame `burst_frame` of that burst (half size, rafaga_NNN_KK.bmp).
-  void SaveCapture(bool small = false, uint32_t burst = 0, uint32_t burst_frame = 0) {
+  void SaveCapture(bool small = false) {
     rex::ui::RawImage image;
     if (!presenter_ || !presenter_->CaptureGuestOutput(image) || !image.width || !image.height) {
       REXLOG_WARN("[gpu] capture: no guest output to capture");
@@ -2667,11 +2754,7 @@ class RingGraphicsSystem final : public rex::system::IGraphicsSystem {
     char name[32];
     std::filesystem::path path;
     if (small) {
-      if (burst) {
-        std::snprintf(name, sizeof(name), "rafaga_%03u_%02u.bmp", burst, burst_frame);
-      } else {
-        std::snprintf(name, sizeof(name), "auto_%04u.bmp", auto_captures_++);
-      }
+      std::snprintf(name, sizeof(name), "auto_%04u.bmp", auto_captures_++);
       path = folder / name;
       // Half size: each 2x2 block averaged into the top-left texel, then compacted (0.7 MB instead of 2.7 MB).
       const uint32_t w = image.width / 2, h = image.height / 2;
@@ -2726,7 +2809,7 @@ class RingGraphicsSystem final : public rex::system::IGraphicsSystem {
     // wait for them (the game stalls with it).
     std::vector<uint8_t> file(header, header + sizeof(header));
     file.insert(file.end(), data.begin(), data.end());
-    const bool log = !small || (!burst && auto_captures_ % 12 == 1) || (burst && burst_frame == 0);  // the automatic ones once a minute in the log
+    const bool log = !small || auto_captures_ % 12 == 1;  // the automatic ones once a minute in the log
     rex::x360::EncolarEscrituraSd([path, file = std::move(file), log, w = image.width, h = image.height]() {
       if (FILE* f = std::fopen(path.string().c_str(), "wb")) {
         std::fwrite(file.data(), 1, file.size(), f);
@@ -3300,7 +3383,15 @@ class RingGraphicsSystem final : public rex::system::IGraphicsSystem {
   uint32_t rect_unexpanded_logged_ = 0;
   double next_auto_capture_s_ = 10, next_auto_dump_s_ = -1;  // AutomaticCollection
   uint32_t auto_captures_ = 0, auto_dumps_ = 0;
-  uint32_t burst_left_ = 0, burst_frame_ = 0, burst_index_ = 0;  // StartBurst
+  // The recorder (StartRecorder)
+  std::atomic<uint64_t> swaps_seen_{0};
+  std::atomic<bool> recorder_run_{true};
+  bool recorder_started_ = false;
+  std::thread recorder_thread_;
+  std::mutex recorder_mutex_;
+  std::vector<RecordedFrame> recorder_ring_;
+  size_t recorder_next_ = 0;
+  uint32_t recordings_ = 0;
   uint64_t depth_greater_ = 0, depth_less_ = 0, clears_ = 0, clears_logged_ = 0, msaa_draws_ = 0;
   // Per depth buffer: draws testing GREATER/GEQUAL and LESS/LEQUAL into it (EmulateClear's far value).
   std::unordered_map<uint32_t, std::pair<uint64_t, uint64_t>> depth_direction_;
