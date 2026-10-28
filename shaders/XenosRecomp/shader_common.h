@@ -154,6 +154,14 @@ float2 getWeights2D(Texture2D<float4> texture, SamplerState samplerState, float2
     return select(isnan(texCoord), 0.0, frac(texCoord * tamano + offset - 0.5));
 }
 
+// getGradients (fetch opcode 18): the screen-space derivatives of the coordinates, the first coordinate's horizontal
+// and vertical ones in X and Y, the second's in Z and W. Max Payne 3's lamp shadow casters take their slope-scaled
+// depth bias from a 1D one, as max(|X|, |Y|).
+float4 getGradients(float2 texCoord)
+{
+    return float4(ddx(texCoord.x), ddy(texCoord.x), ddx(texCoord.y), ddy(texCoord.y));
+}
+
 // A 1D fetch from a sampler the constant table declares 2D (Max Payne 3's materialIdSampler): the Xenos reads the
 // texture's first row.
 float4 tfetch1D(Texture2D<float4> texture, SamplerState samplerState, float texCoord)
