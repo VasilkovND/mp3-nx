@@ -226,9 +226,12 @@ REXCVAR_DEFINE_BOOL(mp3_velocidad_sin_z, false, "MP3",
                     "la profundidad reducida (5A0, 640x360)");
 REXCVAR_DEFINE_BOOL(mp3_velocidad_prueba, false, "MP3",
                     "ZL+ZR+Right cambia mp3_velocidad_sin_z con una captura, en vez de los modos de busqueda");
-REXCVAR_DEFINE_BOOL(mp3_sesgo_prueba, true, "MP3",
+REXCVAR_DEFINE_BOOL(mp3_sesgo_prueba, false, "MP3",
                     "ZL+ZR+Right cambia mp3_sesgo_7e3 con una captura, en vez de los modos de busqueda y de mp3_ver_texturas");
-REXCVAR_DEFINE_INT32(mp3_sesgo_7e3, 0, "MP3",
+// Run 53: with the color exp bias applied to the lights' k_2_10_10_10_FLOAT_AS_16_16_16_16 target (x4) the frame burned
+// under every lamp while rooms without lamps looked right; without it the menu looks as on the console. Without it on
+// k_2_10_10_10_FLOAT too (the ambient and fog passes, read back with exp_adjust -13) the frame went almost black.
+REXCVAR_DEFINE_INT32(mp3_sesgo_7e3, 1, "MP3",
                      "El exp bias de color (RB_COLOR_INFO bits 20-25) en los destinos 7e3: 0 = aplicado (x4 en la escena), "
                      "1 = no en k_2_10_10_10_FLOAT_AS_16_16_16_16 (las luces), 2 = no en ningun 7e3");
 REXCVAR_DEFINE_BOOL(mp3_arboles_prueba, false, "MP3",
