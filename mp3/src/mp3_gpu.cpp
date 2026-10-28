@@ -1908,7 +1908,7 @@ class RingGraphicsSystem final : public rex::system::IGraphicsSystem {
     if (REXCVAR_GET(switch_omitir_pedido)) {
       REXCVAR_SET(switch_omitir_pedido, false);
       view_index_ = view_index_ + 1 >= int32_t(resolves_last_.size()) ? -1 : view_index_ + 1;
-      view_capture_after_ = 20;
+      view_capture_after_ = 3;  // a few frames: quick presses still get each view captured
       if (view_index_ < 0) {
         REXLOG_INFO("[ver] modo 0: the game's frame");
       } else {
