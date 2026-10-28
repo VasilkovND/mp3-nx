@@ -2501,12 +2501,21 @@ class RingGraphicsSystem final : public rex::system::IGraphicsSystem {
     std::string what;
     const uint32_t c0_base = base.rb_color_info[0] & 0xFFF;
     const bool c0_written = !depth_only && (mask & 0xF);
-    // The color: RB_COLOR_CLEAR, the D3DCOLOR (A, R, G, B from the top byte) Direct3D sets for the clear. Not the clear
-    // shader's c0: Max Payne 3 has (1 0 0 0) there for every clear, with RB_COLOR_CLEAR FF000000 for the G-buffer and 0
-    // for the rest. Taken from c0, every clear was red (as R, G, B, A: dead enemies red all over) or opaque black (as
-    // A, R, G, B: the per-ped blood targets fully opaque, enemies black, the effects mask always on).
+    // The color: the clear rectangle's vertex COLOR. Direct3D's clear pixel shader (ps_d40dc7ffe00e2108 in
+    // shaders_unknown) is one instruction, oC0 = its interpolator, and the clear vertex shader passes the vertex's
+    // float4 color through: R, G, B, A. Neither the pixel shader's c0 (1 0 0 0 for every clear) nor RB_COLOR_CLEAR (left
+    // at FF000000 by the G-buffer's clear and still there for the clears after it) is the color: from them the enemies'
+    // blood targets started opaque black (black enemies, and every blood pool decal drawn whole: the big green patches
+    // on the floor). An 8-bit target gets the color as R, G, B, A bytes; other formats, and a clear without its
+    // vertices, keep RB_COLOR_CLEAR as before.
     uint32_t color = 0;
-    {
+    const uint32_t c0_format = (base.rb_color_info[0] >> 16) & 0xF;
+    if (game_vertices && (c0_format == 0 || c0_format == 1)) {
+      for (uint32_t j = 0; j < 4; ++j) {
+        const float v = std::isfinite(game_color[j]) ? std::clamp(game_color[j], 0.0f, 1.0f) : 0.0f;
+        color |= uint32_t(std::lround(v * 255.0f)) << (8 * j);
+      }
+    } else {
       const uint32_t argb = r[g::XE_GPU_REG_RB_COLOR_CLEAR];
       color = ((argb >> 16) & 0xFF) | (argb & 0xFF00) | ((argb & 0xFF) << 16) | (argb & 0xFF000000u);
     }
@@ -2584,10 +2593,11 @@ class RingGraphicsSystem final : public rex::system::IGraphicsSystem {
       };
       REXLOG_INFO("[gpu] clear draw (msaa {}, pitch {}):{}; game had: PS c0 ({:.3f} {:.3f} {:.3f} {:.3f}) VS c0 "
                   "({:.3f} {:.3f} {:.3f} {:.3f}) RB_COLOR_CLEAR {:08X} RB_DEPTH_CLEAR {:08X} depthcontrol {:08X} "
-                  "mask {:04X}",
+                  "mask {:04X}; vertex color ({:.3f} {:.3f} {:.3f} {:.3f}), z {:.6f}",
                   msaa, Register(g::XE_GPU_REG_RB_SURFACE_INFO) & 0x3FFF, what, f(0x4400), f(0x4401), f(0x4402),
                   f(0x4403), f(0x4000), f(0x4001), f(0x4002), f(0x4003), Register(g::XE_GPU_REG_RB_COLOR_CLEAR),
-                  Register(g::XE_GPU_REG_RB_DEPTH_CLEAR), depth_control, mask);
+                  Register(g::XE_GPU_REG_RB_DEPTH_CLEAR), depth_control, mask, game_color[0], game_color[1],
+                  game_color[2], game_color[3], game_z);
     }
   }
 

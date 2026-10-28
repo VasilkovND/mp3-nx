@@ -399,3 +399,13 @@ the game reads them.
 
 Shader library numbers (the log's n) map to containers in the library's order: the scratch script that rebuilt the
 table compared each entry's original bytes with out/shaders/contenedores.
+
+## Run 42 (d27874e): the clear color is the clear rectangle's vertex color
+
+Enemies still black, pools still on the floor: the enemies' blood targets still came out opaque black (dump: background
+0 0 0 alpha 255). RB_COLOR_CLEAR is not the clear color either: Direct3D leaves it at whatever its last fast clear set,
+so the same targets were cleared to 0 in one frame and FF000000 in another (run 42: bases 000, 030 and 040 both ways).
+Direct3D's clear pixel shader (shaders_unknown/ps_d40dc7ffe00e2108, 36 bytes) is a single MAX of its interpolator
+with itself into oC0. Its vertex shader (vs_6d38cfa50aa12e68) fetches the vertex's float4 color
+(k_32_32_32_32_FLOAT, swizzle xyzw) and exports it. EmulateClear now packs that color as R, G, B, A bytes for 8-bit
+targets, and logs it in the "clear draw" lines.
