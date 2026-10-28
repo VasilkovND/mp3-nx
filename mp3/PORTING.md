@@ -357,3 +357,6 @@ draw their post-processing as 8-bit color on base 000, the depth's EDRAM base (p
 to 0634F000 and blend that over the frame (pass 155). The SDK took such a pass for GTA IV's depth restore
 (x360_edram_z_por_color): its draws were not recorded and the depth's bits were written into the texture as color.
 That is the black cutscene and the green-yellow stripes seen in captures. Off in mp3.toml.
+Run 36: x360_edram_z_por_color off broke the main menu and darkened gameplay (Max Payne 3 does restore depth that way
+too). Back on; SDK patch 0302 instead takes such a pass for a depth restore only when its pixel shader samples a
+depth (k_24_8 or a resolved depth), so the cutscene post-processing, drawn from color textures, is drawn.
