@@ -1165,6 +1165,10 @@ class RingGraphicsSystem final : public rex::system::IGraphicsSystem {
           }
           swaps_seen_.fetch_add(1, std::memory_order_release);
           StartRecorder();
+          if (uint32_t n = flash_save_in_.load(std::memory_order_acquire); n && flash_save_in_.compare_exchange_strong(n, n - 1) &&
+              n == 1) {
+            SaveRecording();
+          }
         }
         break;
       case xenos::PM4_INDIRECT_BUFFER:
@@ -2690,10 +2694,38 @@ class RingGraphicsSystem final : public rex::system::IGraphicsSystem {
             d[2] = p[0];
           }
         }
+        FlashCheck(f);
         std::lock_guard<std::mutex> lock(recorder_mutex_);
         recorder_ring_[recorder_next_++ % recorder_ring_.size()] = std::move(f);
       }
     });
+  }
+  // A frame much darker than the ones before it (the 2-3 frame dark flashes of run 45: the scene without its lighting,
+  // only particles and the HUD): logged; the first times, the frames after it are traced (FrameTraceSwap) and the
+  // recording is written a few frames later, so the next dark ones land in both.
+  void FlashCheck(const RecordedFrame& f) {
+    uint64_t sum = 0, n = 0;
+    for (size_t i = 0; i + 2 < f.rgb.size(); i += 3 * 7) {
+      sum += uint64_t(f.rgb[i]) + f.rgb[i + 1] + f.rgb[i + 2];
+      ++n;
+    }
+    const uint32_t mean = n ? uint32_t(sum / n) : 0;
+    std::array<uint32_t, 6> last = flash_means_;
+    std::sort(last.begin(), last.end());
+    const uint32_t usual = last[3];
+    std::rotate(flash_means_.begin(), flash_means_.begin() + 1, flash_means_.end());
+    flash_means_.back() = mean;
+    const bool tracing = flash_trace_frames_.load(std::memory_order_acquire) > 0;
+    if (tracing) REXLOG_INFO("[flash] Swap {}: mean {}", f.swap, mean);
+    if (usual >= 60 && mean * 2 < usual) {
+      ++flash_dark_;
+      if (!tracing) REXLOG_INFO("[flash] dark frame after Swap {}: mean {} (usual {})", f.swap, mean, usual);
+      if (flash_traces_ < 3 && !tracing) {
+        ++flash_traces_;
+        flash_trace_frames_.store(30, std::memory_order_release);
+        flash_save_in_.store(40, std::memory_order_release);
+      }
+    }
   }
   void StopRecorder() {
     recorder_run_.store(false, std::memory_order_release);
@@ -3030,11 +3062,23 @@ class RingGraphicsSystem final : public rex::system::IGraphicsSystem {
     if (tracing_) {
       FrameTraceClosePass();
       REXLOG_INFO("[frame] end: {} geometry draws, {} predicated packets skipped, {} passes, swap frontbuffer "
-                  "fetch0 {:08X} {:08X}",
-                  frame_.draws, frame_.predicated_skipped, trace_pass_, Register(0x4800), Register(0x4801));
+                  "fetch0 {:08X} {:08X} (Swap {})",
+                  frame_.draws, frame_.predicated_skipped, trace_pass_, Register(0x4800), Register(0x4801),
+                  swaps_seen_.load(std::memory_order_acquire) + 1);
       tracing_ = false;
       ++traces_done_;
       next_trace_ = now + std::chrono::seconds(std::max(REXCVAR_GET(mp3_traza_cada_s), 1));
+    }
+    // The recorder saw a dark frame (FlashCheck): the structure of the frames after it, one after another, to compare
+    // the dark ones that follow with the others.
+    if (!tracing_ && flash_trace_frames_.load(std::memory_order_acquire) > 0) {
+      flash_trace_frames_.fetch_sub(1, std::memory_order_acq_rel);
+      tracing_ = true;
+      trace_lines_ = 0;
+      trace_pass_ = 0;
+      trace_key_.fill(0);
+      trace_pass_draws_ = 0;
+      trace_max_lines_ = 800;
     } else if (telemetry_ && traces_done_ < uint32_t(std::max(REXCVAR_GET(mp3_trazas_max), 0)) && frame_.draws >= 800 &&
                now >= next_trace_ && now - first_swap_ >= std::chrono::seconds(60)) {
       tracing_ = true;
@@ -3398,6 +3442,10 @@ class RingGraphicsSystem final : public rex::system::IGraphicsSystem {
   std::vector<RecordedFrame> recorder_ring_;
   size_t recorder_next_ = 0;
   uint32_t recordings_ = 0;
+  // FlashCheck (recorder thread) and its traces (ring thread)
+  std::array<uint32_t, 6> flash_means_{};
+  uint32_t flash_dark_ = 0, flash_traces_ = 0;
+  std::atomic<uint32_t> flash_trace_frames_{0}, flash_save_in_{0};
   uint64_t depth_greater_ = 0, depth_less_ = 0, clears_ = 0, clears_logged_ = 0, msaa_draws_ = 0;
   // Per depth buffer: draws testing GREATER/GEQUAL and LESS/LEQUAL into it (EmulateClear's far value).
   std::unordered_map<uint32_t, std::pair<uint64_t, uint64_t>> depth_direction_;
