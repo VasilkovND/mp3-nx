@@ -1,0 +1,123 @@
+SDK patch 0309 (Max Payne 3 port): x360_resolve_exp_previsto. A resolve with an exp bias is written already scaled by
+the exp_adjust the texture's last fetch used (exp_previo), and a fetch with that exp_adjust samples it directly; any
+other one scales only the rest. Max Payne 3 resolved its HDR scene x2048 and every read (exp_adjust -13) made another
+full 960x540 RGBA16F copy x1/8192: about 0.5 ms each on the GPU. Resolves read back to guest memory, shrunk with a
+blit or presented lazily keep no extra scale.
+
+--- a/include/rex/x360/deko/render.h
++++ b/include/rex/x360/deko/render.h
+@@ -90,6 +90,11 @@
+   // A 7e3 target resolved into k_16_16_16_16 or k_16_16: it holds the 16-bit integers (v x 2^copy exp bias), which a
+   // fetch as a fraction divides by 65535 (texturas.cpp).
+   bool entero16 = false;
++  // x360_resolve_exp_previsto: the power of two the resolve already applied beyond its exp bias (the exp_adjust the
++  // last fetch of this texture used), so a fetch with that exp_adjust samples it directly instead of a scaled copy.
++  int8_t exp_previo = 0;
++  mutable int8_t exp_leida = 0;
++  mutable bool exp_leida_valida = false;
+   uint64_t serie = 0;  // unique per creation: the key of its descriptors
+   uint64_t version = 0;  // resolved textures: goes up every time a resolve writes it (the cubemaps' faces)
+   // Render targets only, and they stay with the target when its image is swapped (IntercambiarImagenes):
+--- a/src/x360/deko/destinos.cpp
++++ b/src/x360/deko/destinos.cpp
+@@ -42,6 +42,10 @@
+ REXCVAR_DEFINE_BOOL(x360_resolve_16_fijo, true, "X360",
+                     "Una textura resuelta leida como k_16_16_16_16 o k_16_16 en coma fija con num_format fraccion se "
+                     "divide por 65535 (el resolve guarda el entero de 16 bits); como entero, tal cual");
++REXCVAR_DEFINE_BOOL(x360_resolve_exp_previsto, true, "X360",
++                    "Un resolve con exp bias se escribe ya escalado por el exp_adjust con que se leyo la textura la "
++                    "ultima vez, y esa lectura la muestrea directamente: Max Payne 3 resolvia su escena x2048 y cada "
++                    "lectura (exp_adjust -13) hacia otra copia entera x1/8192 (0,5 ms cada una a 960x540)");
+ REXCVAR_DEFINE_BOOL(x360_f14_sanear, true, "X360",
+                     "Los resolves de destinos k_32_FLOAT (la cadena de luminancia de GTA IV) se limitan a 0..31.875 (el "
+                     "maximo del HDR) y NaN a 0: un pixel de -60000 llevaba la luminancia adaptada a 0 y la exposicion "
+@@ -1608,12 +1612,21 @@
+       }
+       HacerBorradoPendiente(*destino_render);
+       CompletarBanda(*destino_render, uint32_t(std::max(y1, 0)), false, 0);
++      // x360_resolve_exp_previsto: the exp_adjust the last fetch of this texture used, applied now (whole resolves set
++      // it; a band keeps the texture's). Not for what is read back to guest memory or shrunk with a blit (no scale).
++      int32_t exp_previo = 0;
++      if (REXCVAR_GET(x360_resolve_exp_previsto) && !se_lee && !encoger && !frontal) {
++        const bool entera = dx == 0 && dy == 0 && ancho == resuelta->imagen.ancho && alto == resuelta->imagen.alto;
++        exp_previo = entera ? (resuelta->imagen.exp_leida_valida ? resuelta->imagen.exp_leida : 0)
++                            : resuelta->imagen.exp_previo;
++      }
+       if (frontal && uint32_t(x0) < destino_render->ancho && ancho && alto) {
+         if (frontal_.pendiente && frontal_.base != base_resuelta) {
+           MaterializarFrontal();
+         }
+         frontal_ = {true, base_resuelta, destino_render, resuelta, ancho, alto};
+         frontal_obsoleta_ = 0;
++        resuelta->imagen.exp_previo = 0;
+         resuelta->escrita = true;
+         ++resuelta->imagen.version;
+         SombraMinimoResueltaEscrita(base_resuelta);
+@@ -1626,16 +1639,17 @@
+         // A k_32_FLOAT one kept to real values (x360_f14_sanear) goes through the 3D engine's clamp even when it is read
+         // back: GTA IV's luminance chain is mostly such small resolves (80x45 down to the 8x1 exposure).
+         const bool sanear_f14 = formato_color == 14 && REXCVAR_GET(x360_f14_sanear);
++        bool escalada_3d = false;
+         if (encoger || (se_lee && escala_exp == 1.0f && !sanear_f14) ||
+-            !Copiar3D(reducida ? *reducida : *destino_render, uint32_t(x0), uint32_t(y0), ancho, alto, resuelta->imagen,
+-                      dx, dy, nullptr,
+-                      formato_color == 3 || formato_color == 12 ||
+-                          (formato_color == 14 && REXCVAR_GET(x360_f14_sanear)),
+-                      escala_exp,
++            !(escalada_3d = Copiar3D(reducida ? *reducida : *destino_render, uint32_t(x0), uint32_t(y0), ancho, alto,
++                                     resuelta->imagen, dx, dy, nullptr,
++                                     formato_color == 3 || formato_color == 12 ||
++                                         (formato_color == 14 && REXCVAR_GET(x360_f14_sanear)),
++                                     std::ldexp(escala_exp, exp_previo),
+                       // k_32_FLOAT: only NaN, infinities and negatives out. Capped at 7e3's 31.875 (run39), a bright
+                       // scene's luminance (up to 63 and more) read low, the exposure came out too high and the frame
+                       // bleached.
+-                      formato_color == 14, reducida != nullptr)) {
++                      formato_color == 14, reducida != nullptr))) {
+           MarcarGpu(kGpuCopias);
+           PerfilCopia(encoger ? "motor de copias encogida" : "motor de copias", destino_render, &resuelta->imagen,
+                       ancho, alto);
+@@ -1652,6 +1666,7 @@
+         }
+         resuelta->escrita = true;
+         ++resuelta->imagen.version;
++        resuelta->imagen.exp_previo = int8_t(escalada_3d ? exp_previo : 0);
+         resuelta->imagen.entero16 =
+             (formato_destino == 25 || formato_destino == 26) && (formato_color == 3 || formato_color == 12);
+         SombraMinimoResueltaEscrita(base_resuelta);
+--- a/src/x360/deko/texturas.cpp
++++ b/src/x360/deko/texturas.cpp
+@@ -66,6 +66,7 @@
+                     "Una textura cuya memoria el juego escribio en bloque (XMemCpy, XMemDecompress; el port los "
+                     "engancha) se recomprueba en su siguiente uso, no al cumplirse su intervalo; la cache por fetch de "
+                     "los dibujos solo vale un fotograma");
++REXCVAR_DECLARE(bool, x360_resolve_exp_previsto);  // destinos.cpp
+ REXCVAR_DECLARE(bool, x360_resolve_16_fijo);  // destinos.cpp
+ 
+ namespace rex::x360 {
+@@ -407,6 +408,7 @@
+                 alto);
+   }
+   c.imagen.intercambio_rb = resuelta.intercambio_rb;
++  c.imagen.exp_previo = resuelta.exp_previo;  // the copy keeps the source's values
+   if (c.version != resuelta.version) {
+     if (!Copiar3D(resuelta, 0, 0, ancho, alto, c.imagen, 0, 0)) {
+       return nullptr;
+@@ -644,8 +646,15 @@
+       const int32_t exp_adjust = int32_t(f[3] << 13) >> 26;
+       const bool fraccion_16 = ((f[1] & 0x3F) == 26 || (f[1] & 0x3F) == 25) && !(f[3] & 0x1) && resuelta->entero16 &&
+                                REXCVAR_GET(x360_resolve_16_fijo);
+-      if ((exp_adjust || fraccion_16) && !resuelta->profundidad) {
+-        if (const ImagenDk* escalada = ResueltaEscalada(*resuelta, exp_adjust, fraccion_16)) {
++      // x360_resolve_exp_previsto: the resolve may have applied this fetch's exp_adjust already (exp_previo); only
++      // what is left is scaled, and the exp_adjust is remembered for the next resolve here.
++      if (!resuelta->profundidad && !fraccion_16 && REXCVAR_GET(x360_resolve_exp_previsto)) {
++        resuelta->exp_leida = int8_t(exp_adjust);
++        resuelta->exp_leida_valida = true;
++      }
++      const int32_t exp_resto = exp_adjust - resuelta->exp_previo;
++      if ((exp_resto || fraccion_16) && !resuelta->profundidad) {
++        if (const ImagenDk* escalada = ResueltaEscalada(*resuelta, exp_resto, fraccion_16)) {
+           resuelta = escalada;
+         }
+       }

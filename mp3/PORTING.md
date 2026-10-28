@@ -461,3 +461,12 @@ piecewise-linear entries). The renderer always had RampaGamma, but nothing in th
 through an identity ramp. GammaRampWrite now collects the ramp from MMIO and ring writes (Xenia's command processor
 logic; examples in register_table.inc). ApplyGammaRamp gives it to the renderer at the next Swap and logs it ("[gamma]
 the game's ... ramp"). mp3_rampa_juego = false goes back to the identity.
+
+## GPU: the HDR scene's resolve and read were two full copies
+
+The GPU profile (run 46/47) shows 46-56 3D copies a frame. Among the costliest (0.5 ms each) are 960x540 RGBA16F
+copies of the HDR scene: the resolve multiplies by 2^11 (its copy exp bias), then every fetch with exp_adjust -13 makes
+another full copy multiplied by 2^-13 (ResueltaEscalada). SDK patch 0309 (x360_resolve_exp_previsto) writes the resolve
+already scaled by the exp_adjust its texture's last fetch used, so that fetch samples it directly. A fetch with another
+exp_adjust still gets a copy, scaled by the difference only. Not for resolves read back to guest memory, shrunk with a
+blit or presented lazily.
