@@ -144,10 +144,14 @@ std::atomic<bool> g_mp3_query_waited{false};
 
 REXCVAR_DEFINE_INT32(mp3_auto_captura_s, 15, "MP3",
                      "Cada cuantos segundos se guarda una captura reducida (640x360) en capturas/auto_NNNN.bmp; 0 = nunca");
-REXCVAR_DEFINE_INT32(mp3_grabacion, 90, "MP3",
+REXCVAR_DEFINE_BOOL(mp3_rampa_juego, true, "MP3",
+                    "La rampa de gamma que el juego programa para la salida de video (registros DC_LUT): la imagen se "
+                    "muestra a traves de ella, como en la consola. false = rampa identidad, como antes");
+REXCVAR_DEFINE_INT32(mp3_grabacion, 0, "MP3",
                      "Grabadora de los ultimos fotogramas presentados (un hilo aparte los copia a mitad de tamano, sin "
                      "parar el anillo): con ZL + ZR + Down se guardan los N ultimos en capturas/grabacion_NNN_KKK.bmp. "
-                     "Un parpadeo de un solo fotograma se ve despues de haberlo visto. 0 = apagada");
+                     "Un parpadeo de un solo fotograma se ve despues de haberlo visto. 0 = apagada (cuesta una copia y "
+                     "una espera de la GPU por fotograma; 90 para diagnosticar)");
 REXCVAR_DEFINE_INT32(mp3_auto_volcado_primero_s, 120, "MP3",
                      "Segundo de juego del primer volcado automatico de las texturas resueltas de un fotograma");
 REXCVAR_DEFINE_INT32(mp3_auto_volcado_cada_s, 300, "MP3", "Segundos entre volcados automaticos; 0 = solo el primero");
@@ -280,6 +284,8 @@ constexpr uint32_t kRegCpRbWptr = rex::graphics::XE_GPU_REG_CP_RB_WPTR;
 constexpr uint32_t kRegRbEdramTiming = 0x0F00;
 constexpr uint32_t kRegRbBcControl = 0x0F01;
 constexpr uint32_t kRegD1ModeVCounter = 0x194C;
+// The display's gamma ramp (GammaRampWrite): DC_LUT_RW_MODE 0x1921 to DC_LUTA_CONTROL 0x1930.
+constexpr uint32_t kRegDcLutFirst = 0x1921, kRegDcLutLast = 0x1930;
 constexpr uint32_t kRegD1ModeVblankVlineStatus = 0x1951;
 constexpr uint32_t kRegD1ModeViewportSize = 0x1961;
 
@@ -537,6 +543,7 @@ class RingGraphicsSystem final : public rex::system::IGraphicsSystem {
     const uint32_t r = (address & 0xFFFF) / 4;
     if (r < kRegisterCount) {
       registers_[r] = value;  // no side effects through MMIO (graphics_system.cpp)
+      if (r >= kRegDcLutFirst && r <= kRegDcLutLast) GammaRampWrite(r, value);
     }
     if (r == kRegCpRbWptr) {
       write_pointer_.store(value, std::memory_order_seq_cst);
@@ -552,12 +559,101 @@ class RingGraphicsSystem final : public rex::system::IGraphicsSystem {
     }
   }
 
+  // The display's gamma ramp, as the Xenos scans the front buffer out through it (Xenia's command processor and the
+  // examples in register_table.inc): a 256-entry table of 10-bit R, G, B (DC_LUT_30_COLOR, or DC_LUT_SEQ_COLOR one
+  // channel a write) or a 128-entry piecewise-linear one (DC_LUT_PWL_DATA: base in the low 16 bits, the increment over
+  // 8 input steps in the high 16, both 10.6 fixed point), chosen by DC_LUTA_CONTROL. Max Payne 3 programs it through
+  // Direct3D; without it the renderer showed the frame through an identity ramp (the picture a little burnt).
+  void GammaRampWrite(uint32_t index, uint32_t value) {
+    std::lock_guard<std::mutex> lock(gamma_mutex_);
+    switch (index) {
+      case 0x1922:  // DC_LUT_RW_INDEX
+        gamma_subindex_ = 0;
+        break;
+      case 0x1923: {  // DC_LUT_SEQ_COLOR
+        const uint32_t i = registers_[0x1922] & 0xFF;
+        if (registers_[0x1927] & (1u << (2 - gamma_subindex_))) gamma_table_[i][gamma_subindex_] = uint16_t((value >> 6) & 0x3FF);
+        if (++gamma_subindex_ >= 3) {
+          gamma_subindex_ = 0;
+          registers_[0x1922] = (registers_[0x1922] & ~0xFFu) | ((i + 1) & 0xFF);
+        }
+        gamma_dirty_ = true;
+        break;
+      }
+      case 0x1924: {  // DC_LUT_PWL_DATA
+        const uint32_t i = registers_[0x1922] & 0x7F;
+        if (registers_[0x1927] & (1u << (2 - gamma_subindex_))) gamma_pwl_[i][gamma_subindex_] = value;
+        if (++gamma_subindex_ >= 3) {
+          gamma_subindex_ = 0;
+          registers_[0x1922] = (registers_[0x1922] & ~0xFFu) | ((i + 1) & 0xFF);
+        }
+        gamma_dirty_ = true;
+        break;
+      }
+      case 0x1925: {  // DC_LUT_30_COLOR: blue in bits 0-9, green 10-19, red 20-29
+        const uint32_t i = registers_[0x1922] & 0xFF;
+        const uint32_t mask = registers_[0x1927];
+        if (mask & 4) gamma_table_[i][0] = uint16_t((value >> 20) & 0x3FF);
+        if (mask & 2) gamma_table_[i][1] = uint16_t((value >> 10) & 0x3FF);
+        if (mask & 1) gamma_table_[i][2] = uint16_t(value & 0x3FF);
+        gamma_dirty_ = true;
+        break;
+      }
+      case 0x1930:  // DC_LUTA_CONTROL
+        gamma_dirty_ = true;
+        break;
+      default:
+        break;
+    }
+  }
+  // At each Swap: a changed ramp goes to the renderer, as the 256 levels of the 8-bit front buffer.
+  void ApplyGammaRamp() {
+    if (!REXCVAR_GET(mp3_rampa_juego)) return;
+    std::array<std::array<uint16_t, 3>, 256> ramp;
+    bool pwl;
+    {
+      std::lock_guard<std::mutex> lock(gamma_mutex_);
+      if (!gamma_dirty_) return;
+      gamma_dirty_ = false;
+      pwl = (registers_[0x1930] & 0x3) != 0;
+      for (uint32_t i = 0; i < 256; ++i) {
+        for (uint32_t c = 0; c < 3; ++c) {
+          if (!pwl) {
+            ramp[i][c] = gamma_table_[i][c];
+            continue;
+          }
+          const uint32_t x = (i << 2) | (i >> 6);  // the 10-bit level of the 8-bit one
+          const uint32_t e = gamma_pwl_[x >> 3][c];
+          const uint32_t base = e & 0xFFFF, delta = e >> 16;
+          ramp[i][c] = uint16_t(std::min<uint32_t>((base + ((delta * (x & 7)) >> 3)) >> 6, 0x3FF));
+        }
+      }
+    }
+    // Nothing programmed yet (all zero): left as it is.
+    bool any = false;
+    for (const auto& e : ramp) any |= e[0] || e[1] || e[2];
+    if (!any) return;
+    destinos_->RampaGamma(ramp);
+    if (gamma_logged_ < 6) {
+      ++gamma_logged_;
+      REXLOG_INFO("[gamma] the game's {} ramp: 0 -> {} {} {}, 64 -> {} {} {}, 128 -> {} {} {}, 192 -> {} {} {}, 255 -> {} "
+                  "{} {} (10-bit; identity is 0, 257, 514, 771, 1023)",
+                  pwl ? "piecewise-linear" : "256-entry", ramp[0][0], ramp[0][1], ramp[0][2], ramp[64][0], ramp[64][1],
+                  ramp[64][2], ramp[128][0], ramp[128][1], ramp[128][2], ramp[192][0], ramp[192][1], ramp[192][2],
+                  ramp[255][0], ramp[255][1], ramp[255][2]);
+    }
+  }
+
   uint32_t Register(uint32_t index) const { return index < kRegisterCount ? registers_[index] : 0; }
 
   // Register writes from the ring, with the side effects the game relies on.
   void WriteRegister(uint32_t index, uint32_t value) {
     if (index >= kRegisterCount) {
       return;
+    }
+    if (index >= kRegDcLutFirst && index <= kRegDcLutLast) {
+      registers_[index] = value;
+      GammaRampWrite(index, value);
     }
     if (index == rex::graphics::XE_GPU_REG_COHER_STATUS_HOST) {
       value |= UINT32_C(0x80000000);
@@ -1081,6 +1177,7 @@ class RingGraphicsSystem final : public rex::system::IGraphicsSystem {
           // VdSwap describes the frontbuffer in fetch constant 0; an empty TexturaSwap finds nothing (black).
           rex::x360::TexturaSwap swap_texture = rex::x360::LeerTexturaSwap(registers_.data());
           ViewOverride(swap_texture);
+          ApplyGammaRamp();
           destinos_->Presentar(presenter_.get(), swap_texture, AnchoJuego(), AltoJuego());
           if (REXCVAR_GET(switch_omitir_pedido) && REXCVAR_GET(mp3_velocidad_prueba)) {
             REXCVAR_SET(switch_omitir_pedido, false);
@@ -3442,6 +3539,12 @@ class RingGraphicsSystem final : public rex::system::IGraphicsSystem {
   std::vector<RecordedFrame> recorder_ring_;
   size_t recorder_next_ = 0;
   uint32_t recordings_ = 0;
+  // GammaRampWrite (any thread) and ApplyGammaRamp (the ring thread)
+  std::mutex gamma_mutex_;
+  std::array<std::array<uint16_t, 3>, 256> gamma_table_{};
+  std::array<std::array<uint32_t, 3>, 128> gamma_pwl_{};
+  uint32_t gamma_subindex_ = 0, gamma_logged_ = 0;
+  bool gamma_dirty_ = false;
   // FlashCheck (recorder thread) and its traces (ring thread)
   std::array<uint32_t, 6> flash_means_{};
   uint32_t flash_dark_ = 0, flash_traces_ = 0;
