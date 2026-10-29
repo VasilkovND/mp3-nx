@@ -25,11 +25,11 @@ Playable at 540p with a mild overclock; not finished. The open work, in order, i
 
 Measured handheld, frame times are medians over 10 s windows. The game targets 30 fps (33 ms).
 
-| Resolution | Clocks (CPU / GPU MHz) | GPU per frame | Frame |
-| --- | --- | --- | --- |
-| 720p | 1785 / 614 (overclock) | 37-80 ms | 40-55 ms |
-| 540p | 1785 / 614 (overclock) | 26-30 ms | 36-45 ms |
-| 540p | 1020 / 460.8 (stock) | 25-29 ms | 41-80 ms |
+| Resolution | Clocks (CPU / GPU MHz) | FPS | Frame | GPU per frame |
+| --- | --- | --- | --- | --- |
+| 720p | 1785 / 614 (overclock) | 18-25 | 40-55 ms | 37-80 ms |
+| 540p | 1785 / 614 (overclock) | 22-28 | 36-45 ms | 26-30 ms |
+| 540p | 1020 / 460.8 (stock) | 12-24 | 41-80 ms | 25-29 ms |
 
 At stock clocks the CPU is the limit: the four cores are 85-90 % busy and audio alone takes about a core. 540p with an
 overclock is the playable setting today. Details and the next steps: [mp3/CPU_OPTIMIZATION.md](mp3/CPU_OPTIMIZATION.md).
