@@ -23,16 +23,21 @@ Playable at 540p with a mild overclock; not finished. The open work, in order, i
 
 ## Performance
 
-Measured handheld, frame times are medians over 10 s windows. The game targets 30 fps (33 ms).
+Handheld, the build of 2026-10-28. The game is capped at 30 fps. "Typical" is the median 10 s window of a session
+(menus and cutscenes included); "fights" the worst quarter of the windows.
 
-| Resolution | Clocks (CPU / GPU MHz) | FPS | Frame | GPU per frame |
-| --- | --- | --- | --- | --- |
-| 720p | 1785 / 614 (overclock) | 18-25 | 40-55 ms | 37-80 ms |
-| 540p | 1785 / 614 (overclock) | 25-30 | 33-40 ms | 26-30 ms |
-| 540p | 1020 / 460.8 (stock) | 12-24 | 41-80 ms | 25-29 ms |
+| Resolution | Clocks (CPU / GPU MHz) | Typical fps | Fights fps |
+| --- | --- | --- | --- |
+| 540p | 1785 / 614 (overclock) | 30 | 25-29 |
+| 540p | 1020 / 460.8 (stock) | 26-30 | 13-20 |
+| 720p | 1785 / 614 (overclock) | 29 | 20 |
+| 720p | 1020 / 460.8 (stock) | 21 | 19 |
+| 768x432 | 1020 / 460.8 (stock) | 30 | 13 (short run) |
 
-At stock clocks the CPU is the limit: the four cores are 85-90 % busy and audio alone takes about a core. 540p with an
+The 720p overclock figure is from 2026-10-27, before the latest CPU work, so the current build should do better. At
+stock clocks the CPU is the limit: the four cores are 85-90 % busy and audio alone takes about a core. 540p with an
 overclock is the playable setting today. Details and the next steps: [mp3/CPU_OPTIMIZATION.md](mp3/CPU_OPTIMIZATION.md).
+
 ## Legal
 
 Unofficial fan port with no affiliation to Rockstar Games or Take-Two Interactive. "Max Payne" is a trademark of
