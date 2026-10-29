@@ -84,7 +84,7 @@ void mp3_log_main_thread();  // src/mp3_guards.cpp
 #include "mp3_shaders.h"
 #include "mp3_resolution.h"
 
-// xxHash reads with memcpy under GCC's strict aliasing (see shaders/ds_shader_library.cpp).
+// xxHash reads with memcpy under GCC's strict aliasing (see shaders/mp3_shader_library.cpp).
 #undef XXH_FORCE_MEMORY_ACCESS
 #define XXH_FORCE_MEMORY_ACCESS 0
 #define XXH_INLINE_ALL

@@ -1,5 +1,5 @@
-// ds_empaquetar: the original containers and their validated SPIR-V into the library (ds_shader_library.h).
-#include "ds_shader_library.h"
+// mp3_empaquetar: the original containers and their validated SPIR-V into the library (mp3_shader_library.h).
+#include "mp3_shader_library.h"
 
 #include <algorithm>
 #include <cstdio>
@@ -18,16 +18,16 @@ std::vector<uint8_t> Leer(const fs::path& ruta) {
 }
 
 int main(int argc, char** argv) try {
-  if (argc != 4) throw std::runtime_error("Uso: ds_empaquetar <contenedores> <spirv validados> <salida nueva>");
+  if (argc != 4) throw std::runtime_error("Uso: mp3_empaquetar <contenedores> <spirv validados> <salida nueva>");
   const fs::path originales = argv[1], compilados = argv[2], salida = argv[3];
   if (fs::exists(salida)) throw std::runtime_error("La salida ya existe");
   std::vector<fs::path> rutas;
   for (const auto& e : fs::directory_iterator(originales))
     if (e.is_regular_file() && e.path().extension() == ".bin") rutas.push_back(e.path());
   std::sort(rutas.begin(), rutas.end());
-  std::vector<ds::Shader> shaders;
+  std::vector<mp3lib::Shader> shaders;
   for (const auto& ruta : rutas) {
-    ds::Shader s;
+    mp3lib::Shader s;
     s.original = Leer(ruta);
     // The library checks the container header (format 2008) when packing.
     auto spv = Leer(compilados / (ruta.stem().string() + ".spv"));
@@ -37,8 +37,8 @@ int main(int argc, char** argv) try {
                        uint32_t(spv[i+2]) << 16 | uint32_t(spv[i+3]) << 24);
     shaders.push_back(std::move(s));
   }
-  auto paquete = ds::EmpaquetarShaders(std::move(shaders));
-  ds::BibliotecaShaders biblioteca;
+  auto paquete = mp3lib::EmpaquetarShaders(std::move(shaders));
+  mp3lib::BibliotecaShaders biblioteca;
   biblioteca.Cargar(paquete);
   for (const auto& ruta : rutas)
     if (!biblioteca.Buscar(Leer(ruta))) throw std::runtime_error("Un shader no se encuentra tras empaquetar");

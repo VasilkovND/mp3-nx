@@ -1,5 +1,5 @@
 /**
- * @file    ds_dksh.cpp
+ * @file    mp3_dksh.cpp
  * @brief   The deko3d shader library to a DKSH cache, on the PC.
  *
  * Each (shader, specialization value) goes the way the console would take it: SPIR-V of the library -> GLSL
@@ -12,7 +12,7 @@
  * minimum, no blur, and without 1/size (the texture size query).
  *
  * Usage
- *   ds_dksh <mp3_shaders.dslib> <output cache> [--contenedores DIR] [--glsl DIR] [--informe FILE.tsv]
+ *   mp3_dksh <mp3_shaders.dslib> <output cache> [--contenedores DIR] [--glsl DIR] [--informe FILE.tsv]
  *           [--hilos N] [--limite SECONDS]
  *   --contenedores   the library's container folder: the report uses its names instead of numbers.
  *   Exit code 0 only if every variant compiled.
@@ -21,7 +21,7 @@
 #include "../XenosRecomp/shader_common.h"
 #include <rex/ui/deko3d/cache_dksh.h>
 #include <rex/ui/deko3d/glsl.h>
-#include "../ds_shader_library.h"
+#include "../mp3_shader_library.h"
 #include "uam_api.h"
 
 #include <algorithm>
@@ -42,7 +42,7 @@
 #include <sys/wait.h>
 #include <unistd.h>
 #endif
-// Inline, with the memcpy reads of ds_shader_library.cpp (see the note there).
+// Inline, with the memcpy reads of mp3_shader_library.cpp (see the note there).
 #define XXH_FORCE_MEMORY_ACCESS 0
 #define XXH_INLINE_ALL
 #include <xxhash.h>
@@ -208,7 +208,7 @@ bool Deserializar(const std::string& d, Compilado& c) {
 int main(int argc, char** argv) try {
   if (argc < 3) {
     std::fprintf(stderr,
-                 "uso: ds_dksh <mp3_shaders.dslib> <cache de salida> [--contenedores DIR]"
+                 "uso: mp3_dksh <mp3_shaders.dslib> <cache de salida> [--contenedores DIR]"
                  " [--glsl DIR] [--informe FICHERO.tsv] [--variantes FICHERO] [--hilos N] [--limite SEGUNDOS]\n");
     return 1;
   }
@@ -228,7 +228,7 @@ int main(int argc, char** argv) try {
     else throw std::runtime_error("opcion desconocida: " + o);
   }
 
-  ds::BibliotecaShaders biblioteca;
+  mp3lib::BibliotecaShaders biblioteca;
   biblioteca.Cargar(biblioteca_ruta);
   const auto& shaders = biblioteca.shaders();
   if (shaders.empty()) throw std::runtime_error("la biblioteca no tiene shaders");

@@ -18,11 +18,11 @@ OUT="$ROOT/mp3/out"
 mkdir -p "$OUT/shaders_extracted"
 # Vertex shaders the console could only take "by similarity" (the console's shaders_unknown/, copied to
 # mp3/out/console_unknown/ with mp3_volcar_desconocidos on): containers with the microcode as the game loads it
-# (shaders/ds_parecidos.cpp), so the library has them exactly.
+# (shaders/mp3_parecidos.cpp), so the library has them exactly.
 if [ -d "$OUT/console_unknown" ]; then
   mkdir -p "$OUT/shaders/bin"
-  clang++ -std=c++20 -O1 -I"$ROOT/sdk/thirdparty/xxHash" "$ROOT/shaders/ds_parecidos.cpp" -o "$OUT/shaders/bin/ds_parecidos"
-  "$OUT/shaders/bin/ds_parecidos" "$OUT/console_unknown" "$OUT/console_dumps"
+  clang++ -std=c++20 -O1 -I"$ROOT/sdk/thirdparty/xxHash" "$ROOT/shaders/mp3_parecidos.cpp" -o "$OUT/shaders/bin/mp3_parecidos"
+  "$OUT/shaders/bin/mp3_parecidos" "$OUT/console_unknown" "$OUT/console_dumps"
 fi
 for d in "$OUT/console_dumps" ${EXTRA:+"$EXTRA"} ${FXC:+"$FXC"}; do
   for f in "$d"/*.bin; do

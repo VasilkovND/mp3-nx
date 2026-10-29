@@ -1,14 +1,14 @@
 /**
- * @file    ds_hlsl.cpp
+ * @file    mp3_hlsl.cpp
  * @brief   Xbox 360 shaders (format 2008 containers) to HLSL for deko3d.
  *
- * XenosRecomp's translator only: DXC (from the Vulkan SDK) compiles the HLSL to SPIR-V, ds_empaquetar packs
- * it into the library and dksh/ds_dksh compiles it to DKSH. build_library.sh runs the whole chain.
+ * XenosRecomp's translator only: DXC (from the Vulkan SDK) compiles the HLSL to SPIR-V, mp3_empaquetar packs
+ * it into the library and dksh/mp3_dksh compiles it to DKSH. build_library.sh runs the whole chain.
  *
  * Input: the containers dumped on the console (shaders_dump/, mp3_shader_dump.cpp), one .bin each.
  *
  * Usage
- *   ds_hlsl <input folder> <output folder> <shader_common.h> [--saltos-lineales]
+ *   mp3_hlsl <input folder> <output folder> <shader_common.h> [--saltos-lineales]
  *
  * --saltos-lineales: forward-only jumps as `if (pc <= N)` blocks instead of `while (true) switch (pc)`, which
  * uam cannot compile in reasonable time (ShaderRecompiler::saltosLineales).
@@ -53,7 +53,7 @@ bool FirmaValida(uint32_t flags_be) {
 
 int main(int argc, char** argv) try {
   if (argc < 4 || (argc == 5 && std::strcmp(argv[4], "--saltos-lineales") != 0) || argc > 5) {
-    std::printf("uso: ds_hlsl <entrada> <salida> <shader_common.h> [--saltos-lineales]\n");
+    std::printf("uso: mp3_hlsl <entrada> <salida> <shader_common.h> [--saltos-lineales]\n");
     return 1;
   }
   const std::filesystem::path entrada = argv[1];

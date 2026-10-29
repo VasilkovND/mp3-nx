@@ -39,7 +39,7 @@ add_executable(mp3
     src/mp3_detail.cpp
     src/mp3_audio_dsp_mp3.cpp
     # The shader library reader, shared with the PC tools (shaders/).
-    ${CMAKE_CURRENT_SOURCE_DIR}/../shaders/ds_shader_library.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../shaders/mp3_shader_library.cpp
 )
 
 mp3_setup_target(mp3)

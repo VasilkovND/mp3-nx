@@ -1,14 +1,14 @@
 #pragma once
 
 // The deko3d shader library (mp3_shaders.dslib): each original Xenos container with its SPIR-V. Built on the PC
-// by ds_empaquetar, read by mp3/src/mp3_shaders.cpp on the console and by dksh/ds_dksh.
+// by mp3_empaquetar, read by mp3/src/mp3_shaders.cpp on the console and by dksh/mp3_dksh.
 
 #include <cstdint>
 #include <filesystem>
 #include <span>
 #include <vector>
 
-namespace ds {
+namespace mp3lib {
 
 // The original container also identifies constants and interface. The physical
 // code alone is not enough. It is looked up before the driver creates its object.
@@ -45,4 +45,4 @@ class BibliotecaShaders {
 // It contains private data derived from the game; it is not embedded in the executable.
 std::vector<uint8_t> EmpaquetarShaders(std::vector<Shader> shaders);
 
-}  // namespace ds
+}  // namespace mp3lib

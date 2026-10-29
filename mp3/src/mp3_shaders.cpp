@@ -7,7 +7,7 @@
 
 #include "mp3_shaders.h"
 
-#include "ds_shader_library.h"
+#include "mp3_shader_library.h"
 
 #include <algorithm>
 #include <chrono>
@@ -26,7 +26,7 @@
 #include <filesystem>
 #include <rex/system/xmemory.h>
 
-// xxHash reads with memcpy under GCC's strict aliasing (see shaders/ds_shader_library.cpp).
+// xxHash reads with memcpy under GCC's strict aliasing (see shaders/mp3_shader_library.cpp).
 #undef XXH_FORCE_MEMORY_ACCESS
 #define XXH_FORCE_MEMORY_ACCESS 0
 #define XXH_INLINE_ALL
@@ -80,7 +80,7 @@ uint32_t ContarKills(std::span<const uint32_t> spirv) {
 }
 
 // The 2008 container into an entry. Returns the reason if it cannot be read.
-const char* Leer(const ds::Shader& shader, EntradaShader& e) {
+const char* Leer(const mp3lib::Shader& shader, EntradaShader& e) {
   const Contenedor c{shader.original};
   if (!c.Hay(0, 36)) return "contenedor demasiado corto";
   const uint32_t virtuales = c.U32(4);
@@ -281,7 +281,7 @@ uint64_t Huella(bool vertices, std::span<const uint32_t> microcodigo) {
 }  // namespace
 
 struct Biblioteca::Datos {
-  ds::BibliotecaShaders biblioteca;
+  mp3lib::BibliotecaShaders biblioteca;
   std::vector<EntradaShader> entradas;
   // CargarIndice: each entry's SPIR-V once read (Completar), and whether it was.
   std::vector<std::vector<uint32_t>> spirv_leido;
@@ -316,7 +316,7 @@ bool Biblioteca::cargada() const { return datos_->cargada; }
 namespace {
 // What comes from the SPIR-V (the container has no constant table): the samplers and their types, the elements a
 // vertex shader fetches itself, the pixel shader's kills.
-void DatosDelSpirv(const ds::Shader& shader, EntradaShader& e) {
+void DatosDelSpirv(const mp3lib::Shader& shader, EntradaShader& e) {
   if (e.samplers.empty() && shader.original.size() >= 20 && Contenedor{shader.original}.U32(16) == 0) {
     SamplersDesdeSpirv(e.spirv, e.samplers);
   }
@@ -402,7 +402,7 @@ void Biblioteca::Completar(const EntradaShader* entrada) const {
     if (d.fallidas++ < 8) REXLOG_WARN("[shaders] n{}: its SPIR-V could not be read from the library", e.numero);
   } else {
     e.spirv = d.spirv_leido[i];
-    DatosDelSpirv(*static_cast<const ds::Shader*>(e.juego), e);
+    DatosDelSpirv(*static_cast<const mp3lib::Shader*>(e.juego), e);
   }
   d.leidas_ns += uint64_t(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() -
                                                                                 inicio).count());
@@ -417,7 +417,7 @@ void Biblioteca::Completar(const EntradaShader* entrada) const {
 const EntradaShader* Biblioteca::PorContenedor(std::span<const uint8_t> contenedor) const {
   const Datos& d = *datos_;
   if (!d.cargada) return nullptr;
-  const ds::Shader* shader = d.biblioteca.Buscar(contenedor);
+  const mp3lib::Shader* shader = d.biblioteca.Buscar(contenedor);
   if (!shader) return nullptr;
   const auto it = d.por_shader.find(shader);
   const EntradaShader* e = it != d.por_shader.end() ? &d.entradas[it->second] : nullptr;
@@ -438,7 +438,7 @@ void Biblioteca::RegistrarObjeto(rex::memory::Memory* memoria, uint32_t objeto, 
     return;
   }
   // The microcode as it is in the container (big-endian, unpatched): D3D has just copied it, or points at it.
-  const ds::Shader& shader = *static_cast<const ds::Shader*>(entrada->juego);
+  const mp3lib::Shader& shader = *static_cast<const mp3lib::Shader*>(entrada->juego);
   const Contenedor c{shader.original};
   const uint32_t virtuales = c.U32(4), cabecera = c.U32(24);
   const uint32_t desplazamiento = c.U32(cabecera);  // of the microcode in the physical part

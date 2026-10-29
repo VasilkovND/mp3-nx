@@ -259,7 +259,7 @@ HUD: the flashes. Next: the full-screen passes after the scene (`mp3_traza_solo_
 
 The spikes: some vertex shaders still match no container exactly (n1778 "3+5", next "9+0"): Direct3D patches them
 beyond the fetch bits when it binds a vertex declaration. With `mp3_volcar_desconocidos` the console writes each such
-load as `vs_<microcode>_de_<container>.bin` in `shaders_unknown/`; `shaders/ds_parecidos.cpp` (run by tools/shaders.sh
+load as `vs_<microcode>_de_<container>.bin` in `shaders_unknown/`; `shaders/mp3_parecidos.cpp` (run by tools/shaders.sh
 from `mp3/out/console_unknown/`) copies that container with the loaded microcode, so the library gets the shader as the
 game really runs it.
 
@@ -269,7 +269,7 @@ game really runs it.
 vertex fetch of the container is a placeholder (format 0, stride 0: `00000E50 00000000`) that Direct3D fills from the
 bound vertex declaration (`00393E50 0000000C` ...), and in some it also turns ALU instructions into nops and a fetch
 off (all components masked). Translated from the container, those fetches read nothing right: the black spikes.
-`ds_parecidos` built 16 containers with the loaded microcode; XenosRecomp now skips a fetch with no component read
+`mp3_parecidos` built 16 containers with the loaded microcode; XenosRecomp now skips a fetch with no component read
 (it wrote `r4. = ...` and 9 of them did not compile). Library: 3842 shaders.
 
 The tonemap is draw 389, ps_cd9469857a0c532a (into the 8-bit 2D0): Reinhard on the HDR scene (080D0000, fetched with

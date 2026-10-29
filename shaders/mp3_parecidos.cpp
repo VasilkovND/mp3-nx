@@ -1,7 +1,7 @@
-// ds_parecidos: shaders the console took "by similarity" (mp3_shaders.cpp, VolcarDesconocido) made library entries
+// mp3_parecidos: shaders the console took "by similarity" (mp3_shaders.cpp, VolcarDesconocido) made library entries
 // of their own.
 //
-//   ds_parecidos <shaders_unknown folder> <containers folder>
+//   mp3_parecidos <shaders_unknown folder> <containers folder>
 //
 // Direct3D patches a vertex shader's microcode when it binds it to a vertex declaration (the fetches, sometimes a few
 // exports), so some loads match no container of the library exactly and the console takes the closest one, which
@@ -40,7 +40,7 @@ uint32_t U32(const std::vector<uint8_t>& d, size_t o) {
 
 int main(int argc, char** argv) {
   if (argc != 3) {
-    std::fprintf(stderr, "uso: ds_parecidos <shaders_unknown> <contenedores>\n");
+    std::fprintf(stderr, "uso: mp3_parecidos <shaders_unknown> <contenedores>\n");
     return 1;
   }
   const fs::path desconocidos = argv[1], contenedores = argv[2];
@@ -74,6 +74,6 @@ int main(int argc, char** argv) {
     std::ofstream(destino, std::ios::binary).write(reinterpret_cast<const char*>(c.data()), std::streamsize(c.size()));
     ++nuevos;
   }
-  std::printf("ds_parecidos: %d contenedores nuevos, %d ya estaban, %d fallidos\n", nuevos, presentes, fallidos);
+  std::printf("mp3_parecidos: %d contenedores nuevos, %d ya estaban, %d fallidos\n", nuevos, presentes, fallidos);
   return fallidos ? 1 : 0;
 }
