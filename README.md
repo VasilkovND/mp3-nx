@@ -1,4 +1,4 @@
-# mp3-nx: Max Payne 3 on the Nintendo Switch (homebrew, private)
+# mp3-nx: Max Payne 3 on the Nintendo Switch (homebrew)
 
 Max Payne 3 (Xbox 360, Title Update 6) statically recompiled to ARM with ReXGlue and drawn with deko3d, on the stack of
 gta4-nx (GTA IV, the same RAGE engine), ds2-nx, ds3-nx, gears2-nx and dantes-inferno-nx. **Playable at 540p with a mild
