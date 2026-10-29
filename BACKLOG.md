@@ -41,20 +41,20 @@ renderer (overexposure) and performance at stock clocks. Details of each item: `
 
 ## Performance
 
-Measured handheld (runs 17-38):
+Measured handheld, the current build (runs 50-57, 2026-10-28; capped at 30 fps):
 
-| Setting | GPU busy / frame | GPU idle waiting for CPU | Frame (median) |
-| --- | --- | --- | --- |
-| 720p, CPU 1785, GPU 614 | 37-80 ms | 1-2 ms | 40-55 ms |
-| 540p, CPU 1785, GPU 614 | 26-30 ms | 4-10 ms | 36-45 ms |
-| 540p, CPU 1020, GPU 460.8 (stock) | 25-29 ms | 9-25 ms | 41-80 ms |
+| Setting | Typical fps | Fights fps |
+| --- | --- | --- |
+| 540p, CPU 1785, GPU 614 (overclock) | 30 | 25-29 |
+| 540p, CPU 1020, GPU 460.8 (stock) | 26-30 | 13-20 |
+| 720p, CPU 1020, GPU 460.8 (stock) | 21 | 19 |
 
 At stock clocks the CPU is the limit: the four cores are 85-90 % busy. Audio takes about 115 % of a core (XAudio2 mixer
 ~82 %, XMA decoder ~33 %) and underruns.
 
 ### Done
 
-- 540p and 768x432 (ZL+ZR+Minus menu). 540p: GPU -35 %.
+- 540p (ZL+ZR+Minus menu): GPU -35 %.
 - Handheld GPU 460.8 MHz profile at stock CPU.
 - SDK 0201 (guest clock without a mutex), 0205 (shader-read vertex buffers reused), 0206 (lock and wait syscalls
   counted), 0207 (events signal only their waiters), 0208 (RCAS sharpening of the stretched frame), 0209 (object lookups

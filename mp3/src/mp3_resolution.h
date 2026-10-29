@@ -1,6 +1,5 @@
-// mp3-nx - the frame's resolution: 1280x720, 960x540 or 768x432 (the same 16:9 shape; the presenter stretches it to the
-// screen). 960x540 is for stock clocks: the GPU draws about 56 % of the pixels; 768x432 (run 38: the GPU still at
-// 32-43 ms a frame at stock) 36 %. Max Payne 3 keeps the size it
+// mp3-nx - the frame's resolution: 1280x720 or 960x540 (the same 16:9 shape; the presenter stretches it to the
+// screen). 960x540 is for stock clocks: the GPU draws about 56 % of the pixels. Max Payne 3 keeps the size it
 // wants in two words at 0x83139EB0/B4 (1280, 720 in the image); sub_822BB928 compares them with the device's size
 // (0x831D0954/58, taken from XGetVideoMode by sub_82DEEA18) and, when they differ, resets the device and resizes every
 // render target to them. Run 19 changed only the video mode: the game put everything back to 1280x720 and the frame
@@ -33,11 +32,11 @@ namespace mp3::resolucion {
 inline std::filesystem::path Fichero() { return rex::filesystem::GetExecutableFolder() / "mp3_resolucion.txt"; }
 
 // The sizes of each choice (by its height).
-inline uint32_t Ancho(uint32_t alto) { return alto == 432 ? 768 : alto == 540 ? 960 : 1280; }
-inline uint32_t Alto(uint32_t alto) { return alto == 432 || alto == 540 ? alto : 720; }
-inline bool Valida(uint32_t v) { return v == 720 || v == 540 || v == 432; }
+inline uint32_t Ancho(uint32_t alto) { return alto == 540 ? 960 : 1280; }
+inline uint32_t Alto(uint32_t alto) { return alto == 540 ? alto : 720; }
+inline bool Valida(uint32_t v) { return v == 720 || v == 540; }
 
-// The saved choice (720, 540 or 432), 0 if there is none.
+// The saved choice (720 or 540), 0 if there is none.
 inline uint32_t Guardada() {
   FILE* f = std::fopen(Fichero().string().c_str(), "r");
   if (!f) return 0;
