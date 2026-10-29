@@ -35,7 +35,7 @@ of a session (menus and cutscenes included); "fights" the worst quarter of the w
 | --- | --- | --- | --- |
 | 540p | 1785 / 614 (overclock) | 30 | 25-29 |
 | 540p | 1020 / 460.8 (stock) | 26-30 | 13-20 |
-| 720p | 1020 / 460.8 (stock) | 21 | 19 |
+| 720p | 1020 / 460.8 (stock) | 21 | not measured |
 
 At stock clocks the CPU is the limit: the four cores are 85-90 % busy and audio alone takes about a core. 540p with an
 overclock is the playable setting today. Details and the next steps: [mp3/CPU_OPTIMIZATION.md](mp3/CPU_OPTIMIZATION.md).

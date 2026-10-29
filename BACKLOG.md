@@ -47,7 +47,7 @@ Measured handheld, the current build (runs 50-57, 2026-10-28; capped at 30 fps):
 | --- | --- | --- |
 | 540p, CPU 1785, GPU 614 (overclock) | 30 | 25-29 |
 | 540p, CPU 1020, GPU 460.8 (stock) | 26-30 | 13-20 |
-| 720p, CPU 1020, GPU 460.8 (stock) | 21 | 19 |
+| 720p, CPU 1020, GPU 460.8 (stock) | 21 | not measured |
 
 At stock clocks the CPU is the limit: the four cores are 85-90 % busy. Audio takes about 115 % of a core (XAudio2 mixer
 ~82 %, XMA decoder ~33 %) and underruns.
