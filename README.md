@@ -28,7 +28,7 @@ Measured handheld, frame times are medians over 10 s windows. The game targets 3
 | Resolution | Clocks (CPU / GPU MHz) | FPS | Frame | GPU per frame |
 | --- | --- | --- | --- | --- |
 | 720p | 1785 / 614 (overclock) | 18-25 | 40-55 ms | 37-80 ms |
-| 540p | 1785 / 614 (overclock) | 22-28 | 36-45 ms | 26-30 ms |
+| 540p | 1785 / 614 (overclock) | 25-30 | 33-40 ms | 26-30 ms |
 | 540p | 1020 / 460.8 (stock) | 12-24 | 41-80 ms | 25-29 ms |
 
 At stock clocks the CPU is the limit: the four cores are 85-90 % busy and audio alone takes about a core. 540p with an
