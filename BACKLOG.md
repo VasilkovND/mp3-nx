@@ -2,7 +2,7 @@
 
 State (2026-10-29): the game runs and can be played at 540p with a mild overclock. Two areas are not done: the
 renderer (overexposure) and performance at stock clocks. Details of each item: `mp3/PORTING.md` (render) and
-`mp3/CPU_OPTIMIZATION.md` (performance, branch `claude/kind-kalam-7c40c9`).
+`mp3/CPU_OPTIMIZATION.md` (performance).
 
 ## Render
 
@@ -52,7 +52,7 @@ Measured handheld (runs 17-38):
 At stock clocks the CPU is the limit: the four cores are 85-90 % busy. Audio takes about 115 % of a core (XAudio2 mixer
 ~82 %, XMA decoder ~33 %) and underruns.
 
-### Done (branch `claude/kind-kalam-7c40c9`, not on main yet)
+### Done
 
 - 540p and 768x432 (ZL+ZR+Minus menu). 540p: GPU -35 %.
 - Handheld GPU 460.8 MHz profile at stock CPU.
@@ -66,13 +66,12 @@ At stock clocks the CPU is the limit: the four cores are 85-90 % busy. Audio tak
 
 ### Next, by expected gain
 
-1. Merge `claude/kind-kalam-7c40c9` into main.
-2. Thread priorities for the render thread and the job workers (`mp3_prioridad_render`, `mp3_prioridad_trabajos`): A/B.
-3. XMA: every kick and lock goes through the MMIO handler (~3 us). A/B `audio_xma_en_trabajador`.
-4. GPU ring: 12-20 us to record a draw. Texture rechecks back to sampling.
-5. 7e3 resolves (format 12 to RGBA8): 3-4 full-frame copies a frame at 540p.
-6. Game-side load: detail distance and ped density scales (as gta4-nx's `gta4_distancia_lod`, `gta4_densidad_*`).
-7. Code generation levers not started: PRES for vector and CR saves; cross-file inlining of hot call chains.
+1. Thread priorities for the render thread and the job workers (`mp3_prioridad_render`, `mp3_prioridad_trabajos`): A/B.
+2. XMA: every kick and lock goes through the MMIO handler (~3 us). A/B `audio_xma_en_trabajador`.
+3. GPU ring: 12-20 us to record a draw. Texture rechecks back to sampling.
+4. 7e3 resolves (format 12 to RGBA8): 3-4 full-frame copies a frame at 540p.
+5. Game-side load: detail distance and ped density scales (as gta4-nx's `gta4_distancia_lod`, `gta4_densidad_*`).
+6. Code generation levers not started: PRES for vector and CR saves; cross-file inlining of hot call chains.
 
 ## Repository
 

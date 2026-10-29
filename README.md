@@ -33,10 +33,6 @@ Measured handheld, frame times are medians over 10 s windows. The game targets 3
 
 At stock clocks the CPU is the limit: the four cores are 85-90 % busy and audio alone takes about a core. 540p with an
 overclock is the playable setting today. Details and the next steps: [mp3/CPU_OPTIMIZATION.md](mp3/CPU_OPTIMIZATION.md).
-
-The 540p mode, the audio DSP and the CPU work are on the branch `claude/kind-kalam-7c40c9` until it is merged into
-`main`.
-
 ## Legal
 
 Unofficial fan port with no affiliation to Rockstar Games or Take-Two Interactive. "Max Payne" is a trademark of
