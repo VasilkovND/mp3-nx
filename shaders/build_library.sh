@@ -1,15 +1,15 @@
 #!/bin/bash
 # Builds the deko3d shader library from the containers the game dumped on the console (shaders_dump/):
-#   1. ds_hlsl         containers -> HLSL (XenosRecomp's translator, --saltos-lineales)
+#   1. mp3_hlsl         containers -> HLSL (XenosRecomp's translator, --saltos-lineales)
 #   2. dxc, spirv-val  HLSL -> SPIR-V for deko3d, validated (Vulkan SDK)
-#   3. ds_empaquetar   containers + SPIR-V -> mp3_shaders.dslib
-#   4. ds_dksh         (optional, DKSH=1) the library -> shadercache_dksh.bin, so the console never runs uam
+#   3. mp3_empaquetar   containers + SPIR-V -> mp3_shaders.dslib
+#   4. mp3_dksh         (optional, DKSH=1) the library -> shadercache_dksh.bin, so the console never runs uam
 #
 # Usage: shaders/build_library.sh <shaders_dump> <output folder>
 #   VULKAN_BIN   folder with dxc and spirv-val (default: ~/VulkanSDK/*/macOS/bin)
 #   DKSH=1       also build dksh/ (needs the SDK's thirdparty submodules) and the DKSH cache
 #   JOBS         parallel DXC processes (default: every core)
-#   VARIANTES    a list of extra DKSH variants the console asked for (ds_dksh --variantes)
+#   VARIANTES    a list of extra DKSH variants the console asked for (mp3_dksh --variantes)
 # Writes <output>/mp3_shaders.dslib (and shadercache_dksh.bin), the HLSL and SPIR-V of each shader, and the
 # errors of the ones that did not compile in <output>/err/. Copy the .dslib and the cache next to the NRO.
 set -euo pipefail
@@ -38,14 +38,14 @@ echo "== tools"
 clang++ -std=c++2b -O1 -I"$shaders" -I"$shaders/XenosRecomp" -I"$terceros/fmt/include" -I"$terceros/xxHash" \
   -include "$shaders/XenosRecomp/pch_min.h" -DFMT_HEADER_ONLY -DXXH_INLINE_ALL \
   -Wno-switch -Wno-unused-variable -Wno-null-arithmetic -fms-extensions -fexperimental-library \
-  "$shaders/ds_hlsl.cpp" "$shaders/XenosRecomp/shader_recompiler.cpp" -o "$bin/ds_hlsl"
+  "$shaders/mp3_hlsl.cpp" "$shaders/XenosRecomp/shader_recompiler.cpp" -o "$bin/mp3_hlsl"
 clang++ -std=c++20 -O1 -I"$shaders" -I"$terceros/xxHash" \
-  "$shaders/ds_empaquetar.cpp" "$shaders/ds_shader_library.cpp" -o "$bin/ds_empaquetar"
+  "$shaders/mp3_empaquetar.cpp" "$shaders/mp3_shader_library.cpp" -o "$bin/mp3_empaquetar"
 
 echo "== HLSL"
 rm -rf "$salida/hlsl" "$salida/spirv" "$salida/err"
-"$bin/ds_hlsl" "$entrada" "$salida/hlsl" "$shaders/XenosRecomp/shader_common.h" --saltos-lineales > "$salida/ds_hlsl.log"
-tail -1 "$salida/ds_hlsl.log"
+"$bin/mp3_hlsl" "$entrada" "$salida/hlsl" "$shaders/XenosRecomp/shader_common.h" --saltos-lineales > "$salida/mp3_hlsl.log"
+tail -1 "$salida/mp3_hlsl.log"
 
 echo "== SPIR-V"
 mkdir -p "$salida/spirv" "$salida/err"
@@ -77,13 +77,13 @@ for spv in "$salida"/spirv/*.spv; do
   ln -s "$entrada/$(basename "$spv" .spv).bin" "$contenedores/"
 done
 rm -f "$salida/mp3_shaders.dslib"
-"$bin/ds_empaquetar" "$contenedores" "$salida/spirv" "$salida/mp3_shaders.dslib"
+"$bin/mp3_empaquetar" "$contenedores" "$salida/spirv" "$salida/mp3_shaders.dslib"
 
 if [ "${DKSH:-0}" = 1 ]; then
   echo "== DKSH"
   cmake -S "$shaders/dksh" -B "$salida/build_dksh" -G Ninja -DCMAKE_BUILD_TYPE=Release > "$salida/dksh_cmake.log"
   cmake --build "$salida/build_dksh" > "$salida/dksh_build.log"
-  "$salida/build_dksh/ds_dksh" "$salida/mp3_shaders.dslib" "$salida/shadercache_dksh.bin" \
+  "$salida/build_dksh/mp3_dksh" "$salida/mp3_shaders.dslib" "$salida/shadercache_dksh.bin" \
     --contenedores "$contenedores" --informe "$salida/dksh.tsv" ${VARIANTES:+--variantes "$VARIANTES"} \
     > "$salida/dksh.log" 2>&1 ||
     echo "some variants failed: $salida/dksh.tsv"

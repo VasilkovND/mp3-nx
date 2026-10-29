@@ -1,4 +1,4 @@
-#include "ds_shader_library.h"
+#include "mp3_shader_library.h"
 
 #include <algorithm>
 #include <array>
@@ -21,7 +21,7 @@
 #define XXH_INLINE_ALL
 #include <xxhash.h>
 
-namespace ds {
+namespace mp3lib {
 namespace {
 constexpr std::array<uint8_t, 8> kFirma{'D','S','2','S','P','V',0,0};
 constexpr size_t kMaxArchivo = size_t(2) << 30;  // Gears of War 2: all 35,886 shaders are ~470 MB
@@ -275,4 +275,4 @@ std::vector<uint8_t> EmpaquetarShaders(std::vector<Shader> shaders) {
   archivo.insert(archivo.end(), cuerpo.begin(), cuerpo.end());
   return archivo;
 }
-}  // namespace ds
+}  // namespace mp3lib

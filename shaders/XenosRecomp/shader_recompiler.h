@@ -42,7 +42,7 @@ struct ShaderRecompiler : StringBuffer
     // Containers without a constant table (Gears of War 2: Unreal Engine 3 strips it and sets constants by register).
     // The float registers are read straight from the stage's uniform block (g_C for relative reads), the bool
     // constants get one name per bit (g_Bool0-15), and the samplers come from samplersSinTabla: sampler register ->
-    // fetch dimensions (bit 1 << TextureDimension), which ds_hlsl gets from a first pass over the same shader
+    // fetch dimensions (bit 1 << TextureDimension), which mp3_hlsl gets from a first pass over the same shader
     // (dimensionesBuscadas of names s<fetch constant>). literalesSinTabla: registers the shader defines itself.
     bool sinTabla = false;
     std::unordered_map<uint32_t, uint32_t> samplersSinTabla;
@@ -60,7 +60,7 @@ struct ShaderRecompiler : StringBuffer
     std::unordered_set<uint32_t> sinUbicacion;
     bool usaIndiceVertice = false;
     // Forward-only jumps as `if (pc <= N)` blocks instead of `while (true) switch (pc)` (recompile()). Turned on by
-    // ds_hlsl --saltos-lineales (needed so uam can compile the jump-heavy shaders).
+    // mp3_hlsl --saltos-lineales (needed so uam can compile the jump-heavy shaders).
     bool saltosLineales = false;
     std::unordered_map<uint32_t, uint32_t> ifEndLabels;
     uint32_t specConstantsMask = 0;
