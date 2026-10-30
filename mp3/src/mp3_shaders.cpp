@@ -295,13 +295,10 @@ struct Biblioteca::Datos {
   std::mutex mutex;  // the maps below: the create hooks run on game threads, IM_LOAD on the ring thread
   std::unordered_map<uint32_t, const EntradaShader*> por_direccion;  // physical address of the microcode
   // Step 1's answers already checked against the code at that address: the next load from it (about 50,000 a second,
-  // most of them repeats) is recognised by comparing its words with the ones checked, without hashing the microcode.
-  // All of them, not three: D3D patches the same shader at the same address again for another vertex declaration
-  // (Max's jacket VS on the cloth) and only the fetch words change; recognised by three words it kept the other
-  // layout: the black spikes on Max came back.
+  // most of them repeats) is recognised by its length and three of its words, without hashing the microcode.
   struct Validada {
     const EntradaShader* entrada;
-    std::vector<uint32_t> codigo;
+    uint32_t palabras, primera, media, ultima;
   };
   std::unordered_map<uint32_t, Validada> validadas;
   std::unordered_map<uint64_t, const EntradaShader*> aprendidas;     // Huella(patched microcode)
@@ -510,7 +507,8 @@ const EntradaShader* Biblioteca::IdentificarEntrada(bool vertices, uint32_t fisi
   if (fisica && n) {
     if (auto it = d.validadas.find(fisica & 0x1FFFFFFF); it != d.validadas.end()) {
       const Datos::Validada& v = it->second;
-      if (v.codigo.size() == n && std::memcmp(v.codigo.data(), microcodigo.data(), n * sizeof(uint32_t)) == 0) {
+      if (v.palabras == n && v.primera == microcodigo[0] && v.media == microcodigo[n / 2] &&
+          v.ultima == microcodigo[n - 1]) {
         ++d.estadisticas.por_direccion;
         return v.entrada;
       }
@@ -547,7 +545,8 @@ const EntradaShader* Biblioteca::IdentificarEntrada(bool vertices, uint32_t fisi
       if (!fetch_distintas && distintas <= std::max<size_t>(3, microcodigo.size() / 8)) {
         ++d.estadisticas.por_direccion;
         if (vertices) d.aprendidas[huella] = it->second;
-        d.validadas[fisica & 0x1FFFFFFF] = {it->second, {microcodigo.begin(), microcodigo.end()}};
+        d.validadas[fisica & 0x1FFFFFFF] = {it->second, uint32_t(n), microcodigo[0], microcodigo[n / 2],
+                                            microcodigo[n - 1]};
         return it->second;
       }
       ++d.estadisticas.direccion_rechazada;
