@@ -1771,12 +1771,12 @@ class RingGraphicsSystem final : public rex::system::IGraphicsSystem {
       return;
     }
     // The same vertex shader loaded again from the same address (D3D reloads it for every draw that sets it): its
-    // patched microcode and generation are the ones already here. Checked by length and three words, as the library
-    // does, instead of copying and hashing it again.
+    // patched microcode and generation are the ones already here. Checked by comparing every word, instead of copying
+    // and hashing it again: D3D patches the same address again for another vertex declaration, and only the fetch
+    // words change (three words checked kept the old vertex layout: the black spikes on Max).
     const size_t n = microcode_.size();
     if (physical && entry && entry == vs_ && physical == vs_physical_ && n && n == vs_microcode_.size() &&
-        microcode_[0] == vs_microcode_[0] && microcode_[n / 2] == vs_microcode_[n / 2] &&
-        microcode_[n - 1] == vs_microcode_[n - 1]) {
+        std::memcmp(microcode_.data(), vs_microcode_.data(), n * sizeof(uint32_t)) == 0) {
       return;
     }
     vs_physical_ = physical;
