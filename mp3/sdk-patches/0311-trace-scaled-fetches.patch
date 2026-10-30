@@ -1,0 +1,72 @@
+SDK patch 0311 (Max Payne 3 port): x360_traza_fetch_escalado. One log line every ~10 s per distinct
+scale a resolved texture was fetched with: base, the fetch's exp_adjust, the exp_previo its resolve baked
+in, and whether the read went through a scaled copy. The scene and the bloom chain resolve the same EDRAM
+address through several format views with different copy exp biases; a net power of two that is off is
+what whitens the tonemap's input (the 2^-4 the Xbox-frame fit found). Default off.
+
+--- a/src/x360/deko/texturas.cpp
++++ b/src/x360/deko/texturas.cpp
+@@ -63,12 +63,18 @@
+                      "Fotogramas como mucho entre dos recomprobaciones de una textura estable (1 a 32): un juego que "
+                      "carga otra textura en la misma memoria la ve como mucho este tiempo con el contenido viejo");
+ REXCVAR_DEFINE_BOOL(x360_texturas_por_escritura, true, "X360",
+                     "Una textura cuya memoria el juego escribio en bloque (XMemCpy, XMemDecompress; el port los "
+                     "engancha) se recomprueba en su siguiente uso, no al cumplirse su intervalo; la cache por fetch de "
+                     "los dibujos solo vale un fotograma");
++REXCVAR_DEFINE_BOOL(x360_traza_fetch_escalado, false, "X360",
++                    "Un log cada 10 s por cada escala distinta con que se leyo una textura resuelta con exp_adjust: "
++                    "base, el exp_adjust del fetch, el exp_previo que su resolve horneo y si la lectura pasa por una "
++                    "copia escalada (la escena y el bloom de MP3 resuelven la misma direccion a traves de varias "
++                    "vistas de formato con biases de copia distintos; un error de potencia de dos en el neto es lo "
++                    "que blanquea la entrada del tonemap)");
+ REXCVAR_DECLARE(bool, x360_resolve_exp_previsto);  // destinos.cpp
+ REXCVAR_DECLARE(bool, x360_resolve_16_fijo);  // destinos.cpp
+ 
+ namespace rex::x360 {
+ namespace {
+ 
+@@ -650,20 +656,41 @@
+       // bias 11, as integers with exp_adjust -11 or -13. A scaled copy.
+       const int32_t exp_adjust = int32_t(f[3] << 13) >> 26;
+       const bool fraccion_16 = ((f[1] & 0x3F) == 26 || (f[1] & 0x3F) == 25) && !(f[3] & 0x1) && resuelta->entero16 &&
+                                REXCVAR_GET(x360_resolve_16_fijo);
+       // x360_resolve_exp_previsto: the resolve may have applied this fetch's exp_adjust already (exp_previo); only
+       // what is left is scaled, and the exp_adjust is remembered for the next resolve here.
++      const int8_t exp_previa = resuelta->exp_previo;  // 0311: logged before the scaled copy replaces the image
+       if (!resuelta->profundidad && !fraccion_16 && REXCVAR_GET(x360_resolve_exp_previsto)) {
+         resuelta->exp_leida = int8_t(exp_adjust);
+         resuelta->exp_leida_valida = true;
+       }
+-      const int32_t exp_resto = exp_adjust - resuelta->exp_previo;
++      const int32_t exp_resto = exp_adjust - exp_previa;
++      const ImagenDk* escalada = nullptr;
+       if ((exp_resto || fraccion_16) && !resuelta->profundidad) {
+-        if (const ImagenDk* escalada = ResueltaEscalada(*resuelta, exp_resto, fraccion_16)) {
+-          resuelta = escalada;
++        escalada = ResueltaEscalada(*resuelta, exp_resto, fraccion_16);
++        if (escalada) resuelta = escalada;
++      }
++      // 0311, x360_traza_fetch_escalado: the real scale each fetch of a resolved texture got, one line per distinct
++      // combination every ~10 s (the values can change from frame to frame: a resolve through another format view
++      // rewrites the same address with another baked exp_previo).
++      if (REXCVAR_GET(x360_traza_fetch_escalado) && (exp_adjust || exp_previa)) {
++        static std::unordered_map<uint64_t, uint32_t> vistas_fetch_;
++        if (vistas_fetch_.size() > 96) vistas_fetch_.clear();
++        const uint32_t fotograma = fotograma_ ? fotograma_ : 1;
++        const uint64_t clave = (uint64_t(base & 0x1FFFFFFD) << 33) |
++                               (uint64_t(uint32_t(exp_adjust + 64) & 0x7F) << 26) |
++                               (uint64_t(uint32_t(exp_previa + 64) & 0x7F) << 19) |
++                               (uint64_t(escalada != nullptr) << 18) | (uint32_t(fraccion_16) << 17) |
++                               (uint64_t(ancho_fetch & 0x7FF) << 6) | (alto_fetch & 0x3F);
++        const auto [it, nueva] = vistas_fetch_.try_emplace(clave, 0);
++        if (nueva || fotograma - it->second >= 300) {
++          it->second = fotograma;
++          REXLOG_INFO("[traza-fetch] base {:08X} fetch {}x{} exp_adjust {} exp_previo {} fraccion16 {} -> {}",
++                      base & 0x1FFFFFFD, ancho_fetch, alto_fetch, exp_adjust, int32_t(exp_previa),
++                      fraccion_16 ? "si" : "no", escalada ? "copia escalada" : "DIRECTA sin escala");
+         }
+       }
+       // Resolved textures report their size like any other (without it the shadow PCF taps collapse).
+       ancho_out = resuelta->ancho;
+       alto_out = resuelta->alto;
+       if (resuelta->profundidad) {
