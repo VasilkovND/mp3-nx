@@ -3111,9 +3111,10 @@ class RingGraphicsSystem final : public rex::system::IGraphicsSystem {
     if (tonemap) {
       REXLOG_INFO("[exposicion] tonemap {:016X}: gAdaptedLum c88 {} Exposures c137 {} ToneMapParams c139 {} BurnoutLimit "
                   "c142 {} deSatContrastGamma c46 {} deSatContrastGammaIFX c75 {} ColorCorrectTop c43 {} "
-                  "ColorCorrectBottom c44 {} BrightnessSetting c130 {} KillFlashCol c146 {} InterlaceMask c147 {}",
+                  "ColorCorrectBottom c44 {} BrightnessSetting c130 {} KillFlashCol c146 {} InterlaceMask c147 {} "
+                  "alu c250 {} c251 {} c252 {} c253 {} c254 {} c255 {}",
                   ps_->huella_contenedor, c(88), c(137), c(139), c(142), c(46), c(75), c(43), c(44), c(130), c(146),
-                  c(147));
+                  c(147), c(250), c(251), c(252), c(253), c(254), c(255));
     } else {
       REXLOG_INFO("[exposicion] adaptacion: AdaptedLumMin c140 {} AdaptedLumMax c141 {} ElapsedTime c159 {} AdaptTime "
                   "c160 {}",
