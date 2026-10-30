@@ -2210,6 +2210,12 @@ class RingGraphicsSystem final : public rex::system::IGraphicsSystem {
       }
       ++generacion_constantes_ps_;
       request.generacion_constantes_ps = generacion_constantes_ps_;
+      // The fact it reached this draw (once in 10 s): the scaled value the tonemap really got.
+      if (Clock::now() >= next_exposure_applied_log_) {
+        next_exposure_applied_log_ = Clock::now() + std::chrono::seconds(10);
+        REXLOG_INFO("[exposicion] aplicada {} (c137.x {:g})", exposure,
+                    std::bit_cast<float>(registers_[0x4000 + (256 + 137) * 4]));
+      }
     }
     // mp3_fxaa_sin_sesgo: the game's FXAA writes into the scene's 7e3 target, whose RB_COLOR_INFO keeps color_exp_bias
     // 2 (x4) from the lighting; its output is already the 0..1 picture and the resolve to the 8-bit front buffer has no
@@ -3675,6 +3681,7 @@ class RingGraphicsSystem final : public rex::system::IGraphicsSystem {
   uint32_t glow_draws_logged_ = 0;
   bool draw_tracing_ = false;
   uint32_t draw_traces_ = 0, draw_trace_n_ = 0, draw_trace_cap_ = 400;
+  Clock::time_point next_exposure_applied_log_{};
   Clock::time_point next_tonemap_log_{}, next_adaptation_log_{}, next_fxaa_log_{};
   bool tonemap_effect_logged_ = false;
   std::string omitted_vs_text_;
