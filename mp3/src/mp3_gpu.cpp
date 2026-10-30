@@ -210,6 +210,9 @@ REXCVAR_DEFINE_BOOL(mp3_saltar_vs_rotos, false, "MP3",
 REXCVAR_DEFINE_STRING(mp3_omitir_vs, "", "MP3",
                       "Prueba: no dibujar los vertex shaders de estos contenedores (huellas en hex separadas por comas, "
                       "p. ej. 33041FEED58EB114: la chaqueta de Max con la tela)");
+REXCVAR_DEFINE_DOUBLE(mp3_bloom_juego, 0.17, "MP3",
+                    "La escala del bloom de los tonemaps de juego (6671/FE22): 1 = como el juego la pide (2.88, "
+                    "decia 6 veces la de las cutscenes); 0.17 la iguala a la de las cutscenes (0.5, el default); 0 lo apaga");
 REXCVAR_DEFINE_DOUBLE(mp3_exposicion, 1.0, "MP3",
                       "Exposicion del tonemap: multiplica sus Exposures (c137) antes de la curva. 1 = la del juego; menos "
                       "de 1 baja el pase de luz quemado (0.4 a 1.0)");
@@ -2196,6 +2199,19 @@ class RingGraphicsSystem final : public rex::system::IGraphicsSystem {
       }
       ++generacion_constantes_vs_;
       request.generacion_constantes_vs = generacion_constantes_vs_;
+    }
+    // mp3_bloom_juego: the gameplay tonemaps (6671/FE22) take their bloom with ToneMapParams c139.z = 2.88, the
+    // cutscenes' (CD94) with 0.5 - and the cutscenes look right. In gameplay the strong bloom washes lit textures
+    // white (nothing of the kind in cutscenes); the gameplay tonemaps get the cutscene's bloom scale instead. Only
+    // c139.z (the calm picture's scale; the mask blends towards c139.w, the effects' own): the game rewrites c139.
+    const float bloom_juego = float(REXCVAR_GET(mp3_bloom_juego));
+    if (bloom_juego > 0.0f && ps_ &&
+        (ps_->huella_contenedor == UINT64_C(0x6671591252A5BCE2) ||
+         ps_->huella_contenedor == UINT64_C(0xFE226603F40E2533))) {
+      uint32_t& word = registers_[0x4000 + (256 + 139) * 4 + 2];
+      word = std::bit_cast<uint32_t>(std::bit_cast<float>(word) * bloom_juego);
+      ++generacion_constantes_ps_;
+      request.generacion_constantes_ps = generacion_constantes_ps_;
     }
     // mp3_exposicion: the tonemap's Exposures (c137.xy) scaled for this draw, before its curve (not a ramp on the
     // output: the highlights keep their roll-off).
