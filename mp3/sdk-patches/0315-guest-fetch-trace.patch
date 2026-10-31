@@ -1,0 +1,36 @@
+SDK patch 0315 (Max Payne 3 port): the scaled-fetch trace covers the guest textures too. The tonemap paints
+black with every resolved input verified, so something it samples from guest memory is garbage; one line per
+distinct guest fetch (base, format, TextureSign, size, exp_adjust) every ~10 s.
+
+--- a/src/x360/deko/texturas.cpp
++++ b/src/x360/deko/texturas.cpp
+@@ -753,12 +753,29 @@
+       REXLOG_WARN("[deko3d] causa {}: textura de profundidad {:08X} {}x{} sin resolve; resueltas cerca:{}",
+                   400 + formato, base, (f[2] & 0x1FFF) + 1, ((f[2] >> 13) & 0x1FFF) + 1,
+                   cerca.empty() ? " ninguna" : cerca);
+     }
+     return VaciaDe(tipo_shader);
+   }
++  // 0315, x360_traza_fetch_escalado: the guest textures too (the resolved branch is traced by 0311). The tonemap
++  // paints black with its resolved inputs verified, so something it samples from guest memory is garbage; this line
++  // names every distinct guest fetch (base, format, signs, size) about once every 10 s.
++  if (REXCVAR_GET(x360_traza_fetch_escalado)) {
++    static std::unordered_map<uint64_t, uint32_t> vistas_huesped_;
++    if (vistas_huesped_.size() > 96) vistas_huesped_.clear();
++    const uint32_t fotograma_h = fotograma_ ? fotograma_ : 1;
++    const uint64_t clave_h = (uint64_t(base & 0x1FFFFFFF) << 20) | (uint64_t(formato) << 14) |
++                             (uint64_t(signos) << 6) | ((f[2] >> 13) & 0x3F);
++    const auto [it_h, nueva_h] = vistas_huesped_.try_emplace(clave_h, 0);
++    if (nueva_h || fotograma_h - it_h->second >= 300) {
++      it_h->second = fotograma_h;
++      REXLOG_INFO("[traza-fetch] huesped base {:08X} {}x{} fmt {} signos {:02X} exp_adjust {}", base,
++                  (f[2] & 0x1FFF) + 1, ((f[2] >> 13) & 0x1FFF) + 1, formato, signos,
++                  int32_t(f[3] << 13) >> 26);
++    }
++  }
+   const DkImageFormat formato_vista = FormatoVistaSigno(tf.formato, signos);
+   if (signos && formato_vista == DkImageFormat_None) {
+     Avisar(31, "texturas con signo o gamma mezclados o sesgados: se leen sin signo");
+   }
+   // size_2d: 13 + 13 bits; size_3d: 11 + 11 + 10 bits (xenos.h).
+   const uint32_t ancho = volumen ? (f[2] & 0x7FF) + 1 : (f[2] & 0x1FFF) + 1;
