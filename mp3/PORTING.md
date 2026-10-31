@@ -527,9 +527,12 @@ Established, in order:
    strongest remaining explanation is item 2 (the whole presented frame is the raw clipped copy: its dump median
    is 0.94 with half the pixels at 1.0 - "white textures" and "a washed frame" are the same artifact).
 2. The black tonemap output (0654D000) with a live input: its draw runs (-> drawn, stencil 00FFFF00, depthctl
-   00700764 - the stencil test is on) and writes nothing. The remaining suspect is the depth-restore pass's
-   stencil (EdramZPorColor writes 0xFF with the depth; patch 0308 keys it by base+pitch and may miss base 198's
-   960x540 restore), so the tonemap's stencil test rejects every pixel and the game's copy presents the raw scene.
+   00700764 - the stencil test is on) and writes nothing. mp3_post_sin_stencil (d75ee85) took the test off to see
+   the tonemap paint: the result was WORSE - the frame full of speckles and more white (the toml sets it false
+   again). So the tonemap's draw is not simply stencil-gated: with the test off it paints noise, which points at
+   its INPUT binding (a texture it samples resolved to garbage) rather than the coverage. The next step is to dump
+   or trace what its samplers hold at the draw - the fetch map of 0312 covers the resolved ones, but its bound
+   guest textures flow through the second PrepararTextura call site, which the trace does not cover yet.
 3. If the lit decile stays ~3x hotter than the Xbox frames after the gamma fix, the deferred lights' falloff is
    the next place: the SSAO shader takes rcp(depth) of a downsampled float chain whose dump shows negative values
    (1903B000, range -1897..1), and the light volumes' attenuation reads the same chain.
