@@ -1,0 +1,37 @@
+SDK patch 0314 (Max Payne 3 port): a signed or biased alpha no longer cancels the sRGB view of a gamma texture.
+The view decodes only RGB; Max Payne 3's world diffuses carry a non-gamma alpha sign, the view was cancelled, and
+their gamma bytes were read as linear: every gameplay texture washed out white (the cutscenes' materials did not -
+that is why the game looked right there and wrong in gameplay).
+
+--- a/src/x360/deko/texturas.cpp
++++ b/src/x360/deko/texturas.cpp
+@@ -136,19 +136,27 @@
+       case DkImageFormat_RGBA16_Unorm: return DkImageFormat_RGBA16_Snorm;
+       case DkImageFormat_R_BC4_Unorm: return DkImageFormat_R_BC4_Snorm;
+       case DkImageFormat_RG_BC5_Unorm: return DkImageFormat_RG_BC5_Snorm;
+       default: return DkImageFormat_None;
+     }
+   }
+-  if ((signos & 0x3F) == 0x3F && ((signos >> 6) == 0 || (signos >> 6) == 3)) {
++  if ((signos & 0x3F) == 0x3F) {
++    // 0314: the alpha's own sign (any of unsigned, signed, biased, gamma) no longer cancels the sRGB view: the view
++    // decodes only RGB, and Max Payne 3's world diffuses carry a signed alpha - cancelled, their gamma bytes were
++    // read as linear and every gameplay texture came out washed white (the cutscenes' materials did not).
+     switch (formato) {
+       case DkImageFormat_RGBA8_Unorm: return DkImageFormat_RGBA8_Unorm_sRGB;
+       case DkImageFormat_RGBA_BC1: return DkImageFormat_RGBA_BC1_sRGB;
+       case DkImageFormat_RGBA_BC2: return DkImageFormat_RGBA_BC2_sRGB;
+       case DkImageFormat_RGBA_BC3: return DkImageFormat_RGBA_BC3_sRGB;
+-      default: return DkImageFormat_None;
++      default: break;
++    }
++    static uint32_t avisados = 0;
++    if (avisados < 8) {
++      ++avisados;
++      REXLOG_WARN("[deko3d] causa gamma: textura con signos gamma sin vista sRGB (formato host {})", uint32_t(formato));
+     }
+   }
+   return DkImageFormat_None;
+ }
+ 
+ }  // namespace
