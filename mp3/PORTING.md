@@ -522,9 +522,10 @@ Established, in order:
 
 ### Still open, in order
 
-1. Patch 0314 (commit d19646c) waiting on a run: if the washed diffuses were the alpha-sign case, gameplay
-   textures should come back to their cutscene look. If not, the logged "causa gamma" host format gets the next
-   sRGB view.
+1. Patch 0314 (commit d19646c) verified on the console: NO visual change and no "causa gamma" line ever logged -
+   the gamma-sign path is excluded. The washed look of the gameplay textures is not a fetch-sign problem; the
+   strongest remaining explanation is item 2 (the whole presented frame is the raw clipped copy: its dump median
+   is 0.94 with half the pixels at 1.0 - "white textures" and "a washed frame" are the same artifact).
 2. The black tonemap output (0654D000) with a live input: its draw runs (-> drawn, stencil 00FFFF00, depthctl
    00700764 - the stencil test is on) and writes nothing. The remaining suspect is the depth-restore pass's
    stencil (EdramZPorColor writes 0xFF with the depth; patch 0308 keys it by base+pitch and may miss base 198's
