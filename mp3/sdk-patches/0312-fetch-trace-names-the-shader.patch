@@ -1,7 +1,8 @@
-SDK patch 0312 (Max Payne 3 port): the scaled-fetch trace names the pixel shader and its slot. The scene and
-the bloom chain mix exp_adjust -11 and -13 reads of one resolved address (a x4 difference); with the PS number and
-the fetch's num_format in the line, one run tells which draw reads its texture four times brighter than the game
-meant - the input the tonemap curve cannot place (BurnoutLimit 1 saturates above L 0.58).
+SDK patch 0312 (Max Payne 3 port): the scaled-fetch trace names the pixel shader and its slot, with the fetch's
+TextureSign bits (signos) and format too. The scene and the bloom chain mix exp_adjust -11 and -13 reads of one
+resolved address (a x4 difference), and the diffuse textures' gamma signs decide whether they are decoded: a fetch
+whose signs are not all-gamma (or whose format has no sRGB view) reads gamma bytes as linear, which is exactly
+"textures whiter in gameplay than in the cutscenes".
 
 --- a/src/x360/deko/dibujos.cpp
 +++ b/src/x360/deko/dibujos.cpp
@@ -19,7 +20,7 @@ meant - the input the tonemap curve cannot place (BurnoutLimit 1 saturates above
                      "tejas: GTA IV convierte su mapa de sombras a R32F sobre tejas de la escena (3 ms de transferencias)");
  REXCVAR_DEFINE_BOOL(x360_vertices_manuales_reusados, true, "X360",
                      "Los bufers de vertices que lee el propio shader (dsVfetch): dentro de un trabajo, el mismo bufer "
-@@ -1598,14 +1599,34 @@
+@@ -1598,14 +1599,36 @@
    if (ps && !texturas_reusadas) {
      for (const SamplerShader& sampler : ps->samplers) {
        if (sampler.registro >= 16) {
@@ -31,20 +32,22 @@ meant - the input the tonemap curve cannot place (BurnoutLimit 1 saturates above
 +      // fetch cache hides it. The scene and the bloom chain mix exp_adjust -11 and -13 reads of one resolved address;
 +      // the draw that reads it four times brighter than the game meant is what whitens lit textures, and only the
 +      // shader's number tells the two apart.
-+      if (REXCVAR_GET(x360_traza_fetch_escalado) && (int32_t(fetch[3] << 13) >> 26)) {
++      if (REXCVAR_GET(x360_traza_fetch_escalado) &&
++          ((int32_t(fetch[3] << 13) >> 26) || ((fetch[0] >> 2) & 0xFF) != 0)) {
 +        static std::unordered_map<uint64_t, uint32_t> vistas_dibujo_;
 +        if (vistas_dibujo_.size() > 96) vistas_dibujo_.clear();
 +        const int32_t fexp = int32_t(fetch[3] << 13) >> 26;
-+        const uint64_t clave = (uint64_t(ps->numero & 0xFFF) << 44) | (uint64_t(sampler.registro) << 40) |
-+                               (uint64_t(uint32_t(fexp + 64) & 0x7F) << 33) | (uint64_t(fetch[3] & 0x1) << 32) |
-+                               (uint64_t((fetch[1] >> 12) & 0xFFFFF));
++        const uint32_t fsignos = (fetch[0] >> 2) & 0xFF;
++        const uint64_t clave = (uint64_t(ps->numero & 0xFFF) << 48) | (uint64_t(sampler.registro) << 44) |
++                               (uint64_t(uint32_t(fexp + 64) & 0x7F) << 37) | (uint64_t(fetch[3] & 0x1) << 36) |
++                               (uint64_t(fsignos) << 28) | (uint64_t((fetch[1] >> 12) & 0xFFFFF)) | (fetch[1] & 0x3F);
 +        const auto [it_dibujo, nueva_dibujo] = vistas_dibujo_.try_emplace(clave, 0);
 +        if (nueva_dibujo || fotograma_ - it_dibujo->second >= 300) {
 +          it_dibujo->second = fotograma_;
-+          REXLOG_INFO("[traza-fetch] PS n{} slot {}: base {:08X} {}x{} fmt {} exp_adjust {} num_format {}",
++          REXLOG_INFO("[traza-fetch] PS n{} slot {}: base {:08X} {}x{} fmt {} exp_adjust {} num_format {} signos {:02X}",
 +                      ps->numero, sampler.registro, (fetch[1] >> 12) << 12, (fetch[2] & 0x1FFF) + 1,
 +                      ((fetch[2] >> 13) & 0x1FFF) + 1, fetch[1] & 0x3F, fexp,
-+                      (fetch[3] & 0x1) ? "integer" : "fraction");
++                      (fetch[3] & 0x1) ? "integer" : "fraction", fsignos);
 +        }
 +      }
        CacheFetch& cache = cache_fetch_[ClaveFetch(fetch) & (cache_fetch_.size() - 1)];
