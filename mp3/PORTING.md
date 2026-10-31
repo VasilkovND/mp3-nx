@@ -492,3 +492,51 @@ also reads the 240x135 bloom textures with exp_adjust +2. ResueltaEscalada made 
 value above 16376 became infinity: the glow around lights and windows went white. Patch 0309's exp_previo baked the
 same +2 into the resolve itself. SDK patch 0310: copies scaled up go to RGBA32F, and a resolve bakes in only as much of
 the expected exp_adjust as stays finite in half float. Nothing goes into an 8 or 10-bit texture, which would clamp it.
+
+## Runs 23-35 (2026-10-30/31): the overexposure taken apart
+
+Patches 0311 (x360_traza_fetch_escalado: every scaled fetch of a resolved texture logged with its base, exp_adjust,
+the resolve's baked exp_previo and whether it went through a scaled copy) and 0312 (the same trace names the pixel
+shader, its slot, the fetch's TextureSign and format). Both default off; the console's mp3.toml runs them on.
+
+Established, in order:
+
+- The fetch scales are all correct. The tonemap (ps_3224, gameplay 6671) reads the scene resolve (base 198 as f12,
+  x2048) with exp_adjust -13 net /4; the bloom tiles with -11 net x1 - the game's own constants, both faithful. The
+  previous "the tonemap input is 16x too bright" was an artifact of a rough model: the port's scene matches the
+  Xbox-derived expectation at the median (0.095 vs 0.086) and is only ~3x hotter in the top lit decile.
+- The frame ends lights(f12) -> copy of the f12 view into an 8-bit texture (05F53000, the Swap's fetch) -> Swap.
+  There is no tonemap pass after the lights in the traced frames: the game's own copy IS the final step. The 8-bit
+  copy holds the raw HDR scene clipped white (median 0.94): what the user sees as the white wash.
+- The tonemap that does run (draw 1205, ps_3237 = cd94, into base 198's f0 view) leaves its resolve (0654D000)
+  black. Not the occlusion queries (mp3_oclusion_real = false changed nothing), not the lazy stencil
+  (x360_edram_estencil_perezoso = false broke the whole scene flat 1.47 - that path is lazy for a reason).
+- Scaling the 7e3->8bit resolve (patch 0313, x360_resolve_7e3_8bits_div) is wrong: those 8-bit copies are read back
+  by the game's feedback passes; divided by 16 the picture collapses to black in a few frames, by 2 everything
+  (UI included) darkens. Reverted to the default 1.0.
+- The textures themselves are washed white in gameplay (the user's own reading, and the right one): the game's
+  world diffuses are fetched with gamma TextureSigns, and nfsmw_dk_gamma_lineal = true (which reads them linear on
+  purpose) changes nothing - they are ALREADY read without the gamma decode. FormatoVistaSigno cancelled the sRGB
+  view whenever the alpha's own sign was not unsigned or gamma; patch 0314 lets any alpha sign keep the sRGB view
+  (it decodes only RGB) and logs unhandled host formats as "causa gamma".
+
+### Still open, in order
+
+1. Patch 0314 (commit d19646c) waiting on a run: if the washed diffuses were the alpha-sign case, gameplay
+   textures should come back to their cutscene look. If not, the logged "causa gamma" host format gets the next
+   sRGB view.
+2. The black tonemap output (0654D000) with a live input: its draw runs (-> drawn, stencil 00FFFF00, depthctl
+   00700764 - the stencil test is on) and writes nothing. The remaining suspect is the depth-restore pass's
+   stencil (EdramZPorColor writes 0xFF with the depth; patch 0308 keys it by base+pitch and may miss base 198's
+   960x540 restore), so the tonemap's stencil test rejects every pixel and the game's copy presents the raw scene.
+3. If the lit decile stays ~3x hotter than the Xbox frames after the gamma fix, the deferred lights' falloff is
+   the next place: the SSAO shader takes rcp(depth) of a downsampled float chain whose dump shows negative values
+   (1903B000, range -1897..1), and the light volumes' attenuation reads the same chain.
+
+The spikes around Max, closed along the way: D3D re-patches the costume vertex shaders at the same address for
+other vertex declarations (the jacket for the cloth, the jacket again when wounded, for the blood overlay's
+streams). The validadas cache compared three sentinel words and served the stale layout (the word-for-word compare
+of 49b9d61 re-applied); the masked-fetch match then accepted the base container for a re-patched layout - now
+optional (mp3_vs_por_mascara, default on, off in the console's toml together with mp3_vs_por_parecido = false and
+mp3_omitir_vs listing the two most re-patched jacket containers). New variants keep landing in shaders_unknown/
+and fold into the library with tools/shaders.sh.
