@@ -1,0 +1,60 @@
+SDK patch 0313 (Max Payne 3 port): x360_resolve_7e3_8bits_div. A resolve of the 7e3 EDRAM (format 12) into an
+8-bit texture divides by this before the byte clamp. The Xenos converts the 7e3 range when it resolves to 8 bits;
+the port clipped, and the game's final copy (f12 view -> 05F53000, the swap's fetch) showed the raw HDR scene
+clipped white instead of the converted frame: the overexposure since run 11. The Xbox-frame fit put the missing
+factor at 2^-4; 16 is the first value to try, the cvar tunes it live.
+
+--- a/src/x360/deko/destinos.cpp
++++ b/src/x360/deko/destinos.cpp
+@@ -39,12 +39,16 @@
+ REXCVAR_DEFINE_BOOL(x360_copias_sin_barrera, true, "X360",
+                     "Las copias en el motor 3D seguidas comparten una barrera si ninguna lee lo que otra escribio (los "
+                     "resolves del G-buffer); false = una barrera antes de cada una");
+ REXCVAR_DEFINE_BOOL(x360_resolve_16_fijo, true, "X360",
+                     "Una textura resuelta leida como k_16_16_16_16 o k_16_16 en coma fija con num_format fraccion se "
+                     "divide por 65535 (el resolve guarda el entero de 16 bits); como entero, tal cual");
++REXCVAR_DEFINE_DOUBLE(x360_resolve_7e3_8bits_div, 1.0, "X360",
++                    "Un resolve del EDRAM 7e3 (formato 12) hacia una textura de 8 bits divide entre esto antes del "
++                    "byte: la Xenos convierte el rango del 7e3 al presentarlo, el port lo recortaba y Max Payne 3 "
++                    "mostraba la escena HDR cruda (blanca) en vez del cuadro convertido. 1.0 = como antes (recorta)");
+ REXCVAR_DEFINE_BOOL(x360_resolve_exp_previsto, true, "X360",
+                     "Un resolve con exp bias se escribe ya escalado por el exp_adjust con que se leyo la textura la "
+                     "ultima vez, y esa lectura la muestrea directamente: Max Payne 3 resolvia su escena x2048 y cada "
+                     "lectura (exp_adjust -13) hacia otra copia entera x1/8192 (0,5 ms cada una a 960x540)");
+ REXCVAR_DEFINE_BOOL(x360_f14_sanear, true, "X360",
+                     "Los resolves de destinos k_32_FLOAT (la cadena de luminancia de GTA IV) se limitan a 0..31.875 (el "
+@@ -1674,12 +1678,19 @@
+                              : formato_color == 4 || formato_color == 5 ? 32.0f
+                              : formato_color <= 2 || formato_color == 10 ? 1.0f
+                                                                          : 65504.0f;
+           while (exp_previo > 0 && tope * std::ldexp(escala_exp, exp_previo) > 65504.0f) --exp_previo;
+         }
+       }
++      // 0313, x360_resolve_7e3_8bits_div: a 7e3 resolve into an 8-bit texture scales the 7e3 range into the byte
++      // instead of clipping it (the port clipped: the game's final copy showed the raw HDR scene, white).
++      float escala_8bits = std::ldexp(escala_exp, exp_previo);
++      if (const double div7e3 = REXCVAR_GET(x360_resolve_7e3_8bits_div); div7e3 > 1.0 && formato_color == 12 &&
++          resuelta->imagen.formato == DkImageFormat_RGBA8_Unorm && !se_lee && !encoger) {
++        escala_8bits = float(escala_8bits / div7e3);
++      }
+       if (frontal && uint32_t(x0) < destino_render->ancho && ancho && alto) {
+         if (frontal_.pendiente && frontal_.base != base_resuelta) {
+           MaterializarFrontal();
+         }
+         frontal_ = {true, base_resuelta, destino_render, resuelta, ancho, alto};
+         frontal_obsoleta_ = 0;
+@@ -1746,13 +1757,13 @@
+         bool escalada_3d = false;
+         if (encoger || (se_lee && escala_exp == 1.0f && !sanear_f14) ||
+             !(escalada_3d = Copiar3D(reducida ? *reducida : *destino_render, uint32_t(x0), uint32_t(y0), ancho, alto,
+                                      resuelta->imagen, dx, dy, nullptr,
+                                      formato_color == 3 || formato_color == 12 ||
+                                          (formato_color == 14 && REXCVAR_GET(x360_f14_sanear)),
+-                                     std::ldexp(escala_exp, exp_previo),
++                                     escala_8bits,
+                       // k_32_FLOAT: only NaN, infinities and negatives out. Capped at 7e3's 31.875 (run39), a bright
+                       // scene's luminance (up to 63 and more) read low, the exposure came out too high and the frame
+                       // bleached.
+                       formato_color == 14, reducida != nullptr))) {
+           MarcarGpu(kGpuCopias);
+           PerfilCopia(encoger ? "motor de copias encogida" : "motor de copias", destino_render, &resuelta->imagen,
