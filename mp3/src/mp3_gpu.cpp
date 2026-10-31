@@ -216,6 +216,10 @@ REXCVAR_DEFINE_DOUBLE(mp3_bloom_juego, 0.17, "MP3",
 REXCVAR_DEFINE_DOUBLE(mp3_exposicion, 1.0, "MP3",
                       "Exposicion del tonemap: multiplica sus Exposures (c137) antes de la curva. 1 = la del juego; menos "
                       "de 1 baja el pase de luz quemado (0.4 a 1.0)");
+REXCVAR_DEFINE_BOOL(mp3_post_sin_stencil, true, "MP3",
+                    "Los pases de postproceso (tonemaps, FXAA) se dibujan sin su prueba de stencil: el restaurado de "
+                    "la profundidad escribe el stencil con ella, pero el tonemap salia negro (su entrada viva) y el "
+                    "Swap mostraba la copia 8 bits de la escena cruda - el encuadre blanco desde el run 11");
 REXCVAR_DEFINE_BOOL(mp3_fxaa_sin_sesgo, true, "MP3",
                     "El FXAA del juego (ps 8D42760B0383C0D8) escribe en el destino 7e3 de la escena sin su exp bias de "
                     "color (2, x4): la salida ya es 0..1 y el resolve a 8 bits no lo deshace; con el, el cuadro x4 y "
@@ -2259,7 +2263,19 @@ class RingGraphicsSystem final : public rex::system::IGraphicsSystem {
                                (sesgo_7e3 == 4 && color_format == 12 && quad));
     const bool fxaa_unbiased = (fxaa_bias && REXCVAR_GET(mp3_fxaa_sin_sesgo)) || bias_7e3_off;
     if (fxaa_unbiased) registers_[rex::graphics::XE_GPU_REG_RB_COLOR_INFO] = color_info & ~(0x3Fu << 20);
+    // mp3_post_sin_stencil: the tonemaps and the FXAA draw without their stencil test. The depth restore brings
+    // the stencil back with the depth, but the tonemap's output came out black with a live input (its stencil test
+    // rejecting everything) and the Swap presented the raw 8-bit copy of the scene instead: the white frame.
+    const bool post_sin_stencil = REXCVAR_GET(mp3_post_sin_stencil) && ps_ &&
+                                  (IsTonemap(ps_->huella_contenedor) || ps_->huella_contenedor == kFxaa);
+    const uint32_t saved_depthctl_post = registers_[g::XE_GPU_REG_RB_DEPTHCONTROL];
+    if (post_sin_stencil) {
+      registers_[g::XE_GPU_REG_RB_DEPTHCONTROL] = saved_depthctl_post & ~0x4u;
+      ++generacion_encuadre_;
+      request.generacion_encuadre = generacion_encuadre_;
+    }
     const bool drawn = destinos_->Dibujar(request);
+    if (post_sin_stencil) registers_[g::XE_GPU_REG_RB_DEPTHCONTROL] = saved_depthctl_post;
     if (fxaa_unbiased) registers_[rex::graphics::XE_GPU_REG_RB_COLOR_INFO] = color_info;
     if (exposure_scaled) {
       for (uint32_t i = 0; i < 2; ++i) registers_[0x4000 + (256 + 137) * 4 + i] = saved_exposures[i];
