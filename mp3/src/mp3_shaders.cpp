@@ -40,6 +40,11 @@ REXCVAR_DEFINE_BOOL(mp3_shaders_por_demanda, true, "MP3",
                     "se lee de la tarjeta la primera vez que se usa: con todos los shaders del juego (~470 MB) no cabe "
                     "en memoria. false = entera en memoria");
 
+REXCVAR_DEFINE_BOOL(mp3_vs_por_mascara, true, "MP3",
+                    "Un VS que solo coincide con las palabras de fetch enmascaradas se toma igual (el layout del "
+                    "contenedor puede ser otro: D3D reparchea el VS del traje de Max para otra declaracion de "
+                    "vertices, y enmascarado dibujaba las púas); false = el dibujo se salta hasta tener su "
+                    "contenedor exacto");
 REXCVAR_DEFINE_BOOL(mp3_vs_por_parecido, true, "MP3",
                     "Un VS cargado que no coincide con ninguno de la biblioteca se toma por el mas parecido (menos "
                     "palabras distintas en total); false = el dibujo se salta");
@@ -568,6 +573,12 @@ const EntradaShader* Biblioteca::IdentificarEntrada(bool vertices, uint32_t fisi
   if (auto it = d.por_microcodigo.find(huella); it != d.por_microcodigo.end()) {
     elegido = it->second;
   } else {
+    // mp3_vs_por_mascara: a vertex shader matched with its fetch words masked out runs on the entry's vertex layout,
+    // and D3D's re-patch of the same VS for another declaration (Max's costume when wounded: the blood overlay's
+    // streams) is exactly that - a layout change. Masked, it drew the black spikes; skipped, the draw is invisible
+    // until its exact container is folded from shaders_unknown.
+    const bool mascara_vale = !vertices || REXCVAR_GET(mp3_vs_por_mascara);
+    if (mascara_vale) {
     if (auto c = d.candidatos.find({vertices, uint32_t(microcodigo.size())}); c != d.candidatos.end()) {
       for (uint32_t indice : c->second) {
         const EntradaShader& e = d.entradas[indice];
@@ -581,6 +592,7 @@ const EntradaShader* Biblioteca::IdentificarEntrada(bool vertices, uint32_t fisi
         }
       }
     }
+    }  // mascara_vale (mp3_vs_por_mascara)
     // 4. A vertex shader D3D patched beyond its fetch bits: it may reorder the fetch instructions and rewrite the
     // exports the pixel shader does not read. Each candidate's fetch instructions are ignored whole and the rest
     // compared word by word; the closest one is taken if it is clearly the closest and differs in few words.
