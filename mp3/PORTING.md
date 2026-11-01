@@ -686,3 +686,31 @@ every IsTonemap draw (6671/FE22/CD94), restored after Dibujar exactly as the FXA
 constants. If a scene binds the f0 view with the byte set, the next run both shows it and draws past it; if every
 line reads bias 0, the epilogue is excluded with evidence and the black 0654D000 is inside the shader's own math or
 its inputs' content, not the ring state.
+
+## The carry v5: the snapshot moves to the post DRAW (the close was one pass too late)
+
+v4 (f399cd, v4.log) left gameplay black with the machinery working, and the logs say so:
+
+- BOTH links fire in gameplay. The 300-frame [edram] line read 0.5 and then 1.0 "de 8 bits a flotante" in every
+  gameplay window (19:42:41 on: 6.2-15.9 transferencias, 0.71-1.62 Mpixeles), and in v4 the ONLY increment of that
+  counter is the install's Copiar3D (destinos.cpp), which cannot run unless a snapshot had succeeded
+  (edram_posteado_valido_). (b) and (c) are excluded with evidence: it is (a) - what is installed is black.
+- WHY, from mp3_030's traced frame (Swap 3652): the tonemap (draw 2285, vs 1924 ps 3237) and the frame's LATER
+  8-bit writers are ONE renderer pass - identical claves (base 198, format 0, pitch 960, msaa 0): 24 prim-1
+  no-VS probes (mask 0000, skipped), then twenty composite draws (vs 573 ps 1895: ten color-masked rounds, ten
+  blending color, full-screen scissor, stencil refs 00/3F/01/02). The pass closes at the f0 resolve (0654D000),
+  so v4's close-snapshot captured what the COMPOSITE left; v1's "correct colors" frames were those where the
+  composite wrote nothing (the tonemap was the last 8-bit writer) - the tonemap's own output is the picture, the
+  composite's color rounds are the blackener. The FXAA reads 0654D000 the instant after (v4.log: [exposicion] fxaa
+  and "PS n2262 slot 0: base 0654D000" share a timestamp), which is how v1's bad frames went black on screen.
+  Menus/cutscenes have no composite on the post base - v4 looked right there for the same reason.
+- v5: Dibujar snapshots right after EACH post draw into an 8-bit target (EdramSnapshotPost - the same
+  create/prep/Copiar3D the close did), then invalidates the pass binding (g_.pase_valido = false, the
+  EdramEstencilPendiente pattern) and consumes edram_pase_post_ so the shared close cannot snapshot over it. The
+  close keeps the snapshot as a fallback; the install is untouched. Cost: unchanged (2 copies/frame, one earlier).
+- Instrumentation (always on, once per 10 s): "[edram] snapshot post <Vista> (WxH), version N: M imagenes de color
+  de la base 198" plus three texel probes of the source and the snapshot ("[edram-diag] texel post fuente/snapshot",
+  half floats, at the next Swap). One run decides: sane values + color gameplay closes the saga; all-zero probes
+  exonerate the composite and put the black inside the tonemap's own draw (then the [verts-tonemap]/[ubo-tonemap]
+  lines and the pass's other state are the frontier). The patch file 0320 was regenerated whole (the v3/v4 edits
+  had never been folded in; it now carries all of v3+v4+v5 and reverse-checks on the tree).
