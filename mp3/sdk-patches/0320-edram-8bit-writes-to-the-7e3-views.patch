@@ -5,19 +5,44 @@ as a transfer would. Root cause it closes (PORTING.md, runs 23-35 item 3): the t
 picture into base 198's f0 view; the frame's last passes and the final copy the Swap fetches read the f12 view of
 the same tiles, which keeps the raw lit HDR scene. The machinery's own carry never reaches it as values:
 - EmpezarPase skips EdramPreparar for a pass whose first draw paints its color targets whole
-  (dibujo_opaco_completo_, x360_edram_saltar_muertas, dibujos.cpp:838-841) - and the pass that follows the tonemap
+  (dibujo_opaco_completo_, x360_edram_saltar_muertas, dibujos.cpp) - and the pass that follows the tonemap
   on those tiles is exactly such a whole-target opaque quad - so no transfer-in happens, and that pass's own claim
   (EdramCerrarPase -> EdramReclamar) then buries the f0 write under the f12 view's stale content;
 - even when a prepare does run, EdramTransferir reinterprets the 8-bit BITS as 7e3 (kFsEdramColor's
   Empaquetar/Desempaquetar), not the picture's values.
-Run 32: "no transfer between the tonemap's resolve and the final one". The log gets "[edram] c 198 f0 960 -> 198
-f3 960: filas 0-540, de 8 bits como valores" per carry and a count in the 300-frame [edram] line ("de 8 bits a
-flotante"). Off by default: this is architecture-level and must not change behavior until the console test enables
-it via mp3.toml; a failed Copiar3D falls back to the old transfer path (the tiles keep their claim).
 
---- a/src/x360/deko/edram.cpp	2026-11-01 18:11:43
-+++ b/src/x360/deko/edram.cpp	2026-11-01 18:11:43
-@@ -48,6 +48,11 @@
+The first console run (e725970, b.log, cvar on, NO gate) settled three things. (1) The carry works: the 300-frame
+line counted 4.6-12.0 carries per frame in gameplay and some scenes rendered with right colors - when the tonemap
+was the last 8-bit writer before the final copy. (2) The count was never stuck at 0: the windows that read
+"0.0 de 8 bits a flotante" (and 0.0 transferencias, 0.00 Mpixeles - nothing claimed EDRAM rows at all) are Bink
+movies and loading screens. (3) The ungated carry is the black screen: EVERY 8-bit pass on the base (composites,
+clears feeding back) carried too, about 12 a frame, and their stale or cleared rows buried the lit scene under
+black in most frames.
+
+Amendments folded into this version of the patch:
+- THE GATE (edram_pase_post_): only a pass that drew with one of the frame's post shaders (the tonemaps
+  6671591252A5BCE2 / FE226603F40E2533 / CD9469857A0C532A and the FXAA 8D42760B0383C0D8) carries its 8-bit views'
+  rows; composites and clears do not. The flag is set AFTER EmpezarPase returns, not before the call: EmpezarPase
+  first closes the previous pass, and that close consumes and resets a flag set before it - the tonemap's own
+  carry would never fire and the pass before each post pass would carry in its stead. Expected: about one carry
+  a frame in gameplay (the tonemap into base 198's f3/f12 image) instead of 12.
+- The destination lookup stays at edram_formato == 3 and that is complete: a 12 bind
+  (k_2_10_10_10_FLOAT_AS_16_16_16_16, what the final copy reads) never reaches destinos_ as 12 - DestinoColor
+  folds it into the f3 image of the same key (destinos.cpp) and EdramVista's FormatoBase(12) is 3. f3 and f12
+  are ONE image (run 65's ten f12 draws land in it); the b.log counts prove the lookup found it.
+- LOGGING: the per-carry line prints once per 10 s outside a dump frame (not only under EdramRegistrando), and a
+  failed carry says why, once per 10 s: no 7e3 view of that base/pitch/msaa, or Copiar3D refused. One run then
+  shows the carry per tonemap AND the reason if it still fails.
+
+Off by default: this is architecture-level and must not change behavior until the console test enables it via
+mp3.toml (x360_edram_8bits_a_flotante = true); a failed Copiar3D falls back to the old transfer path (the tiles
+keep their claim).
+
+diff --git a/src/x360/deko/edram.cpp b/src/x360/deko/edram.cpp
+index 4342e55..b1a0d7e 100644
+--- a/src/x360/deko/edram.cpp
++++ b/src/x360/deko/edram.cpp
+@@ -48,6 +48,11 @@ REXCVAR_DEFINE_BOOL(x360_edram_z_por_pixel, true, "X360",
  REXCVAR_DEFINE_BOOL(x360_edram_z_por_color, true, "X360",
                      "Un pase con color de 8 bits y profundidad en la misma base escribe la profundidad como color "
                      "(GTA IV la restaura asi para las luces): la profundidad recibe la ultima resuelta de esa base");
@@ -29,16 +54,22 @@ it via mp3.toml; a failed Copiar3D falls back to the old transfer path (the tile
  REXCVAR_DEFINE_BOOL(x360_edram_reduccion_directa, true, "X360",
                      "Un resolve desde una vista 4x cuyas tejas tiene una vista 1x del doble de pitch (GTA IV reduce su "
                      "escena a 640x360 asi) promedia 2x2 texeles de esa vista, como el resolve de la Xenos promedia las "
-@@ -407,11 +412,67 @@
+@@ -407,9 +412,90 @@ void RenderDk::EdramCerrarPase() {
      }
      if (imagen && imagen->edram_filas) {
        EdramReclamar(*imagen, imagen->edram_filas);
-+      EdramLlevar8Bits(*imagen, imagen->edram_filas);  // x360_edram_8bits_a_flotante: as values, before anyone reads it
++      // x360_edram_8bits_a_flotante, 0320 amendment: only the frame's own post passes carry - every 8-bit pass on
++      // the base (composites, clears feeding back) carried too, and their stale or cleared rows buried the lit
++      // scene under black in most frames (the few whose last 8-bit writer was the tonemap came out right).
++      if (edram_pase_post_) {
++        EdramLlevar8Bits(*imagen, imagen->edram_filas);
++      }
        imagen->edram_filas = 0;
      }
    }
- }
- 
++  edram_pase_post_ = false;
++}
++
 +// x360_edram_8bits_a_flotante: the rows an 8-bit color view (format 0) just claimed are carried into the 7e3 views
 +// (f3/f12) of the same base, pitch and MSAA as VALUES, a 3D-engine copy that converts RGBA8 -> RGBA16F (Copiar3D),
 +// and those views' tiles are marked seen, as a transfer would (the claiming view stays their owner). Why: Max Payne 3
@@ -58,6 +89,10 @@ it via mp3.toml; a failed Copiar3D falls back to the old transfer path (the tile
 +  ImagenDk* llevadas[4];
 +  uint32_t n_llevadas = 0;
 +  for (auto& [clave, otra] : destinos_) {
++    // The 7e3 views of these tiles. Format 3 is k_2_10_10_10_FLOAT; a 12 bind (AS_16_16_16_16, what the frame's
++    // final copy reads) never reaches this map as 12: DestinoColor folds it into the f3 image of the same key and
++    // EdramVista's FormatoBase(12) is 3. f3 and f12 are ONE image here (run 65's ten f12 draws land in it), so
++    // matching 3 finds the copy's source; there is no separate f12 destination to also accept.
 +    if (otra.serie == vista.serie || otra.profundidad || otra.edram_formato != 3 || otra.edram_bpp != 4 ||
 +        otra.edram_base != vista.edram_base || otra.edram_pitch != vista.edram_pitch ||
 +        otra.edram_msaa != vista.edram_msaa || otra.edram_versiones.empty()) {
@@ -66,7 +101,10 @@ it via mp3.toml; a failed Copiar3D falls back to the old transfer path (the tile
 +    llevadas[n_llevadas++] = &otra;
 +    if (n_llevadas == 4) break;  // f3 alone after the fold; a couple more costs nothing
 +  }
-+  if (!n_llevadas) return;
++  if (!n_llevadas) {
++    EdramLlevar8BitsAviso(vista, "ninguna vista 7e3 (f3/f12) de esa base, pitch y msaa");
++    return;
++  }
 +  // As a transfer: the source must be its own content again (a resolve without copy may have given it away), the
 +  // destination is written below its pending band. Copiar3D orders itself against the draws and copies before it.
 +  RestaurarContenido(vista, true);
@@ -80,6 +118,7 @@ it via mp3.toml; a failed Copiar3D falls back to the old transfer path (the tile
 +    CompletarBanda(otra, filas_otra, false, 0);
 +    if (!Copiar3D(vista, 0, 0, ancho, filas_otra, otra, 0, 0)) {
 +      otra.edram_generacion = UINT32_MAX;  // nothing carried: the tiles stay to take as a transfer
++      EdramLlevar8BitsAviso(vista, "Copiar3D no pudo llevarlas");
 +      continue;
 +    }
 +    for (uint32_t k = 0; k < n && k < otra.edram_versiones.size(); ++k) {
@@ -87,17 +126,26 @@ it via mp3.toml; a failed Copiar3D falls back to the old transfer path (the tile
 +    }
 +    ++edram_llevados_8bits_;
 +    edram_pixeles_ += uint64_t(ancho) * filas_otra;
-+    if (EdramRegistrando()) {
++    if (EdramRegistrando() || deko::AhoraNs() >= edram_llevados_8bits_siguiente_) {
++      // Once per 10 s outside a dump frame: the next run's log names the carry without waiting for one.
++      edram_llevados_8bits_siguiente_ = deko::AhoraNs() + uint64_t(10) * 1000000000ull;
 +      REXLOG_INFO("[edram] c {:03X} f0 {} -> {:03X} f3 {}: filas 0-{}, de 8 bits como valores", vista.edram_base,
 +                  vista.edram_pitch, otra.edram_base, otra.edram_pitch, filas_otra);
 +    }
 +  }
 +}
 +
++// Why a carry did not happen, at most one line per 10 s: the counter in the 300-frame [edram] report says HOW MANY
++// carries ran; this says why one that should have (an 8-bit view claimed rows, the cvar is on) did not.
++void RenderDk::EdramLlevar8BitsAviso(const ImagenDk& vista, const char* razon) {
++  if (deko::AhoraNs() < edram_llevados_8bits_aviso_siguiente_) return;
++  edram_llevados_8bits_aviso_siguiente_ = deko::AhoraNs() + uint64_t(10) * 1000000000ull;
++  REXLOG_INFO("[edram] c {:03X} f0 {} ({} filas): de 8 bits a flotante no llevado, {}", vista.edram_base,
++              vista.edram_pitch, vista.edram_filas, razon);
+ }
+ 
  void RenderDk::EdramEstencilPendiente(ImagenDk& destino, bool ejecutar) {
-   std::vector<PendienteEstencil> lista;
-   lista.swap(destino.estencil_pendiente);
-@@ -874,12 +935,14 @@
+@@ -874,12 +960,14 @@ void RenderDk::EdramFotograma() {
    if (edram_diag_) REXLOG_INFO("[edram-diag] fotograma {} empieza", edram_diag_contador_);
    if (!EdramActiva() || ++edram_fotogramas_ < 300) return;
    REXLOG_INFO("[edram] {} fotogramas: {:.1f} transferencias ({:.1f} con stencil) y {:.2f} Mpixeles por fotograma, "
@@ -114,9 +162,11 @@ it via mp3.toml; a failed Copiar3D falls back to the old transfer path (the tile
  }
  
  }  // namespace rex::x360
---- a/include/rex/x360/deko/render.h	2026-11-01 18:11:43
-+++ b/include/rex/x360/deko/render.h	2026-11-01 18:11:43
-@@ -492,6 +492,10 @@
+diff --git a/include/rex/x360/deko/render.h b/include/rex/x360/deko/render.h
+index 00997cf..877c693 100644
+--- a/include/rex/x360/deko/render.h
++++ b/include/rex/x360/deko/render.h
+@@ -492,6 +492,12 @@ class RenderDk final : public DestinosNativos {
    void EdramPreparar(ImagenDk& vista, uint32_t filas, bool sin_borrados_ajenos = false);
    // The view wrote its first `filas` rows (a clear, a pass): its tiles are its own.
    void EdramReclamar(ImagenDk& vista, uint32_t filas, const float* borrado = nullptr);
@@ -124,14 +174,56 @@ it via mp3.toml; a failed Copiar3D falls back to the old transfer path (the tile
 +  // pitch and MSAA as values (RGBA8 -> RGBA16F), and their tiles are marked seen - the transfer EdramPreparar would
 +  // make later, without waiting for it and without re-reading the 8-bit bits as 7e3.
 +  void EdramLlevar8Bits(ImagenDk& vista, uint32_t filas);
++  // Why an 8-bit view's rows were not carried (no 7e3 destination, Copiar3D refused): one line per 10 s.
++  void EdramLlevar8BitsAviso(const ImagenDk& vista, const char* razon);
    bool EdramBorrarComo(const ImagenDk& origen, const TejaEdram& teja, ImagenDk& destino, uint32_t desde,
                         uint32_t cuantas);
    // The pass that ends claims the rows its draws wrote (EmpezarPase, Copiar).
-@@ -505,6 +509,7 @@
+@@ -505,6 +511,9 @@ class RenderDk final : public DestinosNativos {
    int32_t edram_shaders_ = 0;  // 0 not tried, 1 ready, -1 failed
    uint64_t edram_transferencias_ = 0, edram_pixeles_ = 0, edram_sin_soporte_ = 0, edram_fotogramas_ = 0;
    uint64_t edram_borrados_ = 0, edram_estencil_pasadas_ = 0;
 +  uint64_t edram_llevados_8bits_ = 0;  // x360_edram_8bits_a_flotante: carries of an 8-bit view into the 7e3 ones
++  uint64_t edram_llevados_8bits_siguiente_ = 0, edram_llevados_8bits_aviso_siguiente_ = 0;  // their 10 s logs
++  bool edram_pase_post_ = false;  // 0320: the closing pass drew with a post shader (the carry gate)
    std::set<uint64_t> edram_avisos_;
    uint32_t edram_diag_encuadres_ = 0;
    // The last depth resolve from each EDRAM base and pitch: the texture's address (CopiarProfundidad), for
+diff --git a/src/x360/deko/dibujos.cpp b/src/x360/deko/dibujos.cpp
+index f77313b..f18b311 100644
+--- a/src/x360/deko/dibujos.cpp
++++ b/src/x360/deko/dibujos.cpp
+@@ -1823,11 +1823,25 @@ bool RenderDk::Dibujar(const PeticionDibujo& p) {
+     g_.pase_valido = false;
+     ++pases_ampliados_;
+   }
++  // 0320: the pass about to begin draws with one of the frame's post shaders - its 8-bit writes are the finished
++  // picture that must reach the 7e3 views (EdramCerrarPase gates EdramLlevar8Bits on edram_pase_post_; composites
++  // and clears must not bury the lit scene). The flag is set AFTER EmpezarPase, not before it: EmpezarPase first
++  // closes the previous pass, and that close consumes and resets a flag set before it - the tonemap's own carry
++  // never fired and the pass before each post pass carried in its stead.
++  bool pase_post = false;
++  if (ps) {
++    static const uint64_t kPost[4] = {UINT64_C(0x6671591252A5BCE2), UINT64_C(0xFE226603F40E2533),
++                                      UINT64_C(0xCD9469857A0C532A), UINT64_C(0x8D42760B0383C0D8)};
++    for (uint64_t huella : kPost) {
++      if (ps->huella_contenedor == huella) pase_post = true;
++    }
++  }
+   if (!g_.pase_valido || std::memcmp(g_.pase, claves, sizeof(claves)) != 0) {
+     filas_pase_pedidas_ = fondo_tijera;
+     if (!EmpezarPase(claves, pitch)) {
+       return false;
+     }
++    edram_pase_post_ = pase_post;  // describes the pass that just began; its close consumes it
+     // A 1x pass whose 8-bit color target (by the registers: its pixel shader may write only oDepth) lies on the depth
+     // target's base: the game writes the depth back from a texture (edram.cpp, EdramZPorColor). Done from the depth
+     // resolve itself; the pass's own draws are not recorded (what they would write is that, through texture formats the
+@@ -1872,6 +1886,7 @@ bool RenderDk::Dibujar(const PeticionDibujo& p) {
+     if (!EmpezarPase(claves, pitch)) {
+       return false;
+     }
++    edram_pase_post_ = pase_post;  // the rebind closed and began the same pass again
+   }
+   DkCmdBuf cmd = nucleo_.comandos();
+ 

@@ -545,24 +545,26 @@ Established, in order:
    f0 view's writes into the f12 view (or the copy must read through the store) for base 198's shape - a renderer
    architecture change, best started fresh (sdk/src/x360/deko/edram.cpp:289-411, destinos.cpp Copiar's EdramPreparar
    call ~1462-1467, and the per-(base,format,pitch,msaa) image keying in FormatoDestinoColorDk/DestinoColor).
-4. The gate, found (patch 0320, x360_edram_8bits_a_flotante, DEFAULT FALSE - ships off pending the one console
-   test): the one-store machinery never carries the f0 view's writes into the f12 view as values. EmpezarPase skips
-   EdramPreparar - the transfer-in - for a pass whose first draw paints its color targets whole
-   (dibujo_opaco_completo_ of x360_edram_saltar_muertas, dibujos.cpp 838-841, set at 1796-1821), and the passes that
-   follow the tonemap on base 198's tiles are exactly that shape (run 65's traced dump frame: one whole-surface quad
-   into c198 f3 right after the tonemap's resolve, then ten draws into c198 f12, then the final copy; the same log
-   counts 42068 "pases sin transferir" in 10 s): the pass's own claim (EdramCerrarPase -> EdramReclamar, edram.cpp
-   408-411) buries the f0 write under the f12 image's stale content - the raw lit scene - and the final copy's
-   EdramPreparar (destinos.cpp 1554-1556) then finds the tiles already the f12 view's own (edram.cpp 303): run 32's
-   "no transfer between the tonemap's resolve and the final one". Even when a prepare does run, EdramTransferir
-   reinterprets the 8-bit BITS as 7e3 (kFsEdramColor's Empaquetar/Desempaquetar, edram.cpp 201-207), not the
-   picture's values. The fix, gated off: when an 8-bit color view's pass closes and claims its rows, Copiar3D
-   carries them into the 7e3 views of the same base, pitch and MSAA as VALUES (RGBA8 -> RGBA16F) and marks their
-   tiles seen, as a transfer would - so the final copy reads the tonemapped picture whether or not the game's own
-   copy-back quad paints. The [edram] log gets "c 198 f0 960 -> 198 f3 960: filas 0-540, de 8 bits como valores"
-   and the 300-frame line a "de 8 bits a flotante" count; a failed copy falls back to the old transfer path. One
-   console run with x360_edram_8bits_a_flotante = true in mp3.toml: the gameplay picture becomes cutscene-like;
-   anything wrong, toml-off reverts to today.
+4. The carry, ON CONSOLE (patch 0320, x360_edram_8bits_a_flotante, still DEFAULT FALSE): the first gated-off run
+   (e725970, b.log) settles the three questions it shipped with. (a) The carry WORKS: the gameplay windows of the
+   300-frame [edram] line counted 4.6-12.0 "de 8 bits a flotante" per frame, and the scenes whose last 8-bit
+   writer before the final copy was the tonemap rendered with right colors - the f0->f12 handoff as values is the
+   right idea. (b) The count was never stuck at 0: every window that read "0.0 de 8 bits a flotante" also read
+   0.0 transferencias and 0.00 Mpixeles - Bink movies and loading screens where nothing claims EDRAM rows at all;
+   the counter's reset (EdramFotograma) and increment (per carried destination) are sound, and the per-carry line
+   never printed only because EdramRegistrando() was off. (c) The ungated carry IS the black screen: EVERY 8-bit
+   pass on the base carried (composites, clears feeding back - about 12 a frame), and their stale or cleared rows
+   buried the lit scene under black in most frames. The amendment folded into 0320: the carry fires only for a
+   pass that drew with one of the frame's post shaders (edram_pase_post_, the tonemaps 6671/FE22/CD94 and the
+   FXAA 8D42, set in Dibujar AFTER EmpezarPase returns - EmpezarPase closes the previous pass first, and that
+   close would consume and reset a flag set before the call, so the tonemap's own carry would never fire and the
+   pass before each post pass would carry in its stead); the destination lookup stays at format 3 and that is
+   complete (a 12 bind never reaches destinos_ as 12: DestinoColor folds it into the f3 image of the same key and
+   FormatoBase(12) is 3 - f3 and f12 are ONE image, and the b.log counts prove the lookup found it); the per-carry
+   line now prints once per 10 s outside a dump frame, and a carry that fails says why once per 10 s (no 7e3 view
+   of that base/pitch/msaa, or Copiar3D refused). One run with x360_edram_8bits_a_flotante = true: about ONE
+   carry a frame in gameplay (the tonemap, "c 198 f0 960 -> 198 f3 960: filas 0-540" every 10 s in the log), the
+   gameplay picture cutscene-like where it went black; anything wrong, toml-off reverts to today.
 
 The spikes around Max, closed along the way: D3D re-patches the costume vertex shaders at the same address for
 other vertex declarations (the jacket for the cloth, the jacket again when wounded, for the blood overlay's
