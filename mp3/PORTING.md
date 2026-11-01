@@ -739,16 +739,58 @@ The spikes returned with the current library state too (the user's report; mp3_o
 containers of 2026-10-31 - the wound variants of the newest shaders_unknown batch need folding or omitting).
 
 NEXT SESSION, two concrete tasks:
-1. DONE (2026-11-01, the late session), pending the console test: the combination is in the tree and in the 0320 patch
-   (v6) - v4's firing wiring (the after-draw gate now ALSO requires edram_pase_post_, the pass flag its run engaged;
-   the close is the fallback again and REGAINED its end-of-close flag reset, which v5 had dropped; the install is
-   verbatim) with v5's after-draw snapshot moment. v5's post-mortem: the log rules out everything but a silent death
-   inside EdramSnapshotPost (its three false returns logged nothing) - the detection matched live ([verts-tonemap]
-   inside the active windows; the huellas are XXH3 of GUEST container bytes and cannot drift with the host library),
-   the draws submitted ("0 rechazados"), the machinery ran (5.1-6.7 transfers/frame), the cvar was on, and the NRO
-   carried the v5 strings (fresh build; its first line stamps ed100d0). v6 makes every death loud (a "no tomado tras
-   ..., <razon>" line once per 10 s), moves the side image to RGBA8 so the INSTALL's Copiar3D does the 8-bit ->
-   float conversion (v1's proven direction) and a raw copy-engine copy (dkCmdBufCopyImage, both sides RGBA8) takes
-   the snapshot when Copiar3D refuses. One console run decides: "snapshot post ... tras el dibujo" in a gameplay
-   window + the counter ~1.0 + colored gameplay closes the saga; the reason line localizes whatever still fails.
+1. DONE, superseded twice in one evening - v6 ran and went FULLY BLACK (below); v7 is the tree now.
 2. Fold or omit the current costume variants (mp3/out/console_unknown has the 466-file set; tools/shaders.sh).
+
+## The carry saga v6's post-mortem and v7 (2026-11-01, the late session)
+
+v6 (433070f, v4's firing wiring + v5's after-draw moment, all cvar-gated) produced a FULLY BLACK screen on console -
+even the cutscenes v4 had colored - and its own log lines were never read (the console was reverted immediately). The
+v7 session rebuilt the model from the code and the four logs before touching anything:
+
+- THE PASS MAP, verified in code this time: the tonemap (draw 2285), the 24 no-VS probes and the composite (draws
+  2310-2329, vs 573 ps 1895) share ONE host pass. The probes are rejected at the VS lookup (dibujos.cpp ~567),
+  BEFORE the claves comparison (~1840), so they never close the pass; it closes at the f0 resolve, after the
+  composite. v4's close-only snapshot therefore ran post-composite: its 1.0/frame installs were the composite's
+  output - black gameplay, exactly as observed.
+- PUZZLE (ii) WAS A FALSE LEAD: the composite does NOT read 0654D000. Its only sampler is the DEPTH resolve
+  0820A000 fmt 23 (mp3_030 draw 2310: "s0 tipo 12: base 0820A000 fmt 23 960x540") - it is the game's own
+  stencil-directed effect layer (10 mask-0000 stencil rounds, then 10 mask-000F draws with stencil refs 01/02),
+  rendered wrong in the port. Fixing "the f0 resolve's source" (the candidate (a) of the plan) would not touch it.
+- PUZZLE (i) DISSOLVES: 0654D000 is resolved TWICE a frame - the G-buffer's c2 at base 288 first (mp3_030 line 635),
+  then the tonemap's f0 (line 887) - and the resolve machinery itself reads the f0 image's own pixels correctly
+  (v1's carries prove the swap/3D-copy source; the swap conditions all hold for the 8-bit resolve). The "f0 colored
+  / 0654D000 black" disagreement compared different frames: in composite frames the black IS the composite's
+  content, faithfully resolved. Nothing to fix in the resolve.
+- WHY v6 BLACKENED EVERYTHING (its log was never read, so the exact draw cannot be named offline - what the tree
+  shows): the after-draw snapshot INVALIDATED the pass (g_.pase_valido = false) after every snapshot, and the
+  re-begin set edram_pase_post_ again from the next post draw - so the net widened from v4's "one snapshot per
+  post-begun pass, at its close" to "every post draw of every post-begun pass, re-armed by the snapshot's own
+  re-begin", while the install stayed keyed by dimensions alone. The installed content became whatever the LAST
+  post draw anywhere wrote into any 960x960 8-bit target (effect/overlay passes included) - plus the mid-pass
+  target-rebinding surgery (Copiar3D + re-begin + RestaurarContenido/CompletarBanda around each post draw) on
+  shared paths the close had never touched. Both cut only in the scenes that depended on the install never firing.
+
+v7 - the smallest footprint the model supports (still x360_edram_8bits_a_flotante, default false):
+- THE SNAPSHOT moves to the copy engine, right after the FIRST post draw (the tonemap quad) of a post-begun pass,
+  ONE per pass (edram_pase_post_ consumed on success): dkCmdBufCopyImage binds no render targets, sets no state,
+  invalidates nothing - the pass and its recorded state g_ survive, no re-begin. No source preparation either (at
+  that moment the target holds exactly what the draw wrote; v6's CompletarBanda here could clear the drawn rows
+  mid-pass). Two barriers order the copy between the draw before it and the draws after it.
+- THE CLOSE FALLBACK IS REMOVED: the tonemap's pass closes after the composite, so a close snapshot can only
+  install a later writer's output (v4's black). The end-of-close flag reset stays.
+- THE INSTALL is v4's verbatim firing plus one condition: only a snapshot of THIS frame installs
+  (edram_posteado_fotograma_) - a stale side image must not paint a menu after gameplay.
+- MENUS BY CONSTRUCTION: no 8-bit post draw runs there at all (v4.log's menu windows counted 0.0 installs and were
+  colored by the default path) - nothing fires, nothing installs. CUTSCENES: their tonemap draw is snapshotted
+  directly (the same content v4's close snapshot installed there, colored), the install lands after their whole
+  post chain at the frontal copy, and v2's "later f3 passes undo it" cannot reach between the install and the copy.
+  FAILURE IS SAFE: a refused snapshot logs its reason once per 10 s, leaves edram_posteado_valido_ false, and the
+  frame presents exactly as with the cvar off.
+
+One console run decides (the exact lines in patch 0320's header): "snapshot post ... tras el dibujo" + ~1.0
+"de 8 bits a flotante" + colored gameplay closes the saga; "no tomado tras el dibujo, <razon>" names a death;
+no line at all = the gate (huella/pass flag - the [exposicion] tonemap line says which); the line plus zero
+"post fuente" probes = the tonemap's own draw writes nothing (the shader chain, not this machinery). The
+composite's own defect (its depth-derived layer renders wrong) remains open and separate: v7 restores the picture
+by installing around it, it does not fix it.
