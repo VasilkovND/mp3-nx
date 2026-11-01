@@ -41,6 +41,11 @@ REXCVAR_DEFINE_BOOL(mp3_shaders_por_demanda, true, "MP3",
                     "se lee de la tarjeta la primera vez que se usa: con todos los shaders del juego (~470 MB) no cabe "
                     "en memoria. false = entera en memoria");
 
+REXCVAR_DEFINE_BOOL(mp3_tonemapas_cd94, true, "MP3",
+                    "Los tonemaps de gameplay (6671, FE22) se sustituyen por el de las cutscenes (CD94): alli la "
+                    "imagen sale bien y toda la maquinaria esta verificada igual de limpia para ambos, asi que el "
+                    "defecto esta en la traduccion de esos dos shaders; con el de las cutscenes el gameplay gana su "
+                    "look (sin los efectos propios de gameplay: el flash de herida y el entrelazado)");
 REXCVAR_DEFINE_BOOL(mp3_vs_por_mascara, true, "MP3",
                     "Un VS que solo coincide con las palabras de fetch enmascaradas se toma igual (el layout del "
                     "contenedor puede ser otro: D3D reparchea el VS del traje de Max para otra declaracion de "
@@ -304,6 +309,7 @@ struct Biblioteca::Datos {
   std::mutex mutex;  // the maps below: the create hooks run on game threads, IM_LOAD on the ring thread
   std::unordered_map<uint32_t, const EntradaShader*> por_direccion;  // physical address of the microcode
   std::unordered_set<uint64_t> enmascaradas_;  // masked matches already logged
+  const EntradaShader* entrada_cd94_ = nullptr;  // mp3_tonemapas_cd94
   // Step 0's table: the fingerprint of the microcode as each container holds it (the fetch words included) -> the
   // entries with it. The containers folded from shaders_unknown (mp3_parecidos) are the loads themselves, but the
   // steps below never reach them: the address step and the masked step's address preference hand the same skeleton's
@@ -731,6 +737,29 @@ const EntradaShader* Biblioteca::IdentificarEntrada(bool vertices, uint32_t fisi
   }
   ++(parecido ? d.estadisticas.por_parecido
               : elegido ? d.estadisticas.por_microcodigo : d.estadisticas.desconocidas);
+  // mp3_tonemapas_cd94: the gameplay tonemaps run as the cutscenes' (CD94). Their inputs, delivery and targets are
+  // proven identical to CD94's and the cutscenes look right, so the defect is those two shaders' own translation;
+  // this gives gameplay the cutscene look until they are fixed.
+  if (elegido && !vertices && REXCVAR_GET(mp3_tonemapas_cd94) &&
+      (elegido->huella_contenedor == UINT64_C(0x6671591252A5BCE2) ||
+       elegido->huella_contenedor == UINT64_C(0xFE226603F40E2533))) {
+    if (!d.entrada_cd94_) {
+      for (const EntradaShader& e : d.entradas) {
+        if (e.huella_contenedor == UINT64_C(0xCD9469857A0C532A)) {
+          d.entrada_cd94_ = &e;
+          break;
+        }
+      }
+    }
+    if (d.entrada_cd94_) {
+      static uint32_t avisado_cd94 = 0;
+      if (avisado_cd94++ < 3) {
+        REXLOG_WARN("[shaders] gameplay tonemap n{} drawn as the cutscenes' n{}", elegido->numero,
+                    d.entrada_cd94_->numero);
+      }
+      return d.entrada_cd94_;
+    }
+  }
   return elegido;
 }
 
