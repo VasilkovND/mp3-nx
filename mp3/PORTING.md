@@ -630,3 +630,30 @@ the shader" was concluded from a comparison that did not happen.
 Patch 0319 makes both halves read the same cell, register n's first word (`r[kRegConstantesPs + n*4]` against
 `sombra_ps_[n*4]`, skipped when `n*16+16 > bytes_ps`). One run: equal halves (c88 3FC00000/3FC00000...) close the
 differential upload for good; a real difference is the first true evidence against it.
+
+## The constants' delivery closed; the write-bias epilogue, the last suspect (this commit)
+
+0319 ran: equal halves, register == UBO, every 10 s tick - the constants reach the tonemap's compiled variant, and
+nothing between its inputs and its code is left open. What remains is what the code does AFTER the curve: every
+translated pixel shader ends with `if (g_SesgosExpColor != 0u) oC0 *= exp2(signed byte 0 of g_SesgosExpColor)`
+(shader_recompiler.cpp, the epilogue; ps_6671591252a5bce2.hlsl carries it), and the SDK fills that byte per draw from
+the bound c0's RB_COLOR_INFO bits 20-25, signed, read live at the draw (dibujos.cpp, x360_sesgo_exp_color). The
+tonemaps write the finished 0..1 picture into base 198's 8-bit f0 view - the same EDRAM base whose f3/f12 (7e3) words
+carry color_exp_bias 2 (x4) from the lighting - so a bias byte on the f0 view's word would clamp the 8-bit output
+white (positive) or crush it black (negative; the field is 6-bit signed, down to -32), the brightest pixels surviving
+as speckles. The FXAA has had exactly this cleared since mp3_fxaa_sin_sesgo; the tonemaps never did.
+
+What the offline logs say about the byte: never more than indirectly. The FXAA's own f3 bind reads 00030198 - bias 0 -
+in every logged sample (920 lines across the runs), even though the same base's lighting word carries the 2: each
+SetRenderTarget rewrites the whole dword, no staleness across views. And the SDK's per-session (bias, format) logger
+(deko "destino de color con exp bias") printed only (2, f3) and (2, f12) pairs in every stored log - never a format-0
+pair - while the tonemap lines printed in the same sessions: as far as the logs go, the f0 draws read bias 0. But the
+tonemap's own draw never had its word printed (the [exposicion] line had no RB_COLOR_INFO; the [draws]/[frame] lines
+print only base and format nibble), so the value at the draw is unproven, not zero-proven.
+
+This commit: mp3_post_sin_sesgo (default true, the shape of mp3_fxaa_sin_sesgo) clears RB_COLOR_INFO bits 20-25 for
+every IsTonemap draw (6671/FE22/CD94), restored after Dibujar exactly as the FXAA block restores; and the
+[exposicion] tonemap line now prints the word it read - `RB_COLOR_INFO xxxxxxxx (formato N, exp bias N)` before the
+constants. If a scene binds the f0 view with the byte set, the next run both shows it and draws past it; if every
+line reads bias 0, the epilogue is excluded with evidence and the black 0654D000 is inside the shader's own math or
+its inputs' content, not the ring state.

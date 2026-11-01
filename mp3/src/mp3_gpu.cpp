@@ -228,6 +228,12 @@ REXCVAR_DEFINE_BOOL(mp3_fxaa_sin_sesgo, true, "MP3",
                     "El FXAA del juego (ps 8D42760B0383C0D8) escribe en el destino 7e3 de la escena sin su exp bias de "
                     "color (2, x4): la salida ya es 0..1 y el resolve a 8 bits no lo deshace; con el, el cuadro x4 y "
                     "quemado");
+REXCVAR_DEFINE_BOOL(mp3_post_sin_sesgo, true, "MP3",
+                    "Los tonemaps (6671/FE22/CD94) escriben el cuadro 0..1 en la vista f0 de 8 bits de la misma base "
+                    "EDRAM de la escena (198): todo pixel shader traducido escala su oC0 por 2^exp bias del "
+                    "RB_COLOR_INFO del dibujo (g_SesgosExpColor, bits 20-25 con signo), y un byte dejado ahi por otra "
+                    "vista de la base (las f3/f12 llevan el 2, x4, de la iluminacion) lo clamparia a blanco o negro; "
+                    "se limpia para el pase, como el FXAA");
 REXCVAR_DEFINE_BOOL(mp3_traza_bufers, true, "MP3",
                     "En la traza completa (ZL+ZR+Left): de cada bufer de vertices que el shader lee por indice (la tela "
                     "de Max: otro bufer que el de la malla), su rango de valores, NaN e infinitos y sus primeros float4");
@@ -2254,6 +2260,13 @@ class RingGraphicsSystem final : public rex::system::IGraphicsSystem {
                   (color_info >> 16) & 0xF, fxaa_bias,
                   fxaa_bias && REXCVAR_GET(mp3_fxaa_sin_sesgo) ? ": se dibuja sin el" : "");
     }
+    // mp3_post_sin_sesgo: the tonemaps write the finished 0..1 picture into base 198's 8-bit f0 view - the same EDRAM
+    // base whose 7e3 (f3/f12) views carry color_exp_bias 2 (x4) from the lighting. Every translated pixel shader ends
+    // scaling oC0 by 2^bias of the draw's own RB_COLOR_INFO (g_SesgosExpColor, bits 20-25 signed), so a bias byte left
+    // on the f0 view's word clamps the 8-bit output white or crushes it black; cleared for these draws as for the FXAA,
+    // and the [exposicion] tonemap line names the word it read.
+    const int32_t tonemap_bias = ps_ && IsTonemap(ps_->huella_contenedor) ? int32_t(color_info << 6) >> 26 : 0;
+    const bool post_sin_sesgo = tonemap_bias && REXCVAR_GET(mp3_post_sin_sesgo);
     // mp3_sesgo_7e3: the bias left out on 7e3 targets (the lights' format 12, or both 7e3 formats), to compare under
     // the lamps, where the picture burns while rooms without lamps look right.
     const uint32_t color_format = (color_info >> 16) & 0xF;
@@ -2265,8 +2278,9 @@ class RingGraphicsSystem final : public rex::system::IGraphicsSystem {
                                (sesgo_7e3 == 2 && (color_format == 3 || color_format == 12)) ||
                                (sesgo_7e3 == 3 && color_format == 12 && !quad) ||
                                (sesgo_7e3 == 4 && color_format == 12 && quad));
-    const bool fxaa_unbiased = (fxaa_bias && REXCVAR_GET(mp3_fxaa_sin_sesgo)) || bias_7e3_off;
-    if (fxaa_unbiased) registers_[rex::graphics::XE_GPU_REG_RB_COLOR_INFO] = color_info & ~(0x3Fu << 20);
+    const bool color_sin_sesgo =
+        (fxaa_bias && REXCVAR_GET(mp3_fxaa_sin_sesgo)) || bias_7e3_off || post_sin_sesgo;
+    if (color_sin_sesgo) registers_[rex::graphics::XE_GPU_REG_RB_COLOR_INFO] = color_info & ~(0x3Fu << 20);
     // mp3_post_sin_stencil: the tonemaps and the FXAA draw without their stencil test. The depth restore brings
     // the stencil back with the depth, but the tonemap's output came out black with a live input (its stencil test
     // rejecting everything) and the Swap presented the raw 8-bit copy of the scene instead: the white frame.
@@ -2292,7 +2306,7 @@ class RingGraphicsSystem final : public rex::system::IGraphicsSystem {
     const bool drawn = destinos_->Dibujar(request);
     if (post_sin_stencil) registers_[g::XE_GPU_REG_RB_DEPTHCONTROL] = saved_depthctl_post;
     if (post_sin_alpha) registers_[g::XE_GPU_REG_RB_COLORCONTROL] = saved_colorctl_post;
-    if (fxaa_unbiased) registers_[rex::graphics::XE_GPU_REG_RB_COLOR_INFO] = color_info;
+    if (color_sin_sesgo) registers_[rex::graphics::XE_GPU_REG_RB_COLOR_INFO] = color_info;
     if (exposure_scaled) {
       for (uint32_t i = 0; i < 2; ++i) registers_[0x4000 + (256 + 137) * 4 + i] = saved_exposures[i];
       ++generacion_constantes_ps_;
@@ -3163,12 +3177,19 @@ class RingGraphicsSystem final : public rex::system::IGraphicsSystem {
                          std::bit_cast<float>(registers_[r + 3]));
     };
     if (tonemap) {
-      REXLOG_INFO("[exposicion] tonemap {:016X}: gAdaptedLum c88 {} Exposures c137 {} ToneMapParams c139 {} BurnoutLimit "
+      // RB_COLOR_INFO as the guest left it for this draw (read before the mp3_post_sin_sesgo clearing): the f0 view's
+      // word decides the g_SesgosExpColor byte the tonemap's epilogue scales oC0 by.
+      const uint32_t info_color = registers_[rex::graphics::XE_GPU_REG_RB_COLOR_INFO];
+      const int32_t sesgo_color = int32_t(info_color << 6) >> 26;
+      REXLOG_INFO("[exposicion] tonemap {:016X}: RB_COLOR_INFO {:08X} (formato {}, exp bias {}){} gAdaptedLum c88 {} "
+                  "Exposures c137 {} ToneMapParams c139 {} BurnoutLimit "
                   "c142 {} deSatContrastGamma c46 {} deSatContrastGammaIFX c75 {} ColorCorrectTop c43 {} "
                   "ColorCorrectBottom c44 {} BrightnessSetting c130 {} KillFlashCol c146 {} InterlaceMask c147 {} "
                   "alu c250 {} c251 {} c252 {} c253 {} c254 {} c255 {}",
-                  ps_->huella_contenedor, c(88), c(137), c(139), c(142), c(46), c(75), c(43), c(44), c(130), c(146),
-                  c(147), c(250), c(251), c(252), c(253), c(254), c(255));
+                  ps_->huella_contenedor, info_color, (info_color >> 16) & 0xF, sesgo_color,
+                  sesgo_color && REXCVAR_GET(mp3_post_sin_sesgo) ? ": se dibuja sin el" : "", c(88), c(137), c(139),
+                  c(142), c(46), c(75), c(43), c(44), c(130), c(146), c(147), c(250), c(251), c(252), c(253), c(254),
+                  c(255));
     } else {
       REXLOG_INFO("[exposicion] adaptacion: AdaptedLumMin c140 {} AdaptedLumMax c141 {} ElapsedTime c159 {} AdaptTime "
                   "c160 {}",
