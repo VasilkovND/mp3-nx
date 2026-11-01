@@ -526,6 +526,28 @@ const EntradaShader* Biblioteca::Identificar(bool vertices, uint32_t fisica,
                                              std::span<const uint32_t> microcodigo) {
   const EntradaShader* e = IdentificarEntrada(vertices, fisica, microcodigo);
   Completar(e);
+  // mp3_tonemapas_cd94: applied here, at the single entry every load goes through - the validadas fast path returns
+  // from IdentificarEntrada before its tail, which is where the first version of this sat and never fired.
+  if (e && !vertices && REXCVAR_GET(mp3_tonemapas_cd94) &&
+      (e->huella_contenedor == UINT64_C(0x6671591252A5BCE2) ||
+       e->huella_contenedor == UINT64_C(0xFE226603F40E2533))) {
+    if (!datos_->entrada_cd94_) {
+      for (const EntradaShader& entrada : datos_->entradas) {
+        if (entrada.huella_contenedor == UINT64_C(0xCD9469857A0C532A)) {
+          datos_->entrada_cd94_ = &entrada;
+          break;
+        }
+      }
+    }
+    if (datos_->entrada_cd94_) {
+      static uint32_t avisado_cd94 = 0;
+      if (avisado_cd94++ < 3) {
+        REXLOG_WARN("[shaders] gameplay tonemap n{} drawn as the cutscenes' n{}", e->numero,
+                    datos_->entrada_cd94_->numero);
+      }
+      return datos_->entrada_cd94_;
+    }
+  }
   return e;
 }
 
@@ -737,29 +759,6 @@ const EntradaShader* Biblioteca::IdentificarEntrada(bool vertices, uint32_t fisi
   }
   ++(parecido ? d.estadisticas.por_parecido
               : elegido ? d.estadisticas.por_microcodigo : d.estadisticas.desconocidas);
-  // mp3_tonemapas_cd94: the gameplay tonemaps run as the cutscenes' (CD94). Their inputs, delivery and targets are
-  // proven identical to CD94's and the cutscenes look right, so the defect is those two shaders' own translation;
-  // this gives gameplay the cutscene look until they are fixed.
-  if (elegido && !vertices && REXCVAR_GET(mp3_tonemapas_cd94) &&
-      (elegido->huella_contenedor == UINT64_C(0x6671591252A5BCE2) ||
-       elegido->huella_contenedor == UINT64_C(0xFE226603F40E2533))) {
-    if (!d.entrada_cd94_) {
-      for (const EntradaShader& e : d.entradas) {
-        if (e.huella_contenedor == UINT64_C(0xCD9469857A0C532A)) {
-          d.entrada_cd94_ = &e;
-          break;
-        }
-      }
-    }
-    if (d.entrada_cd94_) {
-      static uint32_t avisado_cd94 = 0;
-      if (avisado_cd94++ < 3) {
-        REXLOG_WARN("[shaders] gameplay tonemap n{} drawn as the cutscenes' n{}", elegido->numero,
-                    d.entrada_cd94_->numero);
-      }
-      return d.entrada_cd94_;
-    }
-  }
   return elegido;
 }
 
