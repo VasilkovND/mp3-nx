@@ -575,3 +575,32 @@ which is why the new masked-match logger printed nothing: the masked path itself
 Next console run: the console's toml back at mp3_vs_por_mascara = true (default) - with the dump on, one run
 writes the quad's real microcode and names it in "[shaders] VS <hash> taken masked as n<N>", and the folded
 container fixes the tonemap the run after.
+
+## Runs 38+ (2026-11-01): the exact containers were never taken - identification step 0
+
+The library of 15:00 (4020 shaders) already held the folded containers of every masked match: mp3_parecidos had
+folded all 354 `_de_` dumps long before ("354 ya estaban, 0 nuevos"), among them the tonemap quad's
+(vs_471aee299203383c, folded Oct 30 from vs_0be94fd3c65556fd_de_119028f2350aa4c0) and the costume re-patches. The
+run after it (m.log, 15:16, 9acadda) STILL printed all 64 "[shaders] VS ... taken masked" lines - the quad's at
+15:18:01.688, 0.2 s before its "[exposicion] tonemap" line - so the loads kept running on the BASE containers and
+neither bug could change: the experiment said nothing about the exact containers, because no step ever compared a
+load against one. `Leer` masks each entry's fetch words down to the bits D3D preserves
+(mp3_shaders.cpp, kFetchConserva), so no stored entry can win a word-for-word compare; step 1 (address) and step 3's
+address preference then hand the same skeleton's base container, whose translated fetches are another declaration's
+(verified offline: the quad's patch touches only fetch words, 0 non-fetch words differ, so the base always passes
+the skeleton checks). That IS the vertex-stream mismatch: `CalcularEntrada`
+(sdk/src/x360/deko/dibujos.cpp:561) reads the layout (slots, formats, strides, offsets) from the ring's patched
+words, but the pipeline's shader is the base's SPIR-V, translated from the base's fetch words - the declaration and
+the code disagree inside one draw.
+
+The fix (identification step 0, mp3_shaders.cpp): `Leer` now also keeps the fingerprint of the microcode as the
+container holds it (fetch words included, hashed before masking), `Cargar` indexes every entry by it, and
+`IdentificarEntrada` looks a load up in that table before the address step - among two entries with the same code
+(the same load folded onto two base containers in different sessions) the one registered at the load's address
+wins, as the masked step prefers. The report line and a "[shaders] VS <hash> taken exact as n<N>" line (first 64)
+say what it takes. mp3_omitir_vs and mp3_vs_por_mascara stay as they are.
+
+What one run shows: the 64 masked lines turn into "taken exact" (or vanish - the loads return at step 0), the
+shader report counts a new "exact" bucket in the tens of thousands (every reload of the re-patched VSes), and the
+tonemap quad and the wounded-costume draws run under their own layouts: 0654D000 should stop being black, and if
+any artifact survives it is no longer explainable by the container's fetch translation.

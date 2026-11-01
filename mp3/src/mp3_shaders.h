@@ -6,6 +6,9 @@
 // Identification. A pixel shader arrives in the ring as it is in its container. A vertex shader does not: the
 // XDK's Direct3D patches its vertex fetches for each vertex declaration, and sometimes copies it into the ring
 // itself (IM_LOAD_IMMEDIATE). So each load is looked up, in order:
+//   0. by the whole microcode, patches included: the containers folded from shaders_unknown (mp3_parecidos) ARE
+//      loads like this one, and no other step reaches them (the address steps prefer the same skeleton's base
+//      container, whose translated fetches are another declaration's);
 //   1. by address: the hooks on D3DDevice_Create{Vertex,Pixel}Shader (mp3_shader_dump.cpp) know the container
 //      and, scanning the new object for a pointer to a copy of its microcode, where D3D keeps it;
 //   2. by the fingerprint of the patched microcode, learned from loads that step 1 identified (the patch is the
@@ -33,6 +36,7 @@ namespace mp3::shaders {
 
 struct Estadisticas {
   uint64_t cargas = 0;          // IM_LOAD / IM_LOAD_IMMEDIATE of a shader
+  uint64_t por_codigo = 0;      // step 0: the container with this very microcode (the folded ones)
   uint64_t por_direccion = 0;   // step 1
   uint64_t direccion_rechazada = 0;  // step 1 address known, but other code there now
   uint64_t por_aprendizaje = 0; // step 2

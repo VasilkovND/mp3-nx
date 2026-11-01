@@ -85,8 +85,15 @@ uint32_t ContarKills(std::span<const uint32_t> spirv) {
   return kills;
 }
 
-// The 2008 container into an entry. Returns the reason if it cannot be read.
-const char* Leer(const mp3lib::Shader& shader, EntradaShader& e) {
+uint64_t Huella(bool vertices, std::span<const uint32_t> microcodigo) {
+  return XXH3_64bits(microcodigo.data(), microcodigo.size_bytes()) ^ (uint64_t(microcodigo.size()) << 1) ^
+         uint64_t(vertices);
+}
+
+// The 2008 container into an entry. `huella_codigo` gets the fingerprint of the microcode as the container holds
+// it (the fetch words included, before they are masked): a load with that very code has this very container, folded
+// from shaders_unknown by mp3_parecidos (step 0 of IdentificarEntrada). Returns the reason if it cannot be read.
+const char* Leer(const mp3lib::Shader& shader, EntradaShader& e, uint64_t& huella_codigo) {
   const Contenedor c{shader.original};
   if (!c.Hay(0, 36)) return "contenedor demasiado corto";
   const uint32_t virtuales = c.U32(4);
@@ -103,6 +110,7 @@ const char* Leer(const mp3lib::Shader& shader, EntradaShader& e) {
   for (size_t i = 0; i < e.microcodigo.size(); ++i) {
     e.microcodigo[i] = c.U32(size_t(virtuales) + desplazamiento + i * 4);
   }
+  huella_codigo = Huella(e.vertices, e.microcodigo);
 
   if (e.vertices) {
     const uint32_t previos = c.U32(cabecera + 0x18);
@@ -279,11 +287,6 @@ void VolcarDesconocido(bool vertices, uint64_t huella, std::span<const uint32_t>
   }
 }
 
-uint64_t Huella(bool vertices, std::span<const uint32_t> microcodigo) {
-  return XXH3_64bits(microcodigo.data(), microcodigo.size_bytes()) ^ (uint64_t(microcodigo.size()) << 1) ^
-         uint64_t(vertices);
-}
-
 }  // namespace
 
 struct Biblioteca::Datos {
@@ -301,6 +304,15 @@ struct Biblioteca::Datos {
   std::mutex mutex;  // the maps below: the create hooks run on game threads, IM_LOAD on the ring thread
   std::unordered_map<uint32_t, const EntradaShader*> por_direccion;  // physical address of the microcode
   std::unordered_set<uint64_t> enmascaradas_;  // masked matches already logged
+  // Step 0's table: the fingerprint of the microcode as each container holds it (the fetch words included) -> the
+  // entries with it. The containers folded from shaders_unknown (mp3_parecidos) are the loads themselves, but the
+  // steps below never reach them: the address step and the masked step's address preference hand the same skeleton's
+  // BASE container instead (its translated fetches are another declaration's), which is why the folded containers
+  // sat unused in the library while the costume spikes and the tonemap quad's noise stayed. Usually one entry; the
+  // same load can have been folded onto two base containers (the masked match chose another one in another session),
+  // and the one registered at the load's address is its own.
+  std::unordered_map<uint64_t, std::vector<const EntradaShader*>> por_codigo;
+  std::unordered_set<uint64_t> exactitudes_;  // exact matches already logged
   // Step 1's answers already checked against the code at that address: the next load from it (about 50,000 a second,
   // most of them repeats) is recognised by comparing its words with the ones checked, without hashing the microcode.
   // All of them, not three: D3D patches the same shader at the same address again for another vertex declaration
@@ -365,6 +377,7 @@ bool Biblioteca::Cargar(const std::filesystem::path& archivo) {
   const auto& shaders = d.biblioteca.shaders();
   d.entradas.clear();
   d.entradas.reserve(shaders.size());
+  std::vector<uint64_t> huellas_codigo;
   uint32_t ignorados = 0;
   for (uint32_t i = 0; i < shaders.size(); ++i) {
     EntradaShader e;
@@ -372,11 +385,13 @@ bool Biblioteca::Cargar(const std::filesystem::path& archivo) {
     e.spirv = shaders[i].spirv;
     e.huella_contenedor = shaders[i].huella;
     e.numero = i;
-    if (const char* motivo = Leer(shaders[i], e)) {
+    uint64_t huella_codigo = 0;
+    if (const char* motivo = Leer(shaders[i], e, huella_codigo)) {
       if (++ignorados <= 8) REXLOG_WARN("[shaders] container {} skipped: {}", i, motivo);
       continue;
     }
     if (!d.por_demanda) DatosDelSpirv(shaders[i], e);
+    huellas_codigo.push_back(huella_codigo);
     d.entradas.push_back(std::move(e));
   }
   d.spirv_leido.assign(d.entradas.size(), {});
@@ -385,6 +400,7 @@ bool Biblioteca::Cargar(const std::filesystem::path& archivo) {
     const EntradaShader& e = d.entradas[i];
     d.candidatos[{e.vertices, uint32_t(e.microcodigo.size())}].push_back(i);
     d.por_shader[e.juego] = i;
+    d.por_codigo[huellas_codigo[i]].push_back(&e);
   }
   d.cargada = !d.entradas.empty();
   const size_t vs = std::count_if(d.entradas.begin(), d.entradas.end(), [](const auto& e) { return e.vertices; });
@@ -524,6 +540,34 @@ const EntradaShader* Biblioteca::IdentificarEntrada(bool vertices, uint32_t fisi
     }
   }
   const uint64_t huella = Huella(vertices, microcodigo);
+  // 0. The container that holds this very microcode, D3D's patches included: the ones folded from shaders_unknown
+  // (mp3_parecidos). Before the address step on purpose: the address (and the masked step's own address preference)
+  // hands the BASE container of the same skeleton, whose translated fetches belong to another vertex declaration -
+  // with the folded containers already in the library, the last run still logged 64 masked matches and neither the
+  // costume spikes nor the tonemap quad's noise changed, because none of them was ever taken.
+  if (auto it = d.por_codigo.find(huella); it != d.por_codigo.end()) {
+    const EntradaShader* elegido = it->second.front();
+    if (it->second.size() > 1 && fisica) {
+      if (auto a = d.por_direccion.find(fisica & 0x1FFFFFFF); a != d.por_direccion.end()) {
+        for (const EntradaShader* candidato : it->second) {
+          if (candidato == a->second) {
+            elegido = candidato;  // the same load folded onto two containers: its own is the address's
+            break;
+          }
+        }
+      }
+    }
+    ++d.estadisticas.por_codigo;
+    if (vertices && d.exactitudes_.insert(huella).second && d.exactitudes_.size() <= 64) {
+      REXLOG_INFO("[shaders] VS {:016X} taken exact as n{} ({}/{})", huella, elegido->numero, d.exactitudes_.size(),
+                  64);
+    }
+    d.aprendidas[huella] = elegido;
+    if (fisica) {
+      d.validadas[fisica & 0x1FFFFFFF] = {elegido, {microcodigo.begin(), microcodigo.end()}};
+    }
+    return elegido;
+  }
   // 1. By address, if the code there is still that shader's: the memory of a destroyed shader can hold another one
   // of the same length, and a wrong match here is also learned (step 2) for the rest of the session. The words
   // outside its fetch instructions must almost all be the entry's (D3D only rewrites fetches and a few exports).

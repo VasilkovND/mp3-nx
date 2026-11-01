@@ -1008,10 +1008,10 @@ class RingGraphicsSystem final : public rex::system::IGraphicsSystem {
     reg_mem_wait_ns_ = 0;
 #if MP3_DEKO3D
     const mp3::shaders::Estadisticas s = mp3::shaders::Global().estadisticas();
-    REXLOG_INFO("[gpu] shaders: {} loads (address {}, address refused {}, learned {}, microcode {}, similar {}, "
-                "unknown {}); objects {} ({} not in the library, {} without a microcode address)",
-                s.cargas, s.por_direccion, s.direccion_rechazada, s.por_aprendizaje, s.por_microcodigo,
-                s.por_parecido, s.desconocidas,
+    REXLOG_INFO("[gpu] shaders: {} loads (exact {}, address {}, address refused {}, learned {}, microcode {}, "
+                "similar {}, unknown {}); objects {} ({} not in the library, {} without a microcode address)",
+                s.cargas, s.por_codigo, s.por_direccion, s.direccion_rechazada, s.por_aprendizaje,
+                s.por_microcodigo, s.por_parecido, s.desconocidas,
                 s.objetos, s.objetos_sin_entrada, s.objetos_sin_direccion);
     // What the draws sent to the renderer target and draw (ColorRenderTargetFormat of each written color
     // target, DepthRenderTargetFormat when depth is on, primitive type): the formats it does not handle yet show
