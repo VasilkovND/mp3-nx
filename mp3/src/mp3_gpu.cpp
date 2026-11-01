@@ -216,6 +216,10 @@ REXCVAR_DEFINE_DOUBLE(mp3_bloom_juego, 0.17, "MP3",
 REXCVAR_DEFINE_DOUBLE(mp3_exposicion, 1.0, "MP3",
                       "Exposicion del tonemap: multiplica sus Exposures (c137) antes de la curva. 1 = la del juego; menos "
                       "de 1 baja el pase de luz quemado (0.4 a 1.0)");
+REXCVAR_DEFINE_BOOL(mp3_post_sin_alpha, true, "MP3",
+                    "Los pases de postproceso (tonemaps, FXAA) se dibujan sin su prueba de alfa: su oC0.w es una "
+                    "luma, no un alfa, y una variante especializada con la prueba encendida descarta cada pixel "
+                    "cuya luma no pasa el umbral - la salida negra del tonemap y los puntitos con el stencil fuera");
 REXCVAR_DEFINE_BOOL(mp3_post_sin_stencil, true, "MP3",
                     "Los pases de postproceso (tonemaps, FXAA) se dibujan sin su prueba de stencil: el restaurado de "
                     "la profundidad escribe el stencil con ella, pero el tonemap salia negro (su entrada viva) y el "
@@ -2266,6 +2270,17 @@ class RingGraphicsSystem final : public rex::system::IGraphicsSystem {
     // mp3_post_sin_stencil: the tonemaps and the FXAA draw without their stencil test. The depth restore brings
     // the stencil back with the depth, but the tonemap's output came out black with a live input (its stencil test
     // rejecting everything) and the Swap presented the raw 8-bit copy of the scene instead: the white frame.
+    // mp3_post_sin_alpha: the tonemaps' and the FXAA's oC0.w is a LUMA, not an alpha - a variant specialized
+    // with the alpha test on clips every pixel whose luma fails the threshold: the black tonemap output, and the
+    // speckles with the stencil off. The test's enable bit is cleared for these draws.
+    const bool post_sin_alpha = REXCVAR_GET(mp3_post_sin_alpha) && ps_ &&
+                                (IsTonemap(ps_->huella_contenedor) || ps_->huella_contenedor == kFxaa);
+    const uint32_t saved_colorctl_post = registers_[g::XE_GPU_REG_RB_COLORCONTROL];
+    if (post_sin_alpha) {
+      registers_[g::XE_GPU_REG_RB_COLORCONTROL] &= ~0x8u;
+      ++generacion_encuadre_;
+      request.generacion_encuadre = generacion_encuadre_;
+    }
     const bool post_sin_stencil = REXCVAR_GET(mp3_post_sin_stencil) && ps_ &&
                                   (IsTonemap(ps_->huella_contenedor) || ps_->huella_contenedor == kFxaa);
     const uint32_t saved_depthctl_post = registers_[g::XE_GPU_REG_RB_DEPTHCONTROL];
@@ -2276,6 +2291,7 @@ class RingGraphicsSystem final : public rex::system::IGraphicsSystem {
     }
     const bool drawn = destinos_->Dibujar(request);
     if (post_sin_stencil) registers_[g::XE_GPU_REG_RB_DEPTHCONTROL] = saved_depthctl_post;
+    if (post_sin_alpha) registers_[g::XE_GPU_REG_RB_COLORCONTROL] = saved_colorctl_post;
     if (fxaa_unbiased) registers_[rex::graphics::XE_GPU_REG_RB_COLOR_INFO] = color_info;
     if (exposure_scaled) {
       for (uint32_t i = 0; i < 2; ++i) registers_[0x4000 + (256 + 137) * 4 + i] = saved_exposures[i];
