@@ -16,6 +16,7 @@
 #include <map>
 #include <mutex>
 #include <unordered_map>
+#include <unordered_set>
 
 #include <rex/cvar.h>
 #include <rex/filesystem.h>
@@ -299,6 +300,7 @@ struct Biblioteca::Datos {
 
   std::mutex mutex;  // the maps below: the create hooks run on game threads, IM_LOAD on the ring thread
   std::unordered_map<uint32_t, const EntradaShader*> por_direccion;  // physical address of the microcode
+  std::unordered_set<uint64_t> enmascaradas_;  // masked matches already logged
   // Step 1's answers already checked against the code at that address: the next load from it (about 50,000 a second,
   // most of them repeats) is recognised by comparing its words with the ones checked, without hashing the microcode.
   // All of them, not three: D3D patches the same shader at the same address again for another vertex declaration
@@ -588,6 +590,13 @@ const EntradaShader* Biblioteca::IdentificarEntrada(bool vertices, uint32_t fisi
         }
         if (d.temporal == e.microcodigo) {
           elegido = &e;
+          // One line per distinct masked match: which microcode (its hash) runs on which entry's vertex layout.
+          // The costume spikes and the tonemap quad's noise both come through here; the dumped _de_ variants tell
+          // offline whether the chosen entry is the right one.
+          if (vertices && d.enmascaradas_.insert(huella).second && d.enmascaradas_.size() <= 64) {
+            REXLOG_WARN("[shaders] VS {:016X} taken masked as n{} ({}/{})", huella, e.numero,
+                        d.enmascaradas_.size(), 64);
+          }
           break;
         }
       }
