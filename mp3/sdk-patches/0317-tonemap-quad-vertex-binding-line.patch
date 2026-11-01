@@ -1,0 +1,62 @@
+SDK patch 0317 (Max Payne 3 port): one instrumentation line for the last suspect standing. The costume spikes
+and the tonemap quad's noise survived every shader-side fix (64 containers "taken exact" in the last run, both
+bugs unchanged), so the audit went after the vertex DATA binding: every packet form that can write the fetch
+region (SET_CONSTANT type 1, SET_CONSTANT2/SET_SHADER_CONSTANTS, LOAD_ALU_CONSTANT) is handled for the whole
+flat 0x4800-0x48BF space the vertex stream words live in; texturas_reusadas only reuses PS sampler handles
+(dibujos.cpp 1569-1596) and never vertex streams, whose words are read live at each draw (1529-1530); the
+geometry store's trust is bounded by epochs that every guest-visible GPU progress bumps. No hole provable, so
+this line settles it in one run: at any draw whose PS is one of the three tonemaps (6671591252A5BCE2 /
+FE226603F40E2533 / CD9469857A0C532A), it prints each vertex stream's slot (as fetch slot.stream), stride, byte
+order, the SIX fetch words of its fetch constant block (its own two plus the block they share with a texture
+twin) and the first 64 guest bytes at the exact stream base the draw uploads from, throttled to one line per
+10 s per tonemap. Garbage bytes at the logged base = the guest memory (or our snapshot of the words) is stale;
+clean bytes = the binding is clean and the layout/upload side is left.
+
+--- a/src/x360/deko/dibujos.cpp
++++ b/src/x360/deko/dibujos.cpp
+@@ -1555,6 +1555,45 @@
+                    uint32_t(necesarios)};
+     bytes_vertices += (uint32_t(necesarios) + 15) & ~15u;
+   }
++  // 0317: the tonemap quad's own vertex binding at draw time. The spikes and the quad's noise survived every
++  // shader/container fix, so the suspect left is the vertex DATA binding: what the six fetch words of each vertex
++  // stream's fetch constant hold at the draw (the two of its own stream and the whole block they live in) and what
++  // the first 64 guest bytes at the stream base it will be uploaded from are. One line per tonemap pixel shader,
++  // throttled to one per 10 s: garbage bytes at a right base = the words (or the memory behind them) are stale;
++  // right bytes at a wrong base = the words point elsewhere; right words and bytes = the binding is clean and the
++  // layout or the upload is left. Settles it in one run.
++  if (ps && !entrada->enlaces.empty() && p.vs) {
++    static const uint64_t kTonemapas[3] = {UINT64_C(0x6671591252A5BCE2), UINT64_C(0xFE226603F40E2533),
++                                           UINT64_C(0xCD9469857A0C532A)};
++    uint32_t tonemap = 3;
++    for (uint32_t t = 0; t < 3; ++t) {
++      if (ps->huella_contenedor == kTonemapas[t]) {
++        tonemap = t;
++      }
++    }
++    static uint64_t siguiente[3] = {};
++    const uint64_t ahora = deko::AhoraNs();
++    if (tonemap < 3 && ahora >= siguiente[tonemap]) {
++      siguiente[tonemap] = ahora + uint64_t(10) * 1000000000ull;
++      std::string linea = fmt::format("[verts-tonemap] PS n{} VS n{} fuente {} tipo {} cuenta {} vertices {} vmin {} "
++                                      "vmax {}:",
++                                      ps->numero, p.vs->numero, fuente, tipo, cuenta, vertices, vmin, vmax);
++      for (size_t b = 0; b < entrada->enlaces.size(); ++b) {
++        const EntradaVerticesDk::Enlace& enlace = entrada->enlaces[b];
++        const uint32_t* bloque = r + kRegFetch + (enlace.ranura / 3) * 6;
++        const uint32_t* d = bloque + (enlace.ranura % 3) * 2;
++        linea += fmt::format(" | slot {}.{} zancada {} bytes {} orden {} d {:08X} {:08X} bloque {:08X} {:08X} {:08X} "
++                             "{:08X} {:08X} {:08X} huesped",
++                             enlace.ranura / 3, enlace.ranura % 3, enlace.zancada, origenes[b].bytes,
++                             uint32_t(origenes[b].orden), d[0], d[1], bloque[0], bloque[1], bloque[2], bloque[3],
++                             bloque[4], bloque[5]);
++        for (uint32_t i = 0; i < 64 && i < origenes[b].bytes; ++i) {
++          linea += fmt::format(" {:02X}", origenes[b].datos[i]);
++        }
++      }
++      REXLOG_INFO("{}", linea);
++    }
++  }
+ 
+   cortar_etapa(0);
+   // --- Textures and samplers (they may move on to the next work slot: before anything this draw records)
