@@ -1,0 +1,137 @@
+SDK patch 0320 (Max Payne 3 port): x360_edram_8bits_a_flotante, DEFAULT FALSE. What an 8-bit color view (EDRAM
+format 0) drew is carried, when its pass closes and claims its rows, into the 7e3 views (f3/f12) of the same base,
+pitch and MSAA as VALUES: a Copiar3D draw converts RGBA8 -> RGBA16F, and those views' tiles are marked seen exactly
+as a transfer would. Root cause it closes (PORTING.md, runs 23-35 item 3): the tonemap draws the finished 0..1
+picture into base 198's f0 view; the frame's last passes and the final copy the Swap fetches read the f12 view of
+the same tiles, which keeps the raw lit HDR scene. The machinery's own carry never reaches it as values:
+- EmpezarPase skips EdramPreparar for a pass whose first draw paints its color targets whole
+  (dibujo_opaco_completo_, x360_edram_saltar_muertas, dibujos.cpp:838-841) - and the pass that follows the tonemap
+  on those tiles is exactly such a whole-target opaque quad - so no transfer-in happens, and that pass's own claim
+  (EdramCerrarPase -> EdramReclamar) then buries the f0 write under the f12 view's stale content;
+- even when a prepare does run, EdramTransferir reinterprets the 8-bit BITS as 7e3 (kFsEdramColor's
+  Empaquetar/Desempaquetar), not the picture's values.
+Run 32: "no transfer between the tonemap's resolve and the final one". The log gets "[edram] c 198 f0 960 -> 198
+f3 960: filas 0-540, de 8 bits como valores" per carry and a count in the 300-frame [edram] line ("de 8 bits a
+flotante"). Off by default: this is architecture-level and must not change behavior until the console test enables
+it via mp3.toml; a failed Copiar3D falls back to the old transfer path (the tiles keep their claim).
+
+--- a/src/x360/deko/edram.cpp	2026-11-01 18:11:43
++++ b/src/x360/deko/edram.cpp	2026-11-01 18:11:43
+@@ -48,6 +48,11 @@
+ REXCVAR_DEFINE_BOOL(x360_edram_z_por_color, true, "X360",
+                     "Un pase con color de 8 bits y profundidad en la misma base escribe la profundidad como color "
+                     "(GTA IV la restaura asi para las luces): la profundidad recibe la ultima resuelta de esa base");
++REXCVAR_DEFINE_BOOL(x360_edram_8bits_a_flotante, false, "X360",
++                    "Lo que dibujo una vista de color de 8 bits (formato 0) se lleva, al cerrarse su pase, a las vistas "
++                    "7e3 (f3/f12) de la misma base, pitch y MSAA como valores (RGBA8 -> RGBA16F, Copiar3D), no como "
++                    "bits: Max Payne 3 tonemapea en la vista f0 de la base 198 y el cuadro final copia la vista f12 "
++                    "de esas mismas tejas, que sin esto conserva la escena cruda");
+ REXCVAR_DEFINE_BOOL(x360_edram_reduccion_directa, true, "X360",
+                     "Un resolve desde una vista 4x cuyas tejas tiene una vista 1x del doble de pitch (GTA IV reduce su "
+                     "escena a 640x360 asi) promedia 2x2 texeles de esa vista, como el resolve de la Xenos promedia las "
+@@ -407,11 +412,67 @@
+     }
+     if (imagen && imagen->edram_filas) {
+       EdramReclamar(*imagen, imagen->edram_filas);
++      EdramLlevar8Bits(*imagen, imagen->edram_filas);  // x360_edram_8bits_a_flotante: as values, before anyone reads it
+       imagen->edram_filas = 0;
+     }
+   }
+ }
+ 
++// x360_edram_8bits_a_flotante: the rows an 8-bit color view (format 0) just claimed are carried into the 7e3 views
++// (f3/f12) of the same base, pitch and MSAA as VALUES, a 3D-engine copy that converts RGBA8 -> RGBA16F (Copiar3D),
++// and those views' tiles are marked seen, as a transfer would (the claiming view stays their owner). Why: Max Payne 3
++// tonemaps into base 198's f0 view and the frame's last passes and its final copy read the f12 view of the same tiles;
++// the machinery's own carry points (EdramPreparar at EmpezarPase and Copiar) either never run - the pass in between
++// begins with a whole-target opaque draw, which skips the transfer-in (dibujos.cpp, dibujo_opaco_completo_) and then
++// claims the tiles for the f12 view with its own, stale content - or would reinterpret the 8-bit bits as 7e3
++// (EdramTransferir), not the picture's values. Run 32: "no transfer between the tonemap's resolve and the final one".
++void RenderDk::EdramLlevar8Bits(ImagenDk& vista, uint32_t filas) {
++  if (!REXCVAR_GET(x360_edram_8bits_a_flotante) || !EdramActiva() || vista.profundidad || vista.edram_formato != 0 ||
++      vista.edram_bpp != 4 || vista.edram_versiones.empty()) {
++    return;
++  }
++  filas = std::min(filas, vista.alto);
++  const uint32_t ancho = std::min(vista.ancho, vista.edram_pitch);
++  if (!filas || !ancho) return;
++  ImagenDk* llevadas[4];
++  uint32_t n_llevadas = 0;
++  for (auto& [clave, otra] : destinos_) {
++    if (otra.serie == vista.serie || otra.profundidad || otra.edram_formato != 3 || otra.edram_bpp != 4 ||
++        otra.edram_base != vista.edram_base || otra.edram_pitch != vista.edram_pitch ||
++        otra.edram_msaa != vista.edram_msaa || otra.edram_versiones.empty()) {
++      continue;
++    }
++    llevadas[n_llevadas++] = &otra;
++    if (n_llevadas == 4) break;  // f3 alone after the fold; a couple more costs nothing
++  }
++  if (!n_llevadas) return;
++  // As a transfer: the source must be its own content again (a resolve without copy may have given it away), the
++  // destination is written below its pending band. Copiar3D orders itself against the draws and copies before it.
++  RestaurarContenido(vista, true);
++  HacerBorradoPendiente(vista);
++  CompletarBanda(vista, filas, false, 0);
++  for (uint32_t i = 0; i < n_llevadas; ++i) {
++    ImagenDk& otra = *llevadas[i];
++    const uint32_t filas_otra = std::min(filas, otra.alto);
++    const uint32_t n = TejasDeFilas(vista, filas_otra);
++    AntesDeCambiarDestino(&otra);
++    CompletarBanda(otra, filas_otra, false, 0);
++    if (!Copiar3D(vista, 0, 0, ancho, filas_otra, otra, 0, 0)) {
++      otra.edram_generacion = UINT32_MAX;  // nothing carried: the tiles stay to take as a transfer
++      continue;
++    }
++    for (uint32_t k = 0; k < n && k < otra.edram_versiones.size(); ++k) {
++      otra.edram_versiones[k] = tejas_color_[(vista.edram_base + k) & (kTejas - 1)].version;
++    }
++    ++edram_llevados_8bits_;
++    edram_pixeles_ += uint64_t(ancho) * filas_otra;
++    if (EdramRegistrando()) {
++      REXLOG_INFO("[edram] c {:03X} f0 {} -> {:03X} f3 {}: filas 0-{}, de 8 bits como valores", vista.edram_base,
++                  vista.edram_pitch, otra.edram_base, otra.edram_pitch, filas_otra);
++    }
++  }
++}
++
+ void RenderDk::EdramEstencilPendiente(ImagenDk& destino, bool ejecutar) {
+   std::vector<PendienteEstencil> lista;
+   lista.swap(destino.estencil_pendiente);
+@@ -874,12 +935,14 @@
+   if (edram_diag_) REXLOG_INFO("[edram-diag] fotograma {} empieza", edram_diag_contador_);
+   if (!EdramActiva() || ++edram_fotogramas_ < 300) return;
+   REXLOG_INFO("[edram] {} fotogramas: {:.1f} transferencias ({:.1f} con stencil) y {:.2f} Mpixeles por fotograma, "
+-              "{:.1f} hechas como borrado, {} sin soporte",
++              "{:.1f} hechas como borrado, {} sin soporte, {:.1f} de 8 bits a flotante",
+               edram_fotogramas_, double(edram_transferencias_) / edram_fotogramas_,
+               double(edram_estencil_pasadas_) / edram_fotogramas_, double(edram_pixeles_) / edram_fotogramas_ / 1e6,
+-              double(edram_borrados_) / edram_fotogramas_, edram_sin_soporte_);
++              double(edram_borrados_) / edram_fotogramas_, edram_sin_soporte_,
++              double(edram_llevados_8bits_) / edram_fotogramas_);
+   edram_fotogramas_ = 0;
+   edram_transferencias_ = edram_pixeles_ = edram_sin_soporte_ = edram_borrados_ = edram_estencil_pasadas_ = 0;
++  edram_llevados_8bits_ = 0;
+ }
+ 
+ }  // namespace rex::x360
+--- a/include/rex/x360/deko/render.h	2026-11-01 18:11:43
++++ b/include/rex/x360/deko/render.h	2026-11-01 18:11:43
+@@ -492,6 +492,10 @@
+   void EdramPreparar(ImagenDk& vista, uint32_t filas, bool sin_borrados_ajenos = false);
+   // The view wrote its first `filas` rows (a clear, a pass): its tiles are its own.
+   void EdramReclamar(ImagenDk& vista, uint32_t filas, const float* borrado = nullptr);
++  // x360_edram_8bits_a_flotante: after an 8-bit color view's claim, its rows go to the 7e3 views of the same base,
++  // pitch and MSAA as values (RGBA8 -> RGBA16F), and their tiles are marked seen - the transfer EdramPreparar would
++  // make later, without waiting for it and without re-reading the 8-bit bits as 7e3.
++  void EdramLlevar8Bits(ImagenDk& vista, uint32_t filas);
+   bool EdramBorrarComo(const ImagenDk& origen, const TejaEdram& teja, ImagenDk& destino, uint32_t desde,
+                        uint32_t cuantas);
+   // The pass that ends claims the rows its draws wrote (EmpezarPase, Copiar).
+@@ -505,6 +509,7 @@
+   int32_t edram_shaders_ = 0;  // 0 not tried, 1 ready, -1 failed
+   uint64_t edram_transferencias_ = 0, edram_pixeles_ = 0, edram_sin_soporte_ = 0, edram_fotogramas_ = 0;
+   uint64_t edram_borrados_ = 0, edram_estencil_pasadas_ = 0;
++  uint64_t edram_llevados_8bits_ = 0;  // x360_edram_8bits_a_flotante: carries of an 8-bit view into the 7e3 ones
+   std::set<uint64_t> edram_avisos_;
+   uint32_t edram_diag_encuadres_ = 0;
+   // The last depth resolve from each EDRAM base and pitch: the texture's address (CopiarProfundidad), for

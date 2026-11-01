@@ -545,6 +545,24 @@ Established, in order:
    f0 view's writes into the f12 view (or the copy must read through the store) for base 198's shape - a renderer
    architecture change, best started fresh (sdk/src/x360/deko/edram.cpp:289-411, destinos.cpp Copiar's EdramPreparar
    call ~1462-1467, and the per-(base,format,pitch,msaa) image keying in FormatoDestinoColorDk/DestinoColor).
+4. The gate, found (patch 0320, x360_edram_8bits_a_flotante, DEFAULT FALSE - ships off pending the one console
+   test): the one-store machinery never carries the f0 view's writes into the f12 view as values. EmpezarPase skips
+   EdramPreparar - the transfer-in - for a pass whose first draw paints its color targets whole
+   (dibujo_opaco_completo_ of x360_edram_saltar_muertas, dibujos.cpp 838-841, set at 1796-1821), and the passes that
+   follow the tonemap on base 198's tiles are exactly that shape (run 65's traced dump frame: one whole-surface quad
+   into c198 f3 right after the tonemap's resolve, then ten draws into c198 f12, then the final copy; the same log
+   counts 42068 "pases sin transferir" in 10 s): the pass's own claim (EdramCerrarPase -> EdramReclamar, edram.cpp
+   408-411) buries the f0 write under the f12 image's stale content - the raw lit scene - and the final copy's
+   EdramPreparar (destinos.cpp 1554-1556) then finds the tiles already the f12 view's own (edram.cpp 303): run 32's
+   "no transfer between the tonemap's resolve and the final one". Even when a prepare does run, EdramTransferir
+   reinterprets the 8-bit BITS as 7e3 (kFsEdramColor's Empaquetar/Desempaquetar, edram.cpp 201-207), not the
+   picture's values. The fix, gated off: when an 8-bit color view's pass closes and claims its rows, Copiar3D
+   carries them into the 7e3 views of the same base, pitch and MSAA as VALUES (RGBA8 -> RGBA16F) and marks their
+   tiles seen, as a transfer would - so the final copy reads the tonemapped picture whether or not the game's own
+   copy-back quad paints. The [edram] log gets "c 198 f0 960 -> 198 f3 960: filas 0-540, de 8 bits como valores"
+   and the 300-frame line a "de 8 bits a flotante" count; a failed copy falls back to the old transfer path. One
+   console run with x360_edram_8bits_a_flotante = true in mp3.toml: the gameplay picture becomes cutscene-like;
+   anything wrong, toml-off reverts to today.
 
 The spikes around Max, closed along the way: D3D re-patches the costume vertex shaders at the same address for
 other vertex declarations (the jacket for the cloth, the jacket again when wounded, for the blood overlay's
