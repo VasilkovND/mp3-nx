@@ -1,0 +1,45 @@
+SDK patch 0318 (Max Payne 3 port): the tonemap's pixel UBO as uploaded (the differential path's shadow) against
+the register file, one line per tonemap per 10 s. Every other link of the draw is proven clean (exact container,
+clean vertices, correct textures); if the shadow words differ from the registers the differential upload is the
+bug, if they match the compiled DKSH variant is - and that one is chased offline.
+
+--- a/src/x360/deko/dibujos.cpp
++++ b/src/x360/deko/dibujos.cpp
+@@ -2610,13 +2610,36 @@
+         }
+         if (bytes_ps > bloque_ps_cubierto_) {
+           registros_empujados_ += EmpujarDiferencias(cmd, bloque_ps_, kUboBytesPs, r + kRegConstantesPs,
+                                                      sombra_ps_.data(), bloque_ps_cubierto_, bytes_ps, empujes_);
+           bloque_ps_cubierto_ = bytes_ps;
+         }
+-
++        // 0318: the tonemap's pixel UBO as it really went up (the shadow the differential path keeps) against the
++        // register file. Every other link is proven clean; if these differ the differential upload is the bug, if
++        // they match the compiled variant is. One line per tonemap per 10 s.
++        {
++          static const uint64_t kTm[3] = {UINT64_C(0x6671591252A5BCE2), UINT64_C(0xFE226603F40E2533),
++                                          UINT64_C(0xCD9469857A0C532A)};
++          bool es_tm = ps && (ps->huella_contenedor == kTm[0] || ps->huella_contenedor == kTm[1] ||
++                              ps->huella_contenedor == kTm[2]);
++          if (es_tm) {
++            static uint64_t siguiente_ubo = 0;
++            const uint64_t ahora_ubo = deko::AhoraNs();
++            if (ahora_ubo >= siguiente_ubo) {
++              siguiente_ubo = ahora_ubo + 10000000000ull;
++              static constexpr uint32_t kPalabras[12] = {88, 130, 137, 138, 139, 142, 146, 147, 250, 251, 252, 253};
++              std::string linea_ubo = fmt::format("[ubo-tonemap] PS n{}", ps->numero);
++              for (uint32_t palabra : kPalabras) {
++                if (palabra * 4 + 4 > bytes_ps) continue;
++                linea_ubo += fmt::format(" c{} {:08X}/{:08X}", palabra,
++                                         r[kRegConstantesPs / 4 + palabra], sombra_ps_[palabra]);
++              }
++              REXLOG_INFO("{}", linea_ubo);
++            }
++          }
++        }
+       }
+       registros_empujados_ += EmpujarDiferencias(cmd, bloque_compartidas_, kBloqueCompartidas, compartidas,
+                                                  sombra_compartidas_.data(), 0, sizeof(compartidas), empujes_);
+     }
+     if (bloque_vs_ != g_.ubo[0]) {
+       dkCmdBufBindUniformBuffer(cmd, DkStage_Vertex, 0, bloque_vs_, kUboBytesVs);
