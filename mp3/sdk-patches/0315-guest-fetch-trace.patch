@@ -1,36 +1,52 @@
-SDK patch 0315 (Max Payne 3 port): the scaled-fetch trace covers the guest textures too. The tonemap paints
-black with every resolved input verified, so something it samples from guest memory is garbage; one line per
-distinct guest fetch (base, format, TextureSign, size, exp_adjust) every ~10 s.
+SDK patch 0315 (Max Payne 3 port): the guest-texture fetch trace, without its cost. The first version sat
+in the hot path of RenderDk::PrepararTextura with a per-call cvar read and a map that cleared itself whole
+when it passed 96 keys (everything relogged: 584-600 us a draw, 3 fps): the setting is read once, a fixed
+table of 32 keys replaces the oldest entry instead of clearing, and each key logs at most once every 300
+frames. The size printed follows the fetch's dimension now: a 3D constant read with the 2D mask printed a
+64x64x16 volume as 6208x7696, the one anomaly of run l2's 431 guest fetches, which was the trace's own
+artefact, not the game's data.
 
 --- a/src/x360/deko/texturas.cpp
 +++ b/src/x360/deko/texturas.cpp
-@@ -753,12 +753,29 @@
-       REXLOG_WARN("[deko3d] causa {}: textura de profundidad {:08X} {}x{} sin resolve; resueltas cerca:{}",
-                   400 + formato, base, (f[2] & 0x1FFF) + 1, ((f[2] >> 13) & 0x1FFF) + 1,
-                   cerca.empty() ? " ninguna" : cerca);
+@@ -756,6 +756,41 @@
      }
      return VaciaDe(tipo_shader);
    }
 +  // 0315, x360_traza_fetch_escalado: the guest textures too (the resolved branch is traced by 0311). The tonemap
 +  // paints black with its resolved inputs verified, so something it samples from guest memory is garbage; this line
-+  // names every distinct guest fetch (base, format, signs, size) about once every 10 s.
-+  if (REXCVAR_GET(x360_traza_fetch_escalado)) {
-+    static std::unordered_map<uint64_t, uint32_t> vistas_huesped_;
-+    if (vistas_huesped_.size() > 96) vistas_huesped_.clear();
++  // names every distinct guest fetch (base, format, signs, size) at most once every 300 frames. One read of the
++  // setting (this sits in every draw's way), a fixed table whose oldest entry leaves (a map that cleared itself all
++  // at once relogged everything, ~600 us a draw), and the size of the fetch's own dimension: a 3D constant read with
++  // the 2D mask is how a 64x64x16 volume printed itself as 6208x7696.
++  static const bool traza_huesped = REXCVAR_GET(x360_traza_fetch_escalado);
++  if (traza_huesped) {
++    struct VistaHuesped {
++      uint64_t clave;
++      uint32_t fotograma;
++    };
++    static VistaHuesped vistas_huesped_[32] = {};
 +    const uint32_t fotograma_h = fotograma_ ? fotograma_ : 1;
-+    const uint64_t clave_h = (uint64_t(base & 0x1FFFFFFF) << 20) | (uint64_t(formato) << 14) |
-+                             (uint64_t(signos) << 6) | ((f[2] >> 13) & 0x3F);
-+    const auto [it_h, nueva_h] = vistas_huesped_.try_emplace(clave_h, 0);
-+    if (nueva_h || fotograma_h - it_h->second >= 300) {
-+      it_h->second = fotograma_h;
-+      REXLOG_INFO("[traza-fetch] huesped base {:08X} {}x{} fmt {} signos {:02X} exp_adjust {}", base,
-+                  (f[2] & 0x1FFF) + 1, ((f[2] >> 13) & 0x1FFF) + 1, formato, signos,
-+                  int32_t(f[3] << 13) >> 26);
++    const uint64_t clave_h = (uint64_t(base & 0x1FFFFFFF) << 21) | (uint64_t(volumen) << 20) |
++                             (uint64_t(formato) << 14) | (uint64_t(signos) << 6) | ((f[2] >> 13) & 0x3F);
++    VistaHuesped* vista_h = nullptr;
++    VistaHuesped* vieja_h = &vistas_huesped_[0];
++    for (VistaHuesped& v : vistas_huesped_) {
++      if (v.clave == clave_h) {
++        vista_h = &v;
++        break;
++      }
++      if (v.fotograma < vieja_h->fotograma) vieja_h = &v;
++    }
++    if (!vista_h) vista_h = vieja_h;  // an unseen key takes the oldest slot; the table is never cleared whole
++    if (vista_h->clave != clave_h || fotograma_h - vista_h->fotograma >= 300) {
++      vista_h->clave = clave_h;
++      vista_h->fotograma = fotograma_h;
++      REXLOG_INFO("[traza-fetch] huesped base {:08X} {}x{}{} fmt {} signos {:02X} exp_adjust {}", base,
++                  volumen ? (f[2] & 0x7FF) + 1 : (f[2] & 0x1FFF) + 1,
++                  volumen ? ((f[2] >> 11) & 0x7FF) + 1 : ((f[2] >> 13) & 0x1FFF) + 1,
++                  volumen ? " 3D" : "", formato, signos, int32_t(f[3] << 13) >> 26);
 +    }
 +  }
    const DkImageFormat formato_vista = FormatoVistaSigno(tf.formato, signos);
    if (signos && formato_vista == DkImageFormat_None) {
      Avisar(31, "texturas con signo o gamma mezclados o sesgados: se leen sin signo");
-   }
-   // size_2d: 13 + 13 bits; size_3d: 11 + 11 + 10 bits (xenos.h).
-   const uint32_t ancho = volumen ? (f[2] & 0x7FF) + 1 : (f[2] & 0x1FFF) + 1;
