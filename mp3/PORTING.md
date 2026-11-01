@@ -604,3 +604,29 @@ What one run shows: the 64 masked lines turn into "taken exact" (or vanish - the
 shader report counts a new "exact" bucket in the tens of thousands (every reload of the re-patched VSes), and the
 tonemap quad and the wounded-costume draws run under their own layouts: 0654D000 should stop being black, and if
 any artifact survives it is no longer explainable by the container's fetch translation.
+
+## The [ubo-tonemap] line of 0318 read two cells that are neither the constants nor each other
+
+The contradiction it left: the shadow half swung wildly (c88 -309.3, 26.96, 25.3, 0; c137 7.17) while [exposicion]
+read the same constants sane (1.5, ~1.0). Both were honest readings of the wrong cells. `kRegConstantesPs` is a
+word index (0x4400; every use is `r + kRegConstantesPs`), so the register half's `r[kRegConstantesPs / 4 + n]`
+read ordinary registers at 0x1100+n, below the constants; and the shadow half's `sombra_ps_[n]` read WORD n =
+register n/4, while the c-numbers (gAdaptedLum c88, Exposures c137) and [exposicion] number REGISTERS - its
+`0x4000 + (256+n)*4` is word `0x4400 + n*4`, the very cells `EmpujarDiferencias` pushes. The swinging values were
+register 22.x and register 34.x of the PS block: one UBO serves every pixel shader of the work (a single
+`bloque_ps_`, re-allocated per work), so words outside the last push's range hold whichever draw covered them last
+- another shader's constants, swinging draw to draw. The line never compared the UBO against the register file.
+
+The rest follows. The two layers' logs alias the same storage with no copy lag: `p.registros` is
+`registers_.data()` (mp3_gpu.cpp:2143), a live pointer the synchronous `Dibujar` (2292) reads before the hooks
+restore their patches (2297). And the upload itself cannot go stale within a shader's declared range: any changed
+word bumps `generacion_constantes_ps` (702-704, the batch run 818-828, the hooks' patch and restore 2221-2236 /
+2297-2298), which resets `bloque_ps_cubierto_` (dibujos.cpp:2607-2610) and re-pushes [0, bytes_ps); a correctly
+addressed shadow must equal the registers at the print. That is also why the whole-constant A/B
+(`nfsmw_dk_constantes_por_diferencias = false`, dibujos.cpp:2680's memcpy of the same `r + kRegConstantesPs` over
+the same declared range) changed nothing: both paths deliver the same bytes, and 54d1f18's "the constants reach
+the shader" was concluded from a comparison that did not happen.
+
+Patch 0319 makes both halves read the same cell, register n's first word (`r[kRegConstantesPs + n*4]` against
+`sombra_ps_[n*4]`, skipped when `n*16+16 > bytes_ps`). One run: equal halves (c88 3FC00000/3FC00000...) close the
+differential upload for good; a real difference is the first true evidence against it.

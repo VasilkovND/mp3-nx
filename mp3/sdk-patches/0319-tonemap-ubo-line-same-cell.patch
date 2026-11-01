@@ -1,0 +1,53 @@
+SDK patch 0319 (Max Payne 3 port): 0318's [ubo-tonemap] line read two cells that are neither the
+tonemap's constants nor each other. kRegConstantesPs is already a word index (0x4400, xenos.h; every
+other use is r + kRegConstantesPs in words), so the register half's r[kRegConstantesPs / 4 + n] read
+ordinary registers at 0x1100+n, far below the constants; and the shadow half's sombra_ps_[n] read
+WORD n = register n/4, while the c-numbers the line copied (88 gAdaptedLum, 137 Exposures) and the
+game's constant table number REGISTERS - [exposicion] reads register n at word 0x4000 + (256+n)*4 =
+0x4400 + n*4, the very cells EmpujarDiferencias pushes. So the "swinging" sombra values (-309.3,
+26.96, 25.3, 0 at c88; 7.17 at c137) were register 22.x and register 34.x of the PS block - cells
+every pixel shader of the work shares through the one UBO of slot 1 - rewritten by other draws'
+differential pushes; the line never compared the UBO against the register file, and 54d1f18's
+"the constants reach the shader" was concluded from a comparison that did not happen. Both halves
+now read the same cell, register n's first word: r[kRegConstantesPs + n*4] (the live mirror the
+request carries) against sombra_ps_[n*4] (the words the differential path pushed for this work), in
+bytes_ps units of whole registers. One run settles it: equal halves (3FC00000...) exonerate the
+upload whole - which is also why switching to the whole-block memcpy path (2680) changed nothing:
+
+--- a/src/x360/deko/dibujos.cpp
++++ b/src/x360/deko/dibujos.cpp
+@@ -2613,9 +2613,13 @@
+                                                      sombra_ps_.data(), bloque_ps_cubierto_, bytes_ps, empujes_);
+           bloque_ps_cubierto_ = bytes_ps;
+         }
+-        // 0318: the tonemap's pixel UBO as it really went up (the shadow the differential path keeps) against the
+-        // register file. Every other link is proven clean; if these differ the differential upload is the bug, if
+-        // they match the compiled variant is. One line per tonemap per 10 s.
++        // 0318/0319: the tonemap's pixel UBO as it really went up (the shadow the differential path keeps) against
++        // the register file, at the registers the game's constant table names (the c-numbers of [exposicion]). 0318
++        // read neither: it divided kRegConstantesPs (already a word index, 0x4400) by four, so the register half read
++        // ordinary registers at 0x1100+n, and it indexed the shadow by word, so the shadow half read register n/4's
++        // cell - a cell of the block every pixel shader of the work shares, which swings between other shaders'
++        // values (-309, 27, 0...) without the tonemap's own constants ever being wrong. The same cell on both sides
++        // now: a difference is the upload, a match exonerates it and the compiled variant is left.
+         {
+           static const uint64_t kTm[3] = {UINT64_C(0x6671591252A5BCE2), UINT64_C(0xFE226603F40E2533),
+                                           UINT64_C(0xCD9469857A0C532A)};
+@@ -2626,12 +2630,12 @@
+             const uint64_t ahora_ubo = deko::AhoraNs();
+             if (ahora_ubo >= siguiente_ubo) {
+               siguiente_ubo = ahora_ubo + 10000000000ull;
+-              static constexpr uint32_t kPalabras[12] = {88, 130, 137, 138, 139, 142, 146, 147, 250, 251, 252, 253};
++              static constexpr uint32_t kRegistrosTm[12] = {88, 130, 137, 138, 139, 142, 146, 147, 250, 251, 252, 253};
+               std::string linea_ubo = fmt::format("[ubo-tonemap] PS n{}", ps->numero);
+-              for (uint32_t palabra : kPalabras) {
+-                if (palabra * 4 + 4 > bytes_ps) continue;
+-                linea_ubo += fmt::format(" c{} {:08X}/{:08X}", palabra,
+-                                         r[kRegConstantesPs / 4 + palabra], sombra_ps_[palabra]);
++              for (uint32_t registro : kRegistrosTm) {
++                if (registro * 16 + 16 > bytes_ps) continue;
++                linea_ubo += fmt::format(" c{} {:08X}/{:08X}", registro,
++                                         r[kRegConstantesPs + registro * 4], sombra_ps_[registro * 4]);
+               }
+               REXLOG_INFO("{}", linea_ubo);
+             }
