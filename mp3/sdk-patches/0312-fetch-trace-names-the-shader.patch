@@ -1,60 +1,27 @@
-SDK patch 0312 (Max Payne 3 port): the scaled-fetch trace names the pixel shader and its slot, with the fetch's
-TextureSign bits (signos) and format too. The scene and the bloom chain mix exp_adjust -11 and -13 reads of one
-resolved address (a x4 difference), and the diffuse textures' gamma signs decide whether they are decoded: a fetch
-whose signs are not all-gamma (or whose format has no sRGB view) reads gamma bytes as linear, which is exactly
-"textures whiter in gameplay than in the cutscenes".
+SDK patch 0312 (Max Payne 3 port), amendment: the fetch trace drops its exp_adjust/TextureSign filter - every
+distinct (PS, slot, base, format, signs) pair logs one line per ~10 s. The gameplay tonemap's only guest sampler
+(HHSampler, slot 13) has neither a scaled fetch nor gamma signs, so the filter hid the one line that names it; and
+the key map no longer clears at 96 entries (the clear thrash of 0315 cost 600 us per draw).
 
 --- a/src/x360/deko/dibujos.cpp
 +++ b/src/x360/deko/dibujos.cpp
-@@ -38,12 +38,13 @@
- 
- // The same settings as the Vulkan build's (nfsmw_nativo_dibujos.cpp): names, types and defaults.
- REXCVAR_DEFINE_INT32(x360_vs_codigo_max_kb, 256, "X360",
-                      "Los dibujos con un vertex shader de mas KB de codigo compilado no se graban (los que el compilador "
-                      "desborda: segundos por dibujo); 0 = todos");
- REXCVAR_DECLARE(bool, x360_volcado_en_vivo);  // destinos.cpp
-+REXCVAR_DECLARE(bool, x360_traza_fetch_escalado);  // texturas.cpp (0312)
- REXCVAR_DEFINE_BOOL(x360_edram_saltar_muertas, true, "X360",
-                     "Un pase cuyo primer dibujo pinta todos sus destinos de color enteros y opacos (un cuadrado a "
-                     "pantalla completa sin mezcla, prueba ni descarte) no recibe lo que otras vistas tienen en esas "
-                     "tejas: GTA IV convierte su mapa de sombras a R32F sobre tejas de la escena (3 ms de transferencias)");
- REXCVAR_DEFINE_BOOL(x360_vertices_manuales_reusados, true, "X360",
-                     "Los bufers de vertices que lee el propio shader (dsVfetch): dentro de un trabajo, el mismo bufer "
-@@ -1598,14 +1599,36 @@
-   if (ps && !texturas_reusadas) {
-     for (const SamplerShader& sampler : ps->samplers) {
-       if (sampler.registro >= 16) {
-         continue;
+@@ -1603,16 +1603,16 @@
        }
        const uint32_t* fetch = r + kRegFetch + uint32_t(sampler.registro) * 6;
--      const uint32_t* fetch = r + kRegFetch + uint32_t(sampler.registro) * 6;
-+      // 0312, x360_traza_fetch_escalado: which pixel shader and slot reads which texture with which scale, before the
-+      // fetch cache hides it. The scene and the bloom chain mix exp_adjust -11 and -13 reads of one resolved address;
-+      // the draw that reads it four times brighter than the game meant is what whitens lit textures, and only the
-+      // shader's number tells the two apart.
-+      if (REXCVAR_GET(x360_traza_fetch_escalado) &&
-+          ((int32_t(fetch[3] << 13) >> 26) || ((fetch[0] >> 2) & 0xFF) != 0)) {
-+        static std::unordered_map<uint64_t, uint32_t> vistas_dibujo_;
-+        if (vistas_dibujo_.size() > 96) vistas_dibujo_.clear();
-+        const int32_t fexp = int32_t(fetch[3] << 13) >> 26;
-+        const uint32_t fsignos = (fetch[0] >> 2) & 0xFF;
-+        const uint64_t clave = (uint64_t(ps->numero & 0xFFF) << 48) | (uint64_t(sampler.registro) << 44) |
-+                               (uint64_t(uint32_t(fexp + 64) & 0x7F) << 37) | (uint64_t(fetch[3] & 0x1) << 36) |
-+                               (uint64_t(fsignos) << 28) | (uint64_t((fetch[1] >> 12) & 0xFFFFF)) | (fetch[1] & 0x3F);
-+        const auto [it_dibujo, nueva_dibujo] = vistas_dibujo_.try_emplace(clave, 0);
-+        if (nueva_dibujo || fotograma_ - it_dibujo->second >= 300) {
-+          it_dibujo->second = fotograma_;
-+          REXLOG_INFO("[traza-fetch] PS n{} slot {}: base {:08X} {}x{} fmt {} exp_adjust {} num_format {} signos {:02X}",
-+                      ps->numero, sampler.registro, (fetch[1] >> 12) << 12, (fetch[2] & 0x1FFF) + 1,
-+                      ((fetch[2] >> 13) & 0x1FFF) + 1, fetch[1] & 0x3F, fexp,
-+                      (fetch[3] & 0x1) ? "integer" : "fraction", fsignos);
-+        }
-+      }
-       CacheFetch& cache = cache_fetch_[ClaveFetch(fetch) & (cache_fetch_.size() - 1)];
-+      if (!(fotograma_ <= cache.valido_hasta && cache.generacion == generacion_texturas_ &&
-             std::memcmp(cache.fetch.data(), fetch, sizeof(cache.fetch)) == 0)) {
-         bool puntual = false;
-         uint32_t ancho = 0, alto = 0;
-         uint64_t valido_hasta = fotograma_;
-         const uint32_t ranura = PrepararTextura(fetch, sampler.tipo, ancho, alto, puntual, valido_hasta);
-         if (novedad_texturas_.insert((uint64_t(fetch[1]) << 32) | fetch[2]).second) {
+       // 0312, x360_traza_fetch_escalado: which pixel shader and slot reads which texture with which scale, before the
+       // fetch cache hides it. The scene and the bloom chain mix exp_adjust -11 and -13 reads of one resolved address;
+       // the draw that reads it four times brighter than the game meant is what whitens lit textures, and only the
+       // shader's number tells the two apart.
+-      if (REXCVAR_GET(x360_traza_fetch_escalado) &&
+-          ((int32_t(fetch[3] << 13) >> 26) || ((fetch[0] >> 2) & 0xFF) != 0)) {
++      if (REXCVAR_GET(x360_traza_fetch_escalado)) {
++        // 0316: every distinct (PS, slot, base, fmt, signos) - the tonemap's guest sampler (its HHSampler, slot 13,
++        // has exp_adjust 0 and no signs, so no filter may hide it). The map grows with the real texture set only.
+         static std::unordered_map<uint64_t, uint32_t> vistas_dibujo_;
+-        if (vistas_dibujo_.size() > 96) vistas_dibujo_.clear();
+         const int32_t fexp = int32_t(fetch[3] << 13) >> 26;
+         const uint32_t fsignos = (fetch[0] >> 2) & 0xFF;
+         const uint64_t clave = (uint64_t(ps->numero & 0xFFF) << 48) | (uint64_t(sampler.registro) << 44) |
+                                (uint64_t(uint32_t(fexp + 64) & 0x7F) << 37) | (uint64_t(fetch[3] & 0x1) << 36) |
+                                (uint64_t(fsignos) << 28) | (uint64_t((fetch[1] >> 12) & 0xFFFFF)) | (fetch[1] & 0x3F);
+         const auto [it_dibujo, nueva_dibujo] = vistas_dibujo_.try_emplace(clave, 0);
