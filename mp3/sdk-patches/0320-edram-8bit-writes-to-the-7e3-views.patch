@@ -67,11 +67,33 @@ Amendment v5 (this version), from v4.log (f399cd) and the mp3_030 frame trace:
   One run settles it: values like 0.1-0.9 in the probes and correct colors on screen close the saga; all-zero
   probes exonerate the composite and put the black inside the tonemap's own draw.
 
+
+Amendment v6 (the combination, from v5's console post-mortem): v4's firing wiring with v5's snapshot moment.
+- v5 (ed100d0) fired NOTHING on console (no "[edram] snapshot post" line, the install counter 0.0 in active
+  windows, the raw-white picture back) and the log rules out every explanation but a silent death inside
+  EdramSnapshotPost: the huella detection matched live ([verts-tonemap] lines inside the active windows - the
+  constants are XXH3 of the guest container bytes, they cannot drift with the host library), the tonemap's draws
+  were submitted ("0 rechazados"), the EDRAM machinery ran (5.1-6.7 transfers a frame in those windows), the cvar
+  was on (the day's toml), and the NRO carries the v5 strings (a fresh build). v5's EdramSnapshotPost could return
+  false at three points without a trace (ancho/filas 0, the side image not created, Copiar3D refused) - none of
+  them logged.
+- THE COMBINATION: the after-draw snapshot (dibujos.cpp) now also requires edram_pase_post_ - the PASS flag v4's
+  run demonstrably engaged (its close-time snapshot fed the 1.0/frame install) - beside the draw's own huella; the
+  close keeps the snapshot as v4's fallback and REGAINS its flag reset at the end of EdramCerrarPase (v5 had
+  dropped it, leaving the gate stale-true across unrelated closes); the install is untouched (destinos.cpp).
+- THE SIDE IMAGE IS RGBA8 now (it was RGBA16F): the install's Copiar3D makes the 8-bit -> float conversion - v1's
+  proven direction (its carries rendered correct colors) - and a raw copy-engine copy (dkCmdBufCopyImage, both
+  sides RGBA8, RestaurarContenido's own fallback pattern) takes the snapshot when Copiar3D refuses, removing the
+  one silent failure class left. A snapshot that still cannot be taken says why, once per 10 s.
+- THE LINE: "[edram] snapshot post <Vista> ... tras el dibujo|cierre, version N: ..." once per 10 s names the path
+  that took it; "tras el dibujo" in a gameplay window is the proof the after-draw wiring fires. The texel probes
+  stay (they read guest memory: zeros are normal there; the bindings are their value).
+
 diff --git a/include/rex/x360/deko/render.h b/include/rex/x360/deko/render.h
-index 00997cf..9f89318 100644
+index 00997cf..522550c 100644
 --- a/include/rex/x360/deko/render.h
 +++ b/include/rex/x360/deko/render.h
-@@ -492,6 +492,18 @@ class RenderDk final : public DestinosNativos {
+@@ -492,6 +492,21 @@ class RenderDk final : public DestinosNativos {
    void EdramPreparar(ImagenDk& vista, uint32_t filas, bool sin_borrados_ajenos = false);
    // The view wrote its first `filas` rows (a clear, a pass): its tiles are its own.
    void EdramReclamar(ImagenDk& vista, uint32_t filas, const float* borrado = nullptr);
@@ -81,23 +103,28 @@ index 00997cf..9f89318 100644
 +  void EdramLlevar8Bits(ImagenDk& vista, uint32_t filas);
 +  // Why an 8-bit view's rows were not carried (no 7e3 destination, Copiar3D refused): one line per 10 s.
 +  void EdramLlevar8BitsAviso(const ImagenDk& vista, const char* razon);
-+  // 0320 v4: an 8-bit color target a post shader (the tonemaps, the FXAA) just drew on, copied into edram_posteado_
-+  // as RGBA16F values. Called at the pass close AND right after the post draw itself (dibujos.cpp): the frame's other
-+  // 8-bit writers on the same tiles share ONE pass with the tonemap (the same base, format, pitch and MSAA key), so a
-+  // close-only snapshot caught their output over the picture - v4's gameplay: the install firing 1.0/frame (the
-+  // counter only counts installs) with a black screen. Returns whether the side image holds a new snapshot.
-+  bool EdramSnapshotPost(ImagenDk& imagen, uint32_t filas);
++  // 0320 v6: an 8-bit color target a post shader (the tonemaps, the FXAA) just drew on, copied into edram_posteado_
++  // (RGBA8, the same values the 8-bit view holds). Called right after the post draw itself (dibujos.cpp, the picture
++  // before the frame's later 8-bit writers of the SAME pass touch it: v4's close-only snapshot captured the composite
++  // they left) and at the pass close as the fallback (v4's proven path: the menu and cutscene post passes close before
++  // anything else writes). Copiar3D does the copy; if it refuses, the copy engine does (dkCmdBufCopyImage, both sides
++  // RGBA8 - RestaurarContenido's own fallback); a snapshot that cannot be taken says why once per 10 s (v5's console
++  // run died silently: neither its line nor the install counter ever fired). Returns whether the side image holds a
++  // new snapshot.
++  bool EdramSnapshotPost(ImagenDk& imagen, uint32_t filas, const char* origen);
    bool EdramBorrarComo(const ImagenDk& origen, const TejaEdram& teja, ImagenDk& destino, uint32_t desde,
                         uint32_t cuantas);
    // The pass that ends claims the rows its draws wrote (EmpezarPase, Copiar).
-@@ -505,6 +517,13 @@ class RenderDk final : public DestinosNativos {
+@@ -505,6 +520,15 @@ class RenderDk final : public DestinosNativos {
    int32_t edram_shaders_ = 0;  // 0 not tried, 1 ready, -1 failed
    uint64_t edram_transferencias_ = 0, edram_pixeles_ = 0, edram_sin_soporte_ = 0, edram_fotogramas_ = 0;
    uint64_t edram_borrados_ = 0, edram_estencil_pasadas_ = 0;
 +  uint64_t edram_llevados_8bits_ = 0;  // x360_edram_8bits_a_flotante: carries of an 8-bit view into the 7e3 ones
 +  uint64_t edram_llevados_8bits_siguiente_ = 0, edram_llevados_8bits_aviso_siguiente_ = 0;  // their 10 s logs
 +  bool edram_pase_post_ = false;
-+  ImagenDk edram_posteado_{};  // 0320 v4: the post passes' 8-bit output, snapshotted at their pass close
++  ImagenDk edram_posteado_{};  // 0320 v6: the post passes' 8-bit output, RGBA8, snapshotted right after the post draw
++                               // (the close as the fallback); the install's Copiar3D makes the 8-bit -> float values,
++                               // v1's proven conversion direction
 +  bool edram_posteado_valido_ = false;
 +  uint64_t edram_posteado_versiones_ = 0;  // snapshots taken (0320 v4)
 +  uint64_t edram_posteado_siguiente_ = 0;  // the snapshot's own log and probes: once per 10 s (0320 v4)
@@ -134,7 +161,7 @@ index 6a05265..84ae055 100644
    }
    DkCmdBuf cmd = nucleo_.comandos();
 diff --git a/src/x360/deko/dibujos.cpp b/src/x360/deko/dibujos.cpp
-index f77313b..27faece 100644
+index f77313b..b4ff5e8 100644
 --- a/src/x360/deko/dibujos.cpp
 +++ b/src/x360/deko/dibujos.cpp
 @@ -42,6 +42,7 @@ REXCVAR_DEFINE_INT32(x360_vs_codigo_max_kb, 256, "X360",
@@ -179,20 +206,22 @@ index f77313b..27faece 100644
    }
    DkCmdBuf cmd = nucleo_.comandos();
  
-@@ -2858,6 +2874,37 @@ bool RenderDk::Dibujar(const PeticionDibujo& p) {
+@@ -2858,6 +2874,39 @@ bool RenderDk::Dibujar(const PeticionDibujo& p) {
          }
        }
      }
-+    // 0320 v4: a post shader's draw into an 8-bit color target is the finished picture - snapshot it NOW, not at the
++    // 0320 v6: a post shader's draw into an 8-bit color target is the finished picture - snapshot it NOW, not at the
 +    // pass close. The tonemap and the frame's later 8-bit writers on the same tiles (mp3_030's pass 203-205: the
 +    // tonemap quad vs 1924 ps 3237, then twenty draws vs 573 ps 1895 - ten color-masked, ten blending color) share ONE
 +    // pass: the same base, format, pitch and MSAA key (claves, above), so the close that consumed edram_pase_post_
-+    // came at the f0 resolve, after those writers - v4 installed what they left (black gameplay with the install
-+    // counting 1.0/frame: only a successful snapshot can set edram_posteado_valido_). v1's frames whose last 8-bit
-+    // writer was the tonemap (the composite wrote nothing) showed the correct colors: the tonemap's own output is the
-+    // picture. The copy rebinds targets, so the pass begins again for the next draw (as EdramEstencilPendiente does),
-+    // and the flag is consumed: the composite's close must not snapshot over this.
-+    if (ps && REXCVAR_GET(x360_edram_8bits_a_flotante) && EdramActiva()) {
++    // came at the f0 resolve, after those writers - v4's close-only snapshot installed what they left (black
++    // gameplay with the install counting 1.0/frame: only a successful snapshot can set edram_posteado_valido_).
++    // v1's frames whose last 8-bit writer was the tonemap (the composite wrote nothing) showed the correct colors:
++    // the tonemap's own output is the picture. The gate is the PASS flag AND the draw's own huella: the flag (set
++    // when the pass began, dibujos.cpp 1845) is v4's wiring, which demonstrably engaged on console; v5 gated on the
++    // huella alone and its run fired nothing. The copy rebinds targets, so the pass begins again for the next draw
++    // (as EdramEstencilPendiente does), and the flag is consumed: the composite's close must not snapshot over this.
++    if (ps && edram_pase_post_ && REXCVAR_GET(x360_edram_8bits_a_flotante) && EdramActiva()) {
 +      static const uint64_t kPostDibujo[4] = {UINT64_C(0x6671591252A5BCE2), UINT64_C(0xFE226603F40E2533),
 +                                              UINT64_C(0xCD9469857A0C532A), UINT64_C(0x8D42760B0383C0D8)};
 +      bool es_post = false;
@@ -206,7 +235,7 @@ index f77313b..27faece 100644
 +              imagen->edram_bpp != 4 || imagen->edram_versiones.empty() || !imagen->edram_filas) {
 +            continue;
 +          }
-+          if (EdramSnapshotPost(*imagen, imagen->edram_filas)) {
++          if (EdramSnapshotPost(*imagen, imagen->edram_filas, "el dibujo")) {
 +            g_.pase_valido = false;  // the snapshot rebound targets: the next draw binds the pass again
 +            edram_pase_post_ = false;  // consumed: the close of these tiles must not snapshot over it
 +          }
@@ -218,7 +247,7 @@ index f77313b..27faece 100644
    // Black scene diagnostics: the first draw of each pixel shader into a k_2_10_10_10_FLOAT target (Gears of War 2's
    // scene), 48 shaders at most: its constants c0-c15 and whether each texture's base and mips hold anything in guest
 diff --git a/src/x360/deko/edram.cpp b/src/x360/deko/edram.cpp
-index 4342e55..bbe085e 100644
+index 4342e55..33bdc9d 100644
 --- a/src/x360/deko/edram.cpp
 +++ b/src/x360/deko/edram.cpp
 @@ -48,6 +48,11 @@ REXCVAR_DEFINE_BOOL(x360_edram_z_por_pixel, true, "X360",
@@ -233,58 +262,91 @@ index 4342e55..bbe085e 100644
  REXCVAR_DEFINE_BOOL(x360_edram_reduccion_directa, true, "X360",
                      "Un resolve desde una vista 4x cuyas tejas tiene una vista 1x del doble de pitch (GTA IV reduce su "
                      "escena a 640x360 asi) promedia 2x2 texeles de esa vista, como el resolve de la Xenos promedia las "
-@@ -407,11 +412,139 @@ void RenderDk::EdramCerrarPase() {
+@@ -407,9 +412,170 @@ void RenderDk::EdramCerrarPase() {
      }
      if (imagen && imagen->edram_filas) {
        EdramReclamar(*imagen, imagen->edram_filas);
-+      // 0320 v4: a post pass's 8-bit output is SNAPSHOTTED here, not carried (the game's later passes on the same
-+      // tiles rewrote what v1/v2 carried, and the last 8-bit writer is not always the tonemap - v1's black frames).
-+      // The frontal copy installs the snapshot right before it resolves (destinos.cpp). Dibujar ALSO snapshots right
-+      // after each post draw into an 8-bit target: the tonemap and the frame's later 8-bit writers share ONE pass
-+      // (the same base, format, pitch and MSAA key), so this close can come after theirs.
++      // 0320 v6: the close is the FALLBACK now - dibujos snapshots right after each post draw (the tonemap and the
++      // frame's later 8-bit writers share ONE pass, the same base, format, pitch and MSAA key, so this close can come
++      // after theirs; v4's close-only snapshot installed what the composite left). The flag was consumed there.
 +      if (edram_pase_post_ && REXCVAR_GET(x360_edram_8bits_a_flotante) && !imagen->profundidad &&
 +          imagen->edram_formato == 0 && imagen->edram_bpp == 4 && !imagen->edram_versiones.empty()) {
-+        EdramSnapshotPost(*imagen, imagen->edram_filas);
++        EdramSnapshotPost(*imagen, imagen->edram_filas, "cierre");
 +      }
        imagen->edram_filas = 0;
      }
    }
- }
- 
-+// 0320 v4: what the 8-bit target a post shader just drew on holds, copied into the side image edram_posteado_ as
-+// RGBA16F values, which nothing later draws on. One line per 10 s names the source image (its Vista: base, format,
-+// pitch, serie - exactly which instance of the base the post pass wrote through) and how many color images of that
-+// base the destination map holds (DestinoColor keys by base, format, pitch and MSAA), and probes three texels of the
-+// source and of the snapshot (printed at the next Swap): the one run says whether the tonemap's own 8-bit output is
-+// the picture (v1's correct colors) or black.
-+bool RenderDk::EdramSnapshotPost(ImagenDk& imagen, uint32_t filas) {
++  edram_pase_post_ = false;  // v4's reset: a close consumes the flag, or a stale-true gate would snapshot an
++                             // unrelated later pass (v5 dropped this and left the gate leaking)
++}
++
++// 0320 v6: what the 8-bit target a post shader just drew on holds, copied into the side image edram_posteado_ as
++// RGBA8 (the same values; nothing later draws on it). The install's Copiar3D makes the 8-bit -> float conversion,
++// v1's proven direction. One line per 10 s names the path that took it ("tras el dibujo" = right after the post
++// draw, the picture before the composite of the same pass; "cierre" = the fallback) and the source image (its
++// Vista: base, format, pitch, serie), and probes three texels of the source and of the snapshot; a snapshot that
++// cannot be taken says WHY, once per 10 s - v5's console run had neither the line nor the install counter and no
++// way to tell where it died.
++bool RenderDk::EdramSnapshotPost(ImagenDk& imagen, uint32_t filas, const char* origen) {
 +  const uint32_t filas_post = std::min(filas, imagen.alto);
 +  const uint32_t ancho_post = std::min(imagen.ancho, imagen.edram_pitch);
-+  if (!filas_post || !ancho_post) return false;
-+  if (!edram_posteado_.viva || edram_posteado_.ancho != imagen.ancho || edram_posteado_.alto != imagen.alto) {
-+    DestruirImagen(edram_posteado_);
-+    CrearImagen(edram_posteado_, DkImageType_2D, DkImageFormat_RGBA16_Float, imagen.ancho, imagen.alto, 1, 1,
-+                DkImageFlags_UsageRender, "post de 8 bits (snapshot 0320)");
-+    edram_posteado_valido_ = false;
++  const char* fallo = nullptr;
++  if (!filas_post || !ancho_post) {
++    fallo = filas_post ? "ancho 0" : "filas 0";
++  } else {
++    if (!edram_posteado_.viva || edram_posteado_.ancho != imagen.ancho || edram_posteado_.alto != imagen.alto) {
++      DestruirImagen(edram_posteado_);
++      CrearImagen(edram_posteado_, DkImageType_2D, DkImageFormat_RGBA8_Unorm, imagen.ancho, imagen.alto, 1, 1,
++                  DkImageFlags_UsageRender, "post de 8 bits (snapshot 0320)");
++      edram_posteado_valido_ = false;
++    }
++    if (!edram_posteado_.viva) {
++      fallo = "la imagen lateral no se creo";
++    }
 +  }
-+  if (!edram_posteado_.viva) return false;
-+  // As a transfer: the source must be its own content again (a resolve without copy may have given it away), the
-+  // destination is written below its pending band. Copiar3D orders itself against the draws and copies before it.
-+  RestaurarContenido(imagen, true);
-+  HacerBorradoPendiente(imagen);
-+  CompletarBanda(imagen, filas_post, false, 0);
-+  if (!Copiar3D(imagen, 0, 0, ancho_post, filas_post, edram_posteado_, 0, 0)) return false;
++  bool copiado = false;
++  if (!fallo) {
++    // As a transfer: the source must be its own content again (a resolve without copy may have given it away), the
++    // destination is written below its pending band. Copiar3D orders itself against the draws and copies before it.
++    RestaurarContenido(imagen, true);
++    HacerBorradoPendiente(imagen);
++    CompletarBanda(imagen, filas_post, false, 0);
++    copiado = Copiar3D(imagen, 0, 0, ancho_post, filas_post, edram_posteado_, 0, 0);
++    if (!copiado) {
++      // Copiar3D needs its copy shaders and ring space; the copy engine needs neither (RestaurarContenido's own
++      // fallback, destinos.cpp). Both sides are RGBA8: a raw copy carries the same values.
++      AsegurarTrabajo();
++      MarcarGpu(kGpuCopias);
++      PerfilCopia("post, motor de copias", &imagen, &edram_posteado_, ancho_post, filas_post);
++      AntesDeTransferir();
++      DkImageView vista_fuente{}, vista_post{};
++      dkImageViewDefaults(&vista_fuente, &imagen.imagen);
++      dkImageViewDefaults(&vista_post, &edram_posteado_.imagen);
++      const DkImageRect rect_post = {0, 0, 0, ancho_post, filas_post, 1};
++      dkCmdBufCopyImage(nucleo_.comandos(), &vista_fuente, &rect_post, &vista_post, &rect_post, 0);
++      OlvidarEstado();
++      copiado = true;
++    }
++  }
++  if (!copiado) {
++    if (deko::AhoraNs() >= edram_posteado_siguiente_) {
++      edram_posteado_siguiente_ = deko::AhoraNs() + uint64_t(10) * 1000000000ull;
++      REXLOG_INFO("[edram] snapshot post {} ({}x{}): no tomado tras {}, {}", Vista(imagen), ancho_post, filas_post,
++                  origen, fallo);
++    }
++    return false;
++  }
 +  edram_posteado_valido_ = true;
 +  ++edram_posteado_versiones_;
 +  if (deko::AhoraNs() >= edram_posteado_siguiente_) {
-+    // Once per 10 s outside a dump frame: what the snapshot holds and where it came from.
++    // Once per 10 s: which path took it, what it holds and where it came from.
 +    edram_posteado_siguiente_ = deko::AhoraNs() + uint64_t(10) * 1000000000ull;
 +    uint32_t de_la_base = 0;
 +    for (const auto& [clave, otra] : destinos_) {
 +      if (!otra.profundidad && otra.edram_base == imagen.edram_base) ++de_la_base;
 +    }
-+    REXLOG_INFO("[edram] snapshot post {} ({}x{} de {}x{}), version {}: {} imagenes de color de la base {:03X}",
-+                Vista(imagen), ancho_post, filas_post, imagen.ancho, imagen.alto, edram_posteado_versiones_,
++    REXLOG_INFO("[edram] snapshot post {} ({}x{} de {}x{}) tras {}, version {}: {} imagenes de color de la base {:03X}",
++                Vista(imagen), ancho_post, filas_post, imagen.ancho, imagen.alto, origen, edram_posteado_versiones_,
 +                de_la_base, imagen.edram_base);
 +    static constexpr float kPuntos[3][2] = {{0.5f, 0.5f}, {0.25f, 0.75f}, {0.75f, 0.3f}};
 +    for (const auto& pt : kPuntos) {
@@ -368,12 +430,10 @@ index 4342e55..bbe085e 100644
 +  edram_llevados_8bits_aviso_siguiente_ = deko::AhoraNs() + uint64_t(10) * 1000000000ull;
 +  REXLOG_INFO("[edram] c {:03X} f0 {} ({} filas): de 8 bits a flotante no llevado, {}", vista.edram_base,
 +              vista.edram_pitch, vista.edram_filas, razon);
-+}
-+
+ }
+ 
  void RenderDk::EdramEstencilPendiente(ImagenDk& destino, bool ejecutar) {
-   std::vector<PendienteEstencil> lista;
-   lista.swap(destino.estencil_pendiente);
-@@ -874,12 +1007,14 @@ void RenderDk::EdramFotograma() {
+@@ -874,12 +1040,14 @@ void RenderDk::EdramFotograma() {
    if (edram_diag_) REXLOG_INFO("[edram-diag] fotograma {} empieza", edram_diag_contador_);
    if (!EdramActiva() || ++edram_fotogramas_ < 300) return;
    REXLOG_INFO("[edram] {} fotogramas: {:.1f} transferencias ({:.1f} con stencil) y {:.2f} Mpixeles por fotograma, "

@@ -739,7 +739,16 @@ The spikes returned with the current library state too (the user's report; mp3_o
 containers of 2026-10-31 - the wound variants of the newest shaders_unknown batch need folding or omitting).
 
 NEXT SESSION, two concrete tasks:
-1. Restore v4's firing wiring (its gate and install demonstrably engaged: menu colored, counter 1.0) and move only
-   the SNAPSHOT moment to right after the tonemap's draw (v5's idea) - v4's code is in the tree history (f399cd),
-   v5's in ed100d0; diff them, keep v4's conditions, v5's timing.
+1. DONE (2026-11-01, the late session), pending the console test: the combination is in the tree and in the 0320 patch
+   (v6) - v4's firing wiring (the after-draw gate now ALSO requires edram_pase_post_, the pass flag its run engaged;
+   the close is the fallback again and REGAINED its end-of-close flag reset, which v5 had dropped; the install is
+   verbatim) with v5's after-draw snapshot moment. v5's post-mortem: the log rules out everything but a silent death
+   inside EdramSnapshotPost (its three false returns logged nothing) - the detection matched live ([verts-tonemap]
+   inside the active windows; the huellas are XXH3 of GUEST container bytes and cannot drift with the host library),
+   the draws submitted ("0 rechazados"), the machinery ran (5.1-6.7 transfers/frame), the cvar was on, and the NRO
+   carried the v5 strings (fresh build; its first line stamps ed100d0). v6 makes every death loud (a "no tomado tras
+   ..., <razon>" line once per 10 s), moves the side image to RGBA8 so the INSTALL's Copiar3D does the 8-bit ->
+   float conversion (v1's proven direction) and a raw copy-engine copy (dkCmdBufCopyImage, both sides RGBA8) takes
+   the snapshot when Copiar3D refuses. One console run decides: "snapshot post ... tras el dibujo" in a gameplay
+   window + the counter ~1.0 + colored gameplay closes the saga; the reason line localizes whatever still fails.
 2. Fold or omit the current costume variants (mp3/out/console_unknown has the 466-file set; tools/shaders.sh).
