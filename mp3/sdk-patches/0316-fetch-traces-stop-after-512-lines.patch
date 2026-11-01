@@ -1,0 +1,62 @@
+SDK patch 0316 (Max Payne 3 port): both fetch traces stop after 512 lines of their own. The game streams
+textures: every frame brought guest bases the 32-key table had not seen, the oldest key left and the new one
+logged - 11,369 "[traza-fetch] huesped" lines (2 fps of log I/O) in final.log alone, whose first line per key
+had already said everything. The PS/slot map is capped the same way (it also grew without bound, a key per new
+texture, each relogging every 300 frames). The tables and their dedup stay as 0312/0315 left them; only the
+logging has a session budget now.
+
+--- a/src/x360/deko/texturas.cpp
++++ b/src/x360/deko/texturas.cpp
+@@ -769,6 +769,11 @@
+       uint32_t fotograma;
+     };
+     static VistaHuesped vistas_huesped_[32] = {};
++    // 0316: the trace stops after 512 lines of its own. The game streams textures: every frame brings bases the
++    // 32-key table has not seen, the oldest entry leaves and the new one logs - 11,369 guest lines in one session
++    // (final.log), 2 fps of log I/O for keys whose first line said all they had to say.
++    static uint32_t escritas_huesped_ = 0;
++    if (escritas_huesped_ < 512) {
+     const uint32_t fotograma_h = fotograma_ ? fotograma_ : 1;
+     const uint64_t clave_h = (uint64_t(base & 0x1FFFFFFF) << 21) | (uint64_t(volumen) << 20) |
+                              (uint64_t(formato) << 14) | (uint64_t(signos) << 6) | ((f[2] >> 13) & 0x3F);
+@@ -785,11 +790,13 @@
+     if (vista_h->clave != clave_h || fotograma_h - vista_h->fotograma >= 300) {
+       vista_h->clave = clave_h;
+       vista_h->fotograma = fotograma_h;
++      ++escritas_huesped_;
+       REXLOG_INFO("[traza-fetch] huesped base {:08X} {}x{}{} fmt {} signos {:02X} exp_adjust {}", base,
+                   volumen ? (f[2] & 0x7FF) + 1 : (f[2] & 0x1FFF) + 1,
+                   volumen ? ((f[2] >> 11) & 0x7FF) + 1 : ((f[2] >> 13) & 0x1FFF) + 1,
+                   volumen ? " 3D" : "", formato, signos, int32_t(f[3] << 13) >> 26);
+     }
++    }
+   }
+   const DkImageFormat formato_vista = FormatoVistaSigno(tf.formato, signos);
+   if (signos && formato_vista == DkImageFormat_None) {
+--- a/src/x360/deko/dibujos.cpp
++++ b/src/x360/deko/dibujos.cpp
+@@ -1610,6 +1610,10 @@
+         // 0316: every distinct (PS, slot, base, fmt, signos) - the tonemap's guest sampler (its HHSampler, slot 13,
+         // has exp_adjust 0 and no signs, so no filter may hide it). The map grows with the real texture set only.
+         static std::unordered_map<uint64_t, uint32_t> vistas_dibujo_;
++        // 0316: this trace stops after 512 lines too (the map with it: streaming textures brought a new key per
++        // frame, and every key relogged every 300 frames).
++        static uint32_t escritas_dibujo_ = 0;
++        if (escritas_dibujo_ < 512) {
+         const int32_t fexp = int32_t(fetch[3] << 13) >> 26;
+         const uint32_t fsignos = (fetch[0] >> 2) & 0xFF;
+         const uint64_t clave = (uint64_t(ps->numero & 0xFFF) << 48) | (uint64_t(sampler.registro) << 44) |
+@@ -1618,11 +1622,13 @@
+         const auto [it_dibujo, nueva_dibujo] = vistas_dibujo_.try_emplace(clave, 0);
+         if (nueva_dibujo || fotograma_ - it_dibujo->second >= 300) {
+           it_dibujo->second = fotograma_;
++          ++escritas_dibujo_;
+           REXLOG_INFO("[traza-fetch] PS n{} slot {}: base {:08X} {}x{} fmt {} exp_adjust {} num_format {} signos {:02X}",
+                       ps->numero, sampler.registro, (fetch[1] >> 12) << 12, (fetch[2] & 0x1FFF) + 1,
+                       ((fetch[2] >> 13) & 0x1FFF) + 1, fetch[1] & 0x3F, fexp,
+                       (fetch[3] & 0x1) ? "integer" : "fraction", fsignos);
+         }
++        }
+       }
+       CacheFetch& cache = cache_fetch_[ClaveFetch(fetch) & (cache_fetch_.size() - 1)];
+       if (!(fotograma_ <= cache.valido_hasta && cache.generacion == generacion_texturas_ &&

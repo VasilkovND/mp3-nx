@@ -580,27 +580,48 @@ const EntradaShader* Biblioteca::IdentificarEntrada(bool vertices, uint32_t fisi
     // streams) is exactly that - a layout change. Masked, it drew the black spikes; skipped, the draw is invisible
     // until its exact container is folded from shaders_unknown.
     const bool mascara_vale = !vertices || REXCVAR_GET(mp3_vs_por_mascara);
+    // The loaded microcode against a candidate with its fetch words masked (the entry's are loaded masked already).
+    auto enmascara = [&](const EntradaShader& e) {
+      d.temporal.assign(microcodigo.begin(), microcodigo.end());
+      for (const ElementoVertice& el : e.elementos) {
+        for (size_t j = 0; j < 3; ++j) d.temporal[size_t(el.instruccion) * 3 + j] &= kFetchConserva[j];
+      }
+      return d.temporal == e.microcodigo;
+    };
     if (mascara_vale) {
-    if (auto c = d.candidatos.find({vertices, uint32_t(microcodigo.size())}); c != d.candidatos.end()) {
-      for (uint32_t indice : c->second) {
-        const EntradaShader& e = d.entradas[indice];
-        d.temporal.assign(microcodigo.begin(), microcodigo.end());
-        for (const ElementoVertice& el : e.elementos) {
-          for (size_t j = 0; j < 3; ++j) d.temporal[size_t(el.instruccion) * 3 + j] &= kFetchConserva[j];
-        }
-        if (d.temporal == e.microcodigo) {
-          elegido = &e;
-          // One line per distinct masked match: which microcode (its hash) runs on which entry's vertex layout.
-          // The costume spikes and the tonemap quad's noise both come through here; the dumped _de_ variants tell
-          // offline whether the chosen entry is the right one.
-          if (vertices && d.enmascaradas_.insert(huella).second && d.enmascaradas_.size() <= 64) {
-            REXLOG_WARN("[shaders] VS {:016X} taken masked as n{} ({}/{})", huella, e.numero,
-                        d.enmascaradas_.size(), 64);
-          }
-          break;
+      // Among the entries whose skeleton fits, the library's (hash) order decided: the tonemap quad (its VS matches
+      // no container exactly - with the masked match off its draw is skipped and the Swap presents the raw 8-bit copy
+      // of the scene) drew speckles through the wrong one, its vertex elements labelling other streams. When the
+      // load's address holds a registered container of the same skeleton, that one is the likeliest to be its own:
+      // the address check above refused it for words D3D patches too (the exports), not for another layout.
+      if (fisica) {
+        if (auto it = d.por_direccion.find(fisica & 0x1FFFFFFF);
+            it != d.por_direccion.end() && it->second->vertices == vertices &&
+            it->second->microcodigo.size() == microcodigo.size() && enmascara(*it->second)) {
+          elegido = it->second;
         }
       }
-    }
+      if (!elegido) {
+        if (auto c = d.candidatos.find({vertices, uint32_t(microcodigo.size())}); c != d.candidatos.end()) {
+          for (uint32_t indice : c->second) {
+            if (enmascara(d.entradas[indice])) {
+              elegido = &d.entradas[indice];
+              break;
+            }
+          }
+        }
+      }
+      // One line per distinct masked match: which microcode (its hash) runs on which entry's vertex layout. The
+      // costume spikes and the tonemap quad's noise both come through here; and the microcode is written as a _de_
+      // variant of the entry it ran on (a masked match was never dumped, which is why no exact container for it is
+      // in console_unknown): tools/shaders.sh folds it, and the next session runs it under its own layout.
+      if (elegido && vertices && d.enmascaradas_.insert(huella).second) {
+        if (d.enmascaradas_.size() <= 64) {
+          REXLOG_WARN("[shaders] VS {:016X} taken masked as n{} ({}/{})", huella, elegido->numero,
+                      d.enmascaradas_.size(), 64);
+        }
+        VolcarDesconocido(vertices, huella, microcodigo, elegido);
+      }
     }  // mascara_vale (mp3_vs_por_mascara)
     // 4. A vertex shader D3D patched beyond its fetch bits: it may reorder the fetch instructions and rewrite the
     // exports the pixel shader does not read. Each candidate's fetch instructions are ignored whole and the rest

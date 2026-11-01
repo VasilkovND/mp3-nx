@@ -544,3 +544,34 @@ of 49b9d61 re-applied); the masked-fetch match then accepted the base container 
 optional (mp3_vs_por_mascara, default on, off in the console's toml together with mp3_vs_por_parecido = false and
 mp3_omitir_vs listing the two most re-patched jacket containers). New variants keep landing in shaders_unknown/
 and fold into the library with tools/shaders.sh.
+
+## Runs 36-37 (2026-11-01): the tonemap's own vertex shader is a masked-only match
+
+final.log (14:53, the build of 7a2e0f3; the log itself starts mid-session, so the run is identified by its toml:
+mp3_vs_por_mascara = false, mp3_vs_por_parecido = false, the two jacket containers omitted, the unknown dump on -
+which is why the new masked-match logger printed nothing: the masked path itself was off) settles it:
+
+- The tonemap did not draw at all: no "[exposicion] tonemap" line (l3.log, the build of ca77855 with the masked
+  match on, has one every 10 s) and no ps 3237/3224 fetch line (l3 has n3237's five: the scene 08408000 at -13,
+  the half-res 0674B000 at -13, the bloom tile 07317000 at -11, the depth 0820A000 fmt 23, the 2x2 05761000),
+  while the rest of the post chain did ("[exposicion] fxaa", n660/n1028 fetches). With both matchers off, a draw
+  whose VS matches nothing exactly is skipped: the tonemap's VS load matches no container exactly - every run
+  before drew it through the masked path.
+- Its 11,369 guest fetch lines are all sound: signos 00, exp_adjust 0, formats 6/18/19/20/59, nothing anomalous
+  but 05318000 fmt 4 3D (the known k3D constant artefact).
+- The masked match is the wrong layout, not a missing one: the tonemap's own resolve 0654D000 (straight off the f0
+  view it drew into, no EDRAM handoff involved) is black with its inputs verified, and with the stencil off it
+  painted speckles - garbage vertices. The quad VS family entry n1924 (the sondas of runs 25-26 show it driving
+  the bloom, blur and FXAA quads, which draw right) has no skeleton twin in the library (checked against
+  mp3_shaders.dslib), so the tonemap's load masked-matched a different entry whose vertex elements label other
+  streams. The base 198 f0->f12 handoff cannot blacken 0654D000 and stays excluded.
+- mp3_shaders.cpp: among masked-equal candidates the entry registered at the load's address is preferred (the
+  address check refuses a re-patch's export words, not another layout of the same skeleton), and every distinct
+  masked VS match is dumped as vs_<huella>_de_<container>.bin (a masked match was never dumped - that is why no
+  exact container for the quad is in console_unknown): tools/shaders.sh folds it, and the next session runs the
+  quad under its own layout. SDK patch 0316 caps both fetch traces at 512 lines (the streaming-texture flood cost
+  2 fps).
+
+Next console run: the console's toml back at mp3_vs_por_mascara = true (default) - with the dump on, one run
+writes the quad's real microcode and names it in "[shaders] VS <hash> taken masked as n<N>", and the folded
+container fixes the tonemap the run after.
