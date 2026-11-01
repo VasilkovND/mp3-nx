@@ -1,27 +1,22 @@
-SDK patch 0312 (Max Payne 3 port), amendment: the fetch trace drops its exp_adjust/TextureSign filter - every
-distinct (PS, slot, base, format, signs) pair logs one line per ~10 s. The gameplay tonemap's only guest sampler
-(HHSampler, slot 13) has neither a scaled fetch nor gamma signs, so the filter hid the one line that names it; and
-the key map no longer clears at 96 entries (the clear thrash of 0315 cost 600 us per draw).
+SDK patch 0312 (Max Payne 3 port), amendment 2: the cvar is read once (the per-call read cost 600 us a draw
+again - 2 fps). The tonemap's draws reuse the composite's texture set, so the first sampler loop skips them: its
+inputs are provably the composite's (fine), which leaves its vertex shader as the noise source with the stencil
+test off (a masked match on the quad's VS, the same disease as the costume spikes).
 
 --- a/src/x360/deko/dibujos.cpp
 +++ b/src/x360/deko/dibujos.cpp
-@@ -1603,16 +1603,16 @@
+@@ -1603,13 +1603,13 @@
        }
        const uint32_t* fetch = r + kRegFetch + uint32_t(sampler.registro) * 6;
        // 0312, x360_traza_fetch_escalado: which pixel shader and slot reads which texture with which scale, before the
        // fetch cache hides it. The scene and the bloom chain mix exp_adjust -11 and -13 reads of one resolved address;
        // the draw that reads it four times brighter than the game meant is what whitens lit textures, and only the
        // shader's number tells the two apart.
--      if (REXCVAR_GET(x360_traza_fetch_escalado) &&
--          ((int32_t(fetch[3] << 13) >> 26) || ((fetch[0] >> 2) & 0xFF) != 0)) {
-+      if (REXCVAR_GET(x360_traza_fetch_escalado)) {
-+        // 0316: every distinct (PS, slot, base, fmt, signos) - the tonemap's guest sampler (its HHSampler, slot 13,
-+        // has exp_adjust 0 and no signs, so no filter may hide it). The map grows with the real texture set only.
+-      if (REXCVAR_GET(x360_traza_fetch_escalado)) {
++      if ([] { static const bool traza_ = REXCVAR_GET(x360_traza_fetch_escalado); return traza_; }()) {
+         // 0316: every distinct (PS, slot, base, fmt, signos) - the tonemap's guest sampler (its HHSampler, slot 13,
+         // has exp_adjust 0 and no signs, so no filter may hide it). The map grows with the real texture set only.
          static std::unordered_map<uint64_t, uint32_t> vistas_dibujo_;
--        if (vistas_dibujo_.size() > 96) vistas_dibujo_.clear();
          const int32_t fexp = int32_t(fetch[3] << 13) >> 26;
          const uint32_t fsignos = (fetch[0] >> 2) & 0xFF;
          const uint64_t clave = (uint64_t(ps->numero & 0xFFF) << 48) | (uint64_t(sampler.registro) << 44) |
-                                (uint64_t(uint32_t(fexp + 64) & 0x7F) << 37) | (uint64_t(fetch[3] & 0x1) << 36) |
-                                (uint64_t(fsignos) << 28) | (uint64_t((fetch[1] >> 12) & 0xFFFFF)) | (fetch[1] & 0x3F);
-         const auto [it_dibujo, nueva_dibujo] = vistas_dibujo_.try_emplace(clave, 0);
