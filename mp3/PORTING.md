@@ -533,9 +533,18 @@ Established, in order:
    its INPUT binding (a texture it samples resolved to garbage) rather than the coverage. The next step is to dump
    or trace what its samplers hold at the draw - the fetch map of 0312 covers the resolved ones, but its bound
    guest textures flow through the second PrepararTextura call site, which the trace does not cover yet.
-3. If the lit decile stays ~3x hotter than the Xbox frames after the gamma fix, the deferred lights' falloff is
-   the next place: the SSAO shader takes rcp(depth) of a downsampled float chain whose dump shows negative values
-   (1903B000, range -1897..1), and the light volumes' attenuation reads the same chain.
+3. CLOSED BY SUBSTITUTION (dba42a): the gameplay tonemaps ran as the cutscenes' CD94 (the log proves it fired) and
+   the picture did not change - the working shader in the gameplay draw context gives the same broken presentation.
+   The shader translation hypothesis is dead with proof; the tonemap's write-bias epilogue too (bias 0 at the draw,
+   2e282cd's [exposicion] line), and the constants (register == UBO, 0319).
+   THE REMAINING ROOT, consistent with everything including the cutscenes rendering right: the port's EDRAM view
+   fragmentation. Base 198 lives as three host images (f0 8-bit, f3, f12 RGBA16F); the tonemap writes the f0 image,
+   the game's final copy reads the f12 image (05F53000, the Swap's fetch), and run 32 already noted no transfer
+   between the tonemap's resolve and the final one. Cutscenes are untouched: they present through base 000's own
+   post chain (run 35). The fix is in the EDRAM one-store machinery: EdramPreparar/EdramCerrarPase must carry the
+   f0 view's writes into the f12 view (or the copy must read through the store) for base 198's shape - a renderer
+   architecture change, best started fresh (sdk/src/x360/deko/edram.cpp:289-411, destinos.cpp Copiar's EdramPreparar
+   call ~1462-1467, and the per-(base,format,pitch,msaa) image keying in FormatoDestinoColorDk/DestinoColor).
 
 The spikes around Max, closed along the way: D3D re-patches the costume vertex shaders at the same address for
 other vertex declarations (the jacket for the cloth, the jacket again when wounded, for the blood overlay's
