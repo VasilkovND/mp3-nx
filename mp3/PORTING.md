@@ -714,3 +714,32 @@ v4 (f399cd, v4.log) left gameplay black with the machinery working, and the logs
   exonerate the composite and put the black inside the tonemap's own draw (then the [verts-tonemap]/[ubo-tonemap]
   lines and the pass's other state are the frontier). The patch file 0320 was regenerated whole (the v3/v4 edits
   had never been folded in; it now carries all of v3+v4+v5 and reverse-checks on the tree).
+
+### The carry saga, v1-v5 (2026-11-01, closes the day)
+
+The frame map (mp3_030.log's traced frame + the [exposicion] timestamps): scene into 198/f12 -> bloom/luminance ->
+THE TONEMAP (draw 2285, vs 1924 ps 3237) into 198/f0 -> 24 no-VS probes -> 20 COMPOSITE draws (vs 573, ps 1895,
+full-screen, into the SAME 198/f0 view) -> resolve f0 -> 0654D000 -> FXAA into 198/f3 -> lights into 198/f12 ->
+the final copy of f12 -> the Swap. The composite is the blackener: e725970's correct-color frames were exactly
+those where the composite wrote nothing (the run log: 4.6-12.0 carries a frame in gameplay, colored when the
+tonemap was the last 8-bit writer).
+
+- v1 (e725970, ungated carry at every 8-bit pass close): colored frames + black frames, last writer decides.
+- v2 (c1d817c, gated to post passes): the game's later f3/f12 passes undid the carry; the picture lived only in
+  bullet time.
+- v4 (f399cd, snapshot at the post pass's close + install at the frontal copy): menu and cutscenes COLORED (their
+  post pass closes before anything else writes); gameplay black - the tonemap and the composite share ONE pass
+  (identical claves), so the close-time snapshot ran after the composite and captured its black.
+- v5 (ed100d0, snapshot right after each post draw, rebinding the pass): on console NEITHER the snapshot line NOR
+  the install counter ever fired ("0.0 de 8 bits a flotante" in active windows, 1.2-1.4 Mpixeles a frame), and the
+  picture reverted to the raw-white presentation - the after-draw wiring (the post-draw detection / the gate set in
+  Dibujar) regressed between v4 and v5 and never engaged.
+
+The spikes returned with the current library state too (the user's report; mp3_omitir_vs covers only the two
+containers of 2026-10-31 - the wound variants of the newest shaders_unknown batch need folding or omitting).
+
+NEXT SESSION, two concrete tasks:
+1. Restore v4's firing wiring (its gate and install demonstrably engaged: menu colored, counter 1.0) and move only
+   the SNAPSHOT moment to right after the tonemap's draw (v5's idea) - v4's code is in the tree history (f399cd),
+   v5's in ed100d0; diff them, keep v4's conditions, v5's timing.
+2. Fold or omit the current costume variants (mp3/out/console_unknown has the 466-file set; tools/shaders.sh).
