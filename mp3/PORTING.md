@@ -1,5 +1,19 @@
 # Max Payne 3 on rexglue-sdk-nx (deko3d): porting notes
 
+## 0324: back to the frontal install, the omit back
+
+mp3_068 (957adcccb9) read: the f0-resolve install FIRES (the counter 2.0 - the f0 image resolves twice a frame,
+both fire) and the frame came back WHITE WITH GHOSTING while the HUD appeared. The white: the additive lights
+(ps 3788, blend 0706) land on the RAW scene - they expect the tonemapped, compressed base and overbrighten it
+(the wash mechanism, alive through the new path). The ghosting: the double install plus Copiar3D not updating
+the f0 tiles' bookkeeping - the next frame's EdramPreparar transfers over it. 0322's frontal install (after the
+lights, before nothing - the last operation of the frame) had neither problem: THE PICTURE WAS RIGHT. 0324
+reverts to it; the HUD and the grain both hinge on the tonemap's own output and wait for that investigation.
+The spikes of mp3_067: it ran BEFORE the folded library landed (the two address-takes it logged are exactly the
+variants the rebuild folded; mp3_068 took them exact) - but the omit removal also unleashed unfunded jacket
+variants into the scene passes; mp3_omitir_vs is back in the toml (the shirt stays invisible until its variants
+are folded - the address dump keeps catching them every run).
+
 ## The scene into the tonemap's own resolve (0323) and the shirt
 
 The first scene-install run: THE WASH IS GONE (the user's report). Four remarks followed, all addressed:
