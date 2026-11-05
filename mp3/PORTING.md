@@ -831,11 +831,18 @@ The outcome branch was "the content itself" - and the run settled everything aro
      the level expects (the lighting passes), the luminance always below AdaptedLumMin, the exposure pinned at
      its maximum - even a correctly carried tonemap output looks burnt in gameplay. The cutscenes (v4-colored)
      do not have this. If (1) shows burnt, this is the bug.
-- THE SPIKES, this run: shaders_unknown/ holds 14 files not in console_unknown: 12 new masked variants (_de_
-  75b3fd4fcb4c5f63 x4, 253c360c3cf1be33 x4, 19cb3fbc05743345 x2, 142a42bce6d2fd39 x2 - none of these bases is in
-  mp3_omitir_vs) and 2 loads matching nothing at all (vs_82a73ba3cae509c4, vs_d2052d39bbb3b843 - skipped draws).
-  The masked logger printed nothing new: its 64-line cap counts DISTINCT hashes from boot and was consumed at
-  00:28:05, before gameplay. Fix unchanged: harvest, fold, rebuild, upload. NOTE for later: the ADDRESS step
-  (step 1) still takes a re-patched load silently - no dump, exactly the jacket-VS mechanism - so any variant
-  that falls past step 0 is invisible; if a future re-patch needs catching, VolcarDesconocido belongs in step 1's
-  success branch too.
+- THE SPIKES, this run - CORRECTED (2026-11-05): shaders_unknown/ held 14 files not in console_unknown, but the
+  rebuild proved them STALE: every one of the 12 `_de_` variants' microcodes is word-for-word in the library
+  already (some ARE the base containers' own code - dumped by the pre-step-0 runs of Nov 1, m.log and earlier),
+  the rebuild from them came out byte-identical (md5 3e42e627, same 71,620,672 bytes as the console's), and the
+  v7 run itself printed ZERO masked lines - step 0 matched everything it could. So the v7 spikes are NOT masked
+  matches. The silent path left is the ADDRESS step: reaching its success branch already proves the load's code
+  is no entry's own (step 0 would have returned it; and no two containers share a code with different
+  declarations - checked offline over the whole dslib), so every load it TAKES is D3D's re-patch running on the
+  container's own declaration - the jacket-VS mechanism verbatim (the weights into the indices' register), with
+  no dump and no log. f13d52a adds the dump there: each distinct VS load the address step takes is written as a
+  `_de_` variant of the entry it runs on (as the masked step does) plus a capped
+  "[shaders] VS <hash> taken by address as n<N> ... patched, not its own code" line. One run captures the live
+  re-patches; fold + rebuild + upload the run after. The 2 loads matching nothing at all
+  (vs_82a73ba3cae509c4, vs_d2052d39bbb3b843 - skipped draws) stay: raw microcode without a base container
+  cannot be folded.

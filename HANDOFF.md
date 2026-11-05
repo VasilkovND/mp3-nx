@@ -39,12 +39,15 @@ constants. What is left, in order:
    dump frame). Burnt (not black) => the carry saga is DONE; the overexposure is the DEFERRED lighting finding
    (runs 29-31: the gameplay HDR scene 5-10x too dark, exposure pinned at max - the cutscenes don't have this).
    Black => the defect is inside the tonemap's draw, past every gate already proven clean.
-2. **The spikes**: shaders_unknown/ on the console holds 14 files not in console_unknown (12 masked `_de_`
-   variants: 75b3fd4fcb4c5f63 x4, 253c360c3cf1be33 x4, 19cb3fbc05743345 x2, 142a42bce6d2fd39 x2; plus
-   vs_82a73ba3cae509c4 and vs_d2052d39bbb3b843 matching nothing). Harvest them (FTP was OFF at the end of the
-   2026-11-05 session - the log/toml/listings were already taken), tools/shaders.sh (~15 min), upload the .dslib
-   + shadercache_dksh.bin (~131 MB, ASK FIRST). Stopgap without a rebuild: add the four base containers to
-   mp3_omitir_vs (spikes become invisible costume parts instead of spikes).
+2. **The spikes - CORRECTED (2026-11-05)**: the 14 "new" shaders_unknown files were STALE (pre-step-0 runs);
+   their variants are already in the library, the rebuild came out byte-identical (md5 3e42e627), and the v7 run
+   had ZERO masked matches. The live root is the ADDRESS step silently taking re-patched loads (reaching its
+   success branch proves the code is no entry's own - step 0 would have returned it). f13d52a (NOW ON THE
+   CONSOLE, verified by stamp + marker) dumps every distinct VS load the address step takes, as a `_de_` variant
+   of the entry it runs on, plus a capped "taken by address as n<N>: patched, not its own code" log line. The
+   next run (mp3_volcar_desconocidos stays true in the toml) captures them; fold + rebuild + upload the run
+   after. The library itself needs NO upload - the console's is complete and byte-identical to the local
+   rebuild.
 3. Install counter 0.4-0.6 vs v4's 1.0 (the same-frame condition or frontales_ membership) matters only AFTER the
    content is right.
 
@@ -61,7 +64,8 @@ the `_de_ dump counts.
 - Console FTP: `192.168.3.26:5000`, root = SD (`/switch/mp3-nx/`). **ASK THE USER BEFORE EVERY UPLOAD** — their
   standing rule (they turn FTP off while playing). Upload in one foreground attempt, verify by re-reading the
   file (size + a marker string: the NRO's version stamp sits near `InformarSistema` ≈ offset 55.6 MB).
-- Console now: NRO `2da0fce9dd` (v7), `mp3.toml` with `x360_traza_fetch_escalado = true`,
+- Console now: NRO `f13d52aa94` (v7 + the address-step dump, uploaded and verified 2026-11-05), library
+  byte-identical to the local rebuild (NO upload needed), `mp3.toml` with `x360_traza_fetch_escalado = true`,
   `mp3_vs_por_parecido = false`, `mp3_omitir_vs = "a186927bb5741b5c,f46d329fd9192dd1"`,
   `mp3_oclusion_real = false`, `x360_edram_8bits_a_flotante = true`, `nfsmw_dk_volcado_pase_base = 4095`,
   `mp3_volcado_con_dibujos = true`, `input_xbox_layout = true`, `user_language = 12`.
