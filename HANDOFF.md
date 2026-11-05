@@ -67,11 +67,11 @@ the `_de_ dump counts.
 - Console FTP: `192.168.3.26:5000`, root = SD (`/switch/mp3-nx/`). **ASK THE USER BEFORE EVERY UPLOAD** — their
   standing rule (they turn FTP off while playing). Upload in one foreground attempt, verify by re-reading the
   file (size + a marker string: the NRO's version stamp sits near `InformarSistema` ≈ offset 55.6 MB).
-- Console now: NRO `f13d52aa94` (v7 + the address-step dump) and the FOLDED library (4055 containers,
-  md5 7674383c, uploaded and verified 2026-11-05 - the 23 captured re-patches included, among them the tonemap
-  quad's vs_42a1e87c725f14de); the DKSH cache is unchanged (no upload needed; the 23 new shaders compile on
-  console at first use - one-off stutter, then dksh_variants.txt picks them up at the next cache rebuild);
-  `mp3.toml` with `x360_traza_fetch_escalado = true`,
+- Console now: NRO `afbf26cfe1` (v7 + the address-step dump + the fourth tonemap in every gate, uploaded and
+  verified 2026-11-05) and the FOLDED library (4055 containers, md5 7674383c - the 23 captured re-patches
+  included, among them the tonemap quad's vs_42a1e87c725f14de); the DKSH cache is unchanged (the 23 new shaders
+  compile on console at first use - one-off stutter, then dksh_variants.txt picks them up at the next cache
+  rebuild); `mp3.toml` with `x360_traza_fetch_escalado = true`,
   `mp3_vs_por_parecido = false`, `mp3_omitir_vs = "a186927bb5741b5c,f46d329fd9192dd1"`,
   `mp3_oclusion_real = false`, `x360_edram_8bits_a_flotante = true`, `nfsmw_dk_volcado_pase_base = 4095`,
   `mp3_volcado_con_dibujos = true`, `input_xbox_layout = true`, `user_language = 12`.
