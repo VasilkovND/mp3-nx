@@ -25,21 +25,17 @@ the SAME host pass and blacken it. Everything else is proven clean: exact shader
   state) right after the FIRST post draw of a post-begun pass; no close fallback; install = v4's verbatim,
   only-this-frame. Menus safe by construction (no 8-bit post draws there). Every failure logs its reason once/10 s.
 
-## THE NEXT STEP (0322 built; NRO + toml pending upload): the scene install
+## THE NEXT STEP (0323 + the folds + the toml are ON THE CONSOLE, verified; the run pending)
 
-mp3_066 proved the tonemap's zero-output survives every cleared gate (constants sane, quad folded, alpha test off)
-and that the after-draw SNAPSHOT's mid-pass pass surgery is what blackened the menu and broke bullet time (the
-installs there read 0.0 - it was not the install). 0322 (x360_edram_instalar_escena, toml ON; the snapshot's
-x360_edram_8bits_a_flotante toml line REMOVED) presents the tonemap's own input instead: the scene resolve,
-healthy and already 0..1 (dumps: max 1.01-2.2, mean 0.19-0.28), copied into f3 at the frontal copy between
-passes. Expected: a real picture everywhere (flat highlights - no tonemap curve), menus and bullet time back.
-If anything misbehaves: x360_edram_instalar_escena = false in the toml = the old white-wash playable state.
-
-1. Upload the NRO + the toml (ASK FIRST). Run, play: the verdict is the picture itself.
-2. The open question stays: why NO tonemap draw (6671/FE22/CD94/009B, any VS, any era) has ever written 198/f0
-   in normal gameplay while the composite writes it white and bullet time shows color. Next diagnostic when
-   wanted: a dump frame with a probe INSIDE the tonemap's rasterization + its interpolants, or the VS-PS
-   interpolant linkage (the PS declares TEXCOORD0-12, the folded VS exports 0-10).
+The scene install WORKS (the wash is gone). 0323 answers the four remarks: the install moved to BEFORE the
+tonemap target's own resolve (the game's chain - FXAA, additive lights, HUD - proceeds ON the scene; the
+frontal install had buried them), the base re-lookup covers bullet-time/streaming gaps (their white frames),
+mp3_omitir_vs is REMOVED (the jacket loads were skipped outright - the invisible shirt), and the ghost's two
+captures are folded. Console: NRO 957adcccb9, dslib md5 136eb1a9 (4057 containers), toml with
+x360_edram_instalar_escena = true and no omit list. One VS still matches nothing (vs_ac27946eb1ea52b3, 78 words,
+no skeleton in the library): if the shirt stays missing, that is the lead (its container was never dumped - the
+shader_dump path needs a look). The tonemap's own zero-output remains the deep open question; the presentation
+no longer depends on it.
 
 ## The spikes (second bug, currently VISIBLE again)
 
