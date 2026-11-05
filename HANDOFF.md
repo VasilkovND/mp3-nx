@@ -25,17 +25,18 @@ the SAME host pass and blacken it. Everything else is proven clean: exact shader
   state) right after the FIRST post draw of a post-begun pass; no close fallback; install = v4's verbatim,
   only-this-frame. Menus safe by construction (no 8-bit post draws there). Every failure logs its reason once/10 s.
 
-## THE NEXT STEP (0323 + the folds + the toml are ON THE CONSOLE, verified; the run pending)
+## THE NEXT STEP (0324 on the console, verified: NRO 0b41882464 + the toml with the omit back)
 
-The scene install WORKS (the wash is gone). 0323 answers the four remarks: the install moved to BEFORE the
-tonemap target's own resolve (the game's chain - FXAA, additive lights, HUD - proceeds ON the scene; the
-frontal install had buried them), the base re-lookup covers bullet-time/streaming gaps (their white frames),
-mp3_omitir_vs is REMOVED (the jacket loads were skipped outright - the invisible shirt), and the ghost's two
-captures are folded. Console: NRO 957adcccb9, dslib md5 136eb1a9 (4057 containers), toml with
-x360_edram_instalar_escena = true and no omit list. One VS still matches nothing (vs_ac27946eb1ea52b3, 78 words,
-no skeleton in the library): if the shirt stays missing, that is the lead (its container was never dumped - the
-shader_dump path needs a look). The tonemap's own zero-output remains the deep open question; the presentation
-no longer depends on it.
+0323's f0-resolve install was read out of mp3_068 and reverted: it fired twice a frame (the f0 image resolves
+twice), the additive lights overbrightened the raw scene they met through it (white again), and the stale tile
+bookkeeping ghosted. 0322's frontal install is back (the state the user confirmed: THE WASH IS GONE, the picture
+right). The toml carries mp3_omitir_vs again (the spikes; the shirt stays invisible until its variants are
+folded - the address dump catches them every run, fold and re-enable without the omit when they are all in).
+The library on the console is current (the ghost's two variants fold in mp3_068: no address takes). The deep
+open question, now the only thing between this state and the finished look (HUD-over-scene, grain, the shirt):
+NO tonemap draw (6671/FE22/CD94/009B) has ever written 198/f0 in normal gameplay - every gate around it is
+proven clean; the next diagnostic is the draw itself (a probe inside its rasterization, its interpolants at the
+draw, or the VS-PS linkage: the PS declares TEXCOORD0-12, the folded VS exports 0-10).
 
 ## The spikes (second bug, currently VISIBLE again)
 
