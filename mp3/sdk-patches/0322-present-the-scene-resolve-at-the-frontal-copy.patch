@@ -1,0 +1,114 @@
+diff --git a/include/rex/x360/deko/render.h b/include/rex/x360/deko/render.h
+index 681167f3..b6dc2d22 100644
+--- a/include/rex/x360/deko/render.h
++++ b/include/rex/x360/deko/render.h
+@@ -530,6 +530,17 @@ class RenderDk final : public DestinosNativos {
+   uint64_t edram_posteado_fotograma_ = 0;  // the frame the snapshot was taken in: the install takes only this frame's
+   uint64_t edram_posteado_versiones_ = 0;  // snapshots taken (0320 v4)
+   uint64_t edram_posteado_siguiente_ = 0;  // the snapshot's own log and probes: once per 10 s (0320 v4)
++  // 0322: the scene resolve the tonemap reads (its fmt-26 sampler of screen width, remembered at the tonemap draw),
++  // presented directly at the frontal copy when x360_edram_instalar_escena is on. The port's tonemap draws have
++  // never written f0 (every probe since run 19; the folded quad and the fourth shader changed nothing), and the
++  // resolve's raw values are already 0..1 (0309's baked exp_previsto; the 2026-11-05 dumps: max 1.01-2.2, mean
++  // 0.19-0.28), so the frame presents the healthy lit scene - un-tonemapped, flat highlights, but real. Registers
++  // only at the draw; the copy runs at the frontal copy, between passes: no mid-pass footprint (0321's after-draw
++  // snapshot ended the menu's and bullet time's own post passes mid-frame and their following draws never ran -
++  // the black menu and the broken bullet time).
++  const ImagenDk* edram_escena_ = nullptr;
++  uint32_t edram_escena_ancho_ = 0, edram_escena_alto_ = 0;
++  uint64_t edram_escena_fotograma_ = 0;
+   std::set<uint64_t> edram_avisos_;
+   uint32_t edram_diag_encuadres_ = 0;
+   // The last depth resolve from each EDRAM base and pitch: the texture's address (CopiarProfundidad), for
+diff --git a/src/x360/deko/destinos.cpp b/src/x360/deko/destinos.cpp
+index 1364b17a..fcfd6f86 100644
+--- a/src/x360/deko/destinos.cpp
++++ b/src/x360/deko/destinos.cpp
+@@ -37,6 +37,7 @@
+ 
+ REXCVAR_DECLARE(bool, nfsmw_dk_tiles_en_pantalla);
+ REXCVAR_DECLARE(bool, x360_edram_8bits_a_flotante);  // edram.cpp (0320 v3)
++REXCVAR_DECLARE(bool, x360_edram_instalar_escena);  // edram.cpp (0322)
+ REXCVAR_DEFINE_BOOL(x360_copias_sin_barrera, true, "X360",
+                     "Las copias en el motor 3D seguidas comparten una barrera si ninguna lee lo que otra escribio (los "
+                     "resolves del G-buffer); false = una barrera antes de cada una");
+@@ -1567,6 +1568,19 @@ bool RenderDk::Copiar(const RegistrosCopia& reg) {
+           ++edram_llevados_8bits_;
+         }
+       }
++      // 0322: present the scene itself (x360_edram_instalar_escena). The port's tonemap draws have never written f0
++      // (every probe since run 19; the folded quad and the fourth shader changed nothing), and the scene resolve the
++      // tonemap reads is already 0..1 (0309's baked scale; the 2026-11-05 dumps: max 1.01-2.2, mean 0.19-0.28) - so
++      // the frontal copy presents the healthy lit scene, un-tonemapped (flat highlights) but real. Between passes,
++      // like the resolve itself: no mid-pass footprint.
++      if (a_frontal && REXCVAR_GET(x360_edram_instalar_escena) && destino_render && !destino_render->profundidad &&
++          destino_render->edram_formato == 3 && edram_escena_fotograma_ == fotograma_ && edram_escena_ &&
++          edram_escena_->ancho == destino_render->ancho && edram_escena_->alto <= destino_render->alto) {
++        AntesDeCambiarDestino(nullptr);
++        if (Copiar3D(*edram_escena_, 0, 0, edram_escena_ancho_, edram_escena_alto_, *destino_render, 0, 0)) {
++          ++edram_llevados_8bits_;
++        }
++      }
+     EdramPreparar(*destino_render, uint32_t(y1), a_frontal);  // another view of these tiles may have drawn them since
+   }
+   DkCmdBuf cmd = nucleo_.comandos();
+diff --git a/src/x360/deko/dibujos.cpp b/src/x360/deko/dibujos.cpp
+index 618afd41..7d0e5ae4 100644
+--- a/src/x360/deko/dibujos.cpp
++++ b/src/x360/deko/dibujos.cpp
+@@ -43,6 +43,7 @@ REXCVAR_DEFINE_INT32(x360_vs_codigo_max_kb, 256, "X360",
+ REXCVAR_DECLARE(bool, x360_volcado_en_vivo);  // destinos.cpp
+ REXCVAR_DECLARE(bool, x360_traza_fetch_escalado);  // texturas.cpp (0312)
+ REXCVAR_DECLARE(bool, x360_edram_8bits_a_flotante);  // edram.cpp (0320)
++REXCVAR_DECLARE(bool, x360_edram_instalar_escena);  // edram.cpp (0322)
+ REXCVAR_DEFINE_BOOL(x360_edram_saltar_muertas, true, "X360",
+                     "Un pase cuyo primer dibujo pinta todos sus destinos de color enteros y opacos (un cuadrado a "
+                     "pantalla completa sin mezcla, prueba ni descarte) no recibe lo que otras vistas tienen en esas "
+@@ -2889,6 +2890,31 @@ bool RenderDk::Dibujar(const PeticionDibujo& p) {
+     // install only takes a snapshot of THIS frame (a stale side image must not paint a menu after gameplay). The
+     // copy engine binds no targets and sets no state: g_ and the pass stay valid, no re-begin - v6 rebound and
+     // re-began the pass around its snapshots and its console run blackened even the cutscenes v4 had colored.
++    // 0322: remember the scene the tonemap reads - its fmt-26 (k_16_16_16_16) sampler of screen width (the bloom
++    // tiles are fmt 26 too, but small) - to present it at the frontal copy (x360_edram_instalar_escena, destinos.cpp).
++    // Registers are read here and nothing else: no mid-pass footprint (0321's after-draw snapshot ended the menu's
++    // and bullet time's own post passes mid-frame and their following draws never ran - the black menu).
++    if (ps && edram_pase_post_ && REXCVAR_GET(x360_edram_instalar_escena) && EdramActiva()) {
++      static const uint64_t kPostEscena[5] = {UINT64_C(0x6671591252A5BCE2), UINT64_C(0xFE226603F40E2533),
++                                              UINT64_C(0xCD9469857A0C532A), UINT64_C(0x8D42760B0383C0D8),
++                                              UINT64_C(0x009B4466C815681B)};
++      for (uint64_t huella : kPostEscena) {
++        if (ps->huella_contenedor != huella) continue;
++        for (const SamplerShader& s : ps->samplers) {
++          if (s.registro >= 16) continue;
++          const uint32_t* f = r + kRegFetch + uint32_t(s.registro) * 6;
++          if ((f[1] & 0x3F) != 26) continue;  // k_16_16_16_16
++          const uint32_t ancho = (f[2] & 0x1FFF) + 1;
++          if (ancho < 512) continue;  // the half-res and bloom resolves are fmt 26 as well, but narrow
++          edram_escena_ = TexturaResuelta((f[1] & ~0xFFFu) & 0x1FFFFFFF, ancho, ((f[2] >> 13) & 0x1FFF) + 1);
++          edram_escena_ancho_ = ancho;
++          edram_escena_alto_ = ((f[2] >> 13) & 0x1FFF) + 1;
++          edram_escena_fotograma_ = fotograma_;
++          break;
++        }
++        break;
++      }
++    }
+     if (ps && edram_pase_post_ && REXCVAR_GET(x360_edram_8bits_a_flotante) && EdramActiva()) {
+       static const uint64_t kPostDibujo[5] = {UINT64_C(0x6671591252A5BCE2), UINT64_C(0xFE226603F40E2533),
+                                               UINT64_C(0xCD9469857A0C532A), UINT64_C(0x8D42760B0383C0D8),
+diff --git a/src/x360/deko/edram.cpp b/src/x360/deko/edram.cpp
+index 23dd451c..4cc730ca 100644
+--- a/src/x360/deko/edram.cpp
++++ b/src/x360/deko/edram.cpp
+@@ -53,6 +53,11 @@ REXCVAR_DEFINE_BOOL(x360_edram_8bits_a_flotante, false, "X360",
+                     "7e3 (f3/f12) de la misma base, pitch y MSAA como valores (RGBA8 -> RGBA16F, Copiar3D), no como "
+                     "bits: Max Payne 3 tonemapea en la vista f0 de la base 198 y el cuadro final copia la vista f12 "
+                     "de esas mismas tejas, que sin esto conserva la escena cruda");
++REXCVAR_DEFINE_BOOL(x360_edram_instalar_escena, false, "X360",
++                    "La resolucion de la escena que el tonemap lee (su sampler fmt 26 del ancho de la pantalla, "
++                    "registrada en el dibujo del tonemap) se instala en la vista f3 en la copia frontal: los "
++                    "tonemaps del puerto nunca han escrito f0 y esa resolucion ya vale 0..1, asi que el fotograma "
++                    "presenta la escena sana (sin la curva del tonemap: luces planas, pero real)");
+ REXCVAR_DEFINE_BOOL(x360_edram_reduccion_directa, true, "X360",
+                     "Un resolve desde una vista 4x cuyas tejas tiene una vista 1x del doble de pitch (GTA IV reduce su "
+                     "escena a 640x360 asi) promedia 2x2 texeles de esa vista, como el resolve de la Xenos promedia las "

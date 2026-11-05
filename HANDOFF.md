@@ -25,34 +25,21 @@ the SAME host pass and blacken it. Everything else is proven clean: exact shader
   state) right after the FIRST post draw of a post-begun pass; no close fallback; install = v4's verbatim,
   only-this-frame. Menus safe by construction (no 8-bit post draws there). Every failure logs its reason once/10 s.
 
-## THE NEXT STEP (patch 0321 built, NRO pending upload): the fourth tonemap
+## THE NEXT STEP (0322 built; NRO + toml pending upload): the scene install
 
-mp3_065 proved the fold worked (the quad took its own container exact, n1088) and found the REAL miss: the
-rooftop's gameplay tonemap is **ps_009b4466c815681b** (a fourth - the lists held the club's 6671/FE22, CD94,
-FXAA). Ungated, its frames set no pase_post, snapshot nothing, install nothing - the Swap presents the raw copy
-(THE WHITE WASH); the CD94 windows snapshot/install emptiness (THE BLACK). Patch 0321 + the mp3_gpu.cpp edits
-add 0x009B4466C815681B to kPost, kPostDibujo, kTonemapas, kTm(via IsTonemap/kTonemapas), IsTonemap (the
-sin_alpha/sin_sesgo epilogues, [exposicion], mp3_exposicion) and the bloom_juego list; the CD94 substitution
-left alone (its own translation should run). With the quad folded and the gates knowing the shader, the v7
-machinery has: healthy input (0.28 mean) -> own-layout quad -> snapshot after ITS draw -> install at the frontal
-copy. One run: colored normal gameplay + [exposicion] tonemap 009B... lines + the probes sampling THIS draw.
+mp3_066 proved the tonemap's zero-output survives every cleared gate (constants sane, quad folded, alpha test off)
+and that the after-draw SNAPSHOT's mid-pass pass surgery is what blackened the menu and broke bullet time (the
+installs there read 0.0 - it was not the install). 0322 (x360_edram_instalar_escena, toml ON; the snapshot's
+x360_edram_8bits_a_flotante toml line REMOVED) presents the tonemap's own input instead: the scene resolve,
+healthy and already 0..1 (dumps: max 1.01-2.2, mean 0.19-0.28), copied into f3 at the frontal copy between
+passes. Expected: a real picture everywhere (flat highlights - no tonemap curve), menus and bullet time back.
+If anything misbehaves: x360_edram_instalar_escena = false in the toml = the old white-wash playable state.
 
-1. Upload the rebuilt NRO (ASK FIRST), run, play the rooftop normally (and the club later - its 6671/FE22 path
-   is covered as before).
-2. Read: probes non-zero = the saga closes; still 00000000 = the tonemap's own draw (then the sin_alpha/sesgo
-   coverage of 0321 is the first suspect it just gained, then its inputs at ITS draw via the new [exposicion]
-   line).
-3. Spikes: the 23 folds are in the library on the console - the costume verdict comes with this same run (the
-   user has not reported them since; ask).
-
-1. Fold + rebuild (running/done 2026-11-05): tools/shaders.sh; mp3_parecidos must report the new containers;
-   upload mp3_shaders.dslib + shadercache_dksh.bin (~131 MB, ASK FIRST) - the console library is one fold
-   behind.
-2. The run after: normal gameplay colored + spikes gone is the expectation; the probes should stop reading
-   00000000 and the install counter becomes secondary.
-3. Still open after that: the composite's own garbage (its depth-derived layer, black on the club / white on
-   the rooftop - bypassed by the carry's after-draw snapshot, not fixed) and the garage level's dark lighting
-   (runs 29-31, deferred).
+1. Upload the NRO + the toml (ASK FIRST). Run, play: the verdict is the picture itself.
+2. The open question stays: why NO tonemap draw (6671/FE22/CD94/009B, any VS, any era) has ever written 198/f0
+   in normal gameplay while the composite writes it white and bullet time shows color. Next diagnostic when
+   wanted: a dump frame with a probe INSIDE the tonemap's rasterization + its interpolants, or the VS-PS
+   interpolant linkage (the PS declares TEXCOORD0-12, the folded VS exports 0-10).
 
 ## The spikes (second bug, currently VISIBLE again)
 

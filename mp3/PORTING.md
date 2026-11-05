@@ -1,5 +1,24 @@
 # Max Payne 3 on rexglue-sdk-nx (deko3d): porting notes
 
+## The scene install (0322, 2026-11-05 night): present the healthy scene while the tonemap stays closed
+
+mp3_066 (afbf26c) settled two things. (1) The 0321 gates made the machinery follow the FOURTH tonemap - [exposicion]
+009B lines, probes on its draw, snapshots in the menu too - and its output is STILL 00000000 with sane constants
+(Exposures 1.18), the folded quad, and the alpha test cleared: whatever kills the tonemap's output, it is none of
+the cleared gates, and it has been there since run 19 (0654D000 black in every era). (2) The regression: the
+after-draw SNAPSHOT's copy-engine dance (AntesDeTransferir ends the pass mid-frame) breaks the passes whose draws
+FOLLOW the tonemap - the menu's and bullet time's own post chains died after it (the black menu, bullet time
+gone). The installs in the menu windows read 0.0: the black menu was the snapshot's pass surgery, not the install.
+
+THE STOPGAP THAT GIVES A PICTURE (0322, x360_edram_instalar_escena): the tonemap's own input - the scene resolve
+- is healthy and already 0..1 (0309's baked scale; the 2026-11-05 dumps: 0674B000 max 1.01 mean 0.19, 08408000
+max 2.2 mean 0.28). The tonemap draw now only READS REGISTERS (its fmt-26 sampler of screen width -> the resolve's
+image), and the frontal copy installs THAT into the f3 view, between passes, like the resolve itself - no mid-pass
+footprint. The frame presents the healthy lit scene: un-tonemapped, flat highlights, but real - not the wash, not
+black. The snapshot path stays cvar-gated OFF in the toml (x360_edram_8bits_a_flotante removed): menus and
+bullet time return to their own chains. The tonemap's zero-output remains the open question, now free of
+presentation pressure.
+
 ## The fourth tonemap (mp3_065, 2026-11-05 late): the fold worked, the gates were looking elsewhere
 
 The folded library did its job - "VS 8E66F3E2621BB0FA taken exact as n1088", the quad under its own fetch words
