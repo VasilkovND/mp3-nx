@@ -1,5 +1,23 @@
 # Max Payne 3 on rexglue-sdk-nx (deko3d): porting notes
 
+## The fourth tonemap (mp3_065, 2026-11-05 late): the fold worked, the gates were looking elsewhere
+
+The folded library did its job - "VS 8E66F3E2621BB0FA taken exact as n1088", the quad under its own fetch words
+([verts-tonemap] PS n3266 VS n1088), zero new address-step dumps - and the picture did not change. The dump
+frame's trace found why: the draw into 198/f0 pitch 960 (the tonemap's own sampler set: scene 08408000, half-res
+0674B000, bloom 07317000, depth 0820A000 fmt 23, 2x2 05761000, mask 07367000) ran **ps n13 =
+ps_009b4466c815681b** - a FOURTH tonemap, 267 words, none of the known codes (6671/FE22/CD94/8D42/FXAA). Every
+gate list (the CD94 substitution, the pase_post flag, the snapshot's kPostDibujo, IsTonemap for the
+sin_alpha/sin_sesgo epilogues and the [exposicion] line, kTonemapas, kTm) held the CLUB's tonemaps - this level's
+own ran ungated: no pass flag, no snapshot, no install, and its frames presented the game's raw 8-bit copy (the
+WHITE WASH). The CD94-huella windows (cutscene-ish states) still snapshotted and installed an empty snapshot -
+the BLACK. Both user-visible symptoms, one missing list entry. Bullet time works through the game's own
+composite-free path, as ever. The probes' 00000000 were reading the CD94 windows' draws, never this one - the
+rooftop tonemap's own output has never been probed (patch 0321 adds it to every list; the substitution is left
+alone: its own translation runs, which is the point). The v7 machinery now has everything it needs: a quad under
+its own layout, a healthy input (mean 0.28), a faithful snapshot, a proven install - the missing link was the
+gate knowing this shader is a tonemap.
+
 This folder builds Max Payne 3 (Xbox 360, Games on Demand, Title Update 6, disc 1) for the Switch on the stack of
 gta4-nx: the game's PowerPC code statically recompiled to C++ (ReXGlue v0.10.0) and built for ARM, the game's command
 ring read on the console and drawn with deko3d, shaders translated ahead of time. Max Payne 3 (2012) runs on RAGE like

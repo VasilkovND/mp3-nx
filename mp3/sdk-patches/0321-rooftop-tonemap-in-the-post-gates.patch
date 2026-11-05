@@ -1,0 +1,56 @@
+diff --git a/src/x360/deko/dibujos.cpp b/src/x360/deko/dibujos.cpp
+index 4b4703ea..618afd41 100644
+--- a/src/x360/deko/dibujos.cpp
++++ b/src/x360/deko/dibujos.cpp
+@@ -1564,17 +1564,17 @@ bool RenderDk::Dibujar(const PeticionDibujo& p) {
+   // right bytes at a wrong base = the words point elsewhere; right words and bytes = the binding is clean and the
+   // layout or the upload is left. Settles it in one run.
+   if (ps && !entrada->enlaces.empty() && p.vs) {
+-    static const uint64_t kTonemapas[3] = {UINT64_C(0x6671591252A5BCE2), UINT64_C(0xFE226603F40E2533),
+-                                           UINT64_C(0xCD9469857A0C532A)};
+-    uint32_t tonemap = 3;
+-    for (uint32_t t = 0; t < 3; ++t) {
++    static const uint64_t kTonemapas[4] = {UINT64_C(0x6671591252A5BCE2), UINT64_C(0xFE226603F40E2533),
++                                           UINT64_C(0xCD9469857A0C532A), UINT64_C(0x009B4466C815681B)};
++    uint32_t tonemap = 4;
++    for (uint32_t t = 0; t < 4; ++t) {
+       if (ps->huella_contenedor == kTonemapas[t]) {
+         tonemap = t;
+       }
+     }
+-    static uint64_t siguiente[3] = {};
++    static uint64_t siguiente[4] = {};
+     const uint64_t ahora = deko::AhoraNs();
+-    if (tonemap < 3 && ahora >= siguiente[tonemap]) {
++    if (tonemap < 4 && ahora >= siguiente[tonemap]) {
+       siguiente[tonemap] = ahora + uint64_t(10) * 1000000000ull;
+       std::string linea = fmt::format("[verts-tonemap] PS n{} VS n{} fuente {} tipo {} cuenta {} vertices {} vmin {} "
+                                       "vmax {}:",
+@@ -1831,8 +1831,13 @@ bool RenderDk::Dibujar(const PeticionDibujo& p) {
+   // never fired and the pass before each post pass carried in its stead.
+   bool pase_post = false;
+   if (ps) {
+-    static const uint64_t kPost[4] = {UINT64_C(0x6671591252A5BCE2), UINT64_C(0xFE226603F40E2533),
+-                                      UINT64_C(0xCD9469857A0C532A), UINT64_C(0x8D42760B0383C0D8)};
++    // The rooftop's own gameplay tonemap (mp3_065's dump frame: the 198/f0 pitch-960 quad with the tonemap's five
++    // samplers ran ps_009b4466c815681b, a FOURTH - every list had the club's 6671/FE22, the cutscenes' CD94 and
++    // the FXAA). Its frames set no pase_post, snapshotted nothing and installed nothing: the Swap presented the
++    // game's raw 8-bit copy (the white wash) while the CD94 windows installed an empty snapshot (the black).
++    static const uint64_t kPost[5] = {UINT64_C(0x6671591252A5BCE2), UINT64_C(0xFE226603F40E2533),
++                                      UINT64_C(0xCD9469857A0C532A), UINT64_C(0x8D42760B0383C0D8),
++                                      UINT64_C(0x009B4466C815681B)};
+     for (uint64_t huella : kPost) {
+       if (ps->huella_contenedor == huella) pase_post = true;
+     }
+@@ -2885,8 +2890,9 @@ bool RenderDk::Dibujar(const PeticionDibujo& p) {
+     // copy engine binds no targets and sets no state: g_ and the pass stay valid, no re-begin - v6 rebound and
+     // re-began the pass around its snapshots and its console run blackened even the cutscenes v4 had colored.
+     if (ps && edram_pase_post_ && REXCVAR_GET(x360_edram_8bits_a_flotante) && EdramActiva()) {
+-      static const uint64_t kPostDibujo[4] = {UINT64_C(0x6671591252A5BCE2), UINT64_C(0xFE226603F40E2533),
+-                                              UINT64_C(0xCD9469857A0C532A), UINT64_C(0x8D42760B0383C0D8)};
++      static const uint64_t kPostDibujo[5] = {UINT64_C(0x6671591252A5BCE2), UINT64_C(0xFE226603F40E2533),
++                                              UINT64_C(0xCD9469857A0C532A), UINT64_C(0x8D42760B0383C0D8),
++                                              UINT64_C(0x009B4466C815681B)};
+       bool es_post = false;
+       for (uint64_t huella : kPostDibujo) {
+         if (ps->huella_contenedor == huella) es_post = true;

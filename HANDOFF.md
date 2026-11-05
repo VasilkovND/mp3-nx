@@ -25,17 +25,25 @@ the SAME host pass and blacken it. Everything else is proven clean: exact shader
   state) right after the FIRST post draw of a post-begun pass; no close fallback; install = v4's verbatim,
   only-this-frame. Menus safe by construction (no 8-bit post draws there). Every failure logs its reason once/10 s.
 
-## THE NEXT STEP (the capture run mp3_064 is read; PORTING "The capture run" has the detail)
+## THE NEXT STEP (patch 0321 built, NRO pending upload): the fourth tonemap
 
-The address-step dump caught the root in one run: the tonemap quad is a re-patch (vs_8e66f3e2621bb0fa on base
-770f9c/n1931, 9 fetch-words differ - stride, slot) running on the base's layout, drawing ~nothing; the composite
-then whitens f0 (0654D000 mean 1.0, 51.6% white on the rooftop, vs the healthy input 08408000 mean 0.28). The
-user's BLACK SCREEN = the carry presenting the empty snapshot at ~1.0 installs/frame (scene-dependent; v7's club
-run read 0.4-0.6 and looked like the plain white wash - NOT a regression, the dump change only writes files).
-The tonemap's INPUT is healthy here, so the deferred "dark scene" worry does not block. Fold of the 23 captured
-re-patches + library upload is THE fix for both the tonemap (normal gameplay should color, like bullet time
-already does through the game's own path) and the costume spikes. The install-rate variance (0.4-1.0) matters
-only if the picture still misbehaves after the fold.
+mp3_065 proved the fold worked (the quad took its own container exact, n1088) and found the REAL miss: the
+rooftop's gameplay tonemap is **ps_009b4466c815681b** (a fourth - the lists held the club's 6671/FE22, CD94,
+FXAA). Ungated, its frames set no pase_post, snapshot nothing, install nothing - the Swap presents the raw copy
+(THE WHITE WASH); the CD94 windows snapshot/install emptiness (THE BLACK). Patch 0321 + the mp3_gpu.cpp edits
+add 0x009B4466C815681B to kPost, kPostDibujo, kTonemapas, kTm(via IsTonemap/kTonemapas), IsTonemap (the
+sin_alpha/sin_sesgo epilogues, [exposicion], mp3_exposicion) and the bloom_juego list; the CD94 substitution
+left alone (its own translation should run). With the quad folded and the gates knowing the shader, the v7
+machinery has: healthy input (0.28 mean) -> own-layout quad -> snapshot after ITS draw -> install at the frontal
+copy. One run: colored normal gameplay + [exposicion] tonemap 009B... lines + the probes sampling THIS draw.
+
+1. Upload the rebuilt NRO (ASK FIRST), run, play the rooftop normally (and the club later - its 6671/FE22 path
+   is covered as before).
+2. Read: probes non-zero = the saga closes; still 00000000 = the tonemap's own draw (then the sin_alpha/sesgo
+   coverage of 0321 is the first suspect it just gained, then its inputs at ITS draw via the new [exposicion]
+   line).
+3. Spikes: the 23 folds are in the library on the console - the costume verdict comes with this same run (the
+   user has not reported them since; ask).
 
 1. Fold + rebuild (running/done 2026-11-05): tools/shaders.sh; mp3_parecidos must report the new containers;
    upload mp3_shaders.dslib + shadercache_dksh.bin (~131 MB, ASK FIRST) - the console library is one fold

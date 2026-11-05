@@ -2221,7 +2221,8 @@ class RingGraphicsSystem final : public rex::system::IGraphicsSystem {
     const float bloom_juego = float(REXCVAR_GET(mp3_bloom_juego));
     if (bloom_juego > 0.0f && ps_ &&
         (ps_->huella_contenedor == UINT64_C(0x6671591252A5BCE2) ||
-         ps_->huella_contenedor == UINT64_C(0xFE226603F40E2533))) {
+         ps_->huella_contenedor == UINT64_C(0xFE226603F40E2533) ||
+         ps_->huella_contenedor == UINT64_C(0x009B4466C815681B))) {
       uint32_t& word = registers_[0x4000 + (256 + 139) * 4 + 2];
       word = std::bit_cast<uint32_t>(std::bit_cast<float>(word) * bloom_juego);
       ++generacion_constantes_ps_;
@@ -3125,7 +3126,7 @@ class RingGraphicsSystem final : public rex::system::IGraphicsSystem {
   // which blend Exposures.x towards .y and the gamma towards deSatContrastGammaIFX by the 128x128 effects mask).
   static bool IsTonemap(uint64_t huella) {
     return huella == UINT64_C(0xCD9469857A0C532A) || huella == UINT64_C(0x6671591252A5BCE2) ||
-           huella == UINT64_C(0xFE226603F40E2533);
+           huella == UINT64_C(0xFE226603F40E2533) || huella == UINT64_C(0x009B4466C815681B);
   }
 
   // The lamps' shadows, every 10 s (a wall lit inside a ped's silhouette and dark around it, run 55): the shadow map
