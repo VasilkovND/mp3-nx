@@ -794,3 +794,48 @@ no line at all = the gate (huella/pass flag - the [exposicion] tonemap line says
 "post fuente" probes = the tonemap's own draw writes nothing (the shader chain, not this machinery). The
 composite's own defect (its depth-derived layer renders wrong) remains open and separate: v7 restores the picture
 by installing around it, it does not fix it.
+
+## The v7 run read (mp3_063, 2026-11-02): the machinery works; the content is not the picture
+
+The outcome branch was "the content itself" - and the run settled everything around it:
+
+- THE MACHINERY: "snapshot post c198 f0 960 #1439 (960x540 de 960x960) tras el dibujo" fired once per frame in
+  gameplay (the version counter 1 -> 664 in 80 s; 19-29/s in the good windows, 2-3/s in others - scene-dependent:
+  the gate needs the tonemap draw to BEGIN its pass), zero "no tomado", installs 0.1-0.6 "de 8 bits a flotante"
+  per frame (v4 proved 1.0 and that the install reaches the presentation - its black showed). The user's report:
+  the picture unchanged (the white wash), the game playable - failure presented exactly as cvar-off, as designed.
+  Installing what f0 held changed nothing on screen, so what f0 holds after the draw ~ what presents anyway.
+- THE CONTENT: every probe set (one per 10 s, 7 windows, gameplay and cutscene-ish alike) reads "post fuente" AND
+  "post snapshot" 00000000 at (480,270), (240,405), (720,162) - the copy is faithful; the f0 view right after the
+  tonemap's draw holds no picture there. Alpha 0 too, and the tonemap's oC0.w is a luma: a drawn pixel would not
+  read 0 at three spread points of every window.
+- THE VS LAYOUT IS CLOSED (runs 36-38's theory, for the current state): [verts-tonemap] says "PS n3247 VS n1931"
+  in v4 AND v7. The entry numbers are the dslib's XXH3-sorted order (n262 = vs_119028f2350aa4c0, the folded quad
+  n1142 = vs_471aee299203383c): n1931 = vs_770f9c458637b2e8, a 36-word VS - NOT the 119028 family (48-word;
+  that identification was another draw, the bloom/FXAA quads). Its own declaration (4 elements: position + 3
+  texcoords, every fetch at slot 31) matches the current binding (one stream, slot 31, stride 52, 4 vertices,
+  208 bytes) and the guest bytes are clean floats (quad corners -1..1, small UVs). The load runs under a layout
+  that fits; the vertex data is clean.
+- THE STATE AROUND THE DRAW: mp3_post_sin_stencil = true (default, not overridden in the toml) - the stencil test
+  is already off at the tonemap; mp3_tonemapas_cd94 = true - the gameplay tonemaps run as CD94 (the [exposicion]
+  lines say CD9469857A0C532A in the garage windows, gAdaptedLum 1.46 / Exposures 0.85, sane); the write bias is 0
+  (RB_COLOR_INFO 00000198, formato 0, in every line).
+- WHAT REMAINS, past every proven-clean gate (containers, vertex data, constants, textures, fetch scales,
+  occlusion, gamma, alpha test, write bias, VS layout, stencil): the draw's own output. Two threads:
+  1. Black-vs-burnt, one manual dump apart: run 20's offline reproduction said the translated tonemap + the mask
+     reproduce the SCREEN pixel for pixel - if the console's f0 is the burnt picture (not black; the three probes
+     could be dark points of it), the carry saga is DONE and the overexposure moves to the lighting passes.
+     mp3_volcado_con_dibujos is already on: one gameplay window, ZL + ZR + Left, read 0654D000 and the f0 view of
+     that same frame (the probes fire in the dump frame too).
+  2. Runs 29-31's deferred finding, unchanged and now load-bearing: the gameplay HDR scene is 5-10x darker than
+     the level expects (the lighting passes), the luminance always below AdaptedLumMin, the exposure pinned at
+     its maximum - even a correctly carried tonemap output looks burnt in gameplay. The cutscenes (v4-colored)
+     do not have this. If (1) shows burnt, this is the bug.
+- THE SPIKES, this run: shaders_unknown/ holds 14 files not in console_unknown: 12 new masked variants (_de_
+  75b3fd4fcb4c5f63 x4, 253c360c3cf1be33 x4, 19cb3fbc05743345 x2, 142a42bce6d2fd39 x2 - none of these bases is in
+  mp3_omitir_vs) and 2 loads matching nothing at all (vs_82a73ba3cae509c4, vs_d2052d39bbb3b843 - skipped draws).
+  The masked logger printed nothing new: its 64-line cap counts DISTINCT hashes from boot and was consumed at
+  00:28:05, before gameplay. Fix unchanged: harvest, fold, rebuild, upload. NOTE for later: the ADDRESS step
+  (step 1) still takes a re-patched load silently - no dump, exactly the jacket-VS mechanism - so any variant
+  that falls past step 0 is invisible; if a future re-patch needs catching, VolcarDesconocido belongs in step 1's
+  success branch too.
