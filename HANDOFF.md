@@ -25,31 +25,26 @@ the SAME host pass and blacken it. Everything else is proven clean: exact shader
   state) right after the FIRST post draw of a post-begun pass; no close fallback; install = v4's verbatim,
   only-this-frame. Menus safe by construction (no 8-bit post draws there). Every failure logs its reason once/10 s.
 
-## THE NEXT STEP (v7 was run 2026-11-02; mp3_063 read; PORTING's "The v7 run read" has the detail)
+## THE NEXT STEP (the capture run mp3_064 is read; PORTING "The capture run" has the detail)
 
-The v7 outcome was "**the content itself**": snapshot ~1/frame in gameplay, installs 0.1-0.6/frame, ZERO refusals,
-and every probe (fuente AND snapshot) reads 00000000 at three points right after the tonemap's draw - while the
-user saw NO change (installing what f0 held = what presented anyway). The VS layout is now CLOSED clean
-(vs_770f9c458637b2e8, its declaration matches the binding; runs 36-38's masked-layout theory was another quad),
-the stencil is already off (mp3_post_sin_stencil default true), the tonemap runs CD94-substituted with sane
-constants. What is left, in order:
+The address-step dump caught the root in one run: the tonemap quad is a re-patch (vs_8e66f3e2621bb0fa on base
+770f9c/n1931, 9 fetch-words differ - stride, slot) running on the base's layout, drawing ~nothing; the composite
+then whitens f0 (0654D000 mean 1.0, 51.6% white on the rooftop, vs the healthy input 08408000 mean 0.28). The
+user's BLACK SCREEN = the carry presenting the empty snapshot at ~1.0 installs/frame (scene-dependent; v7's club
+run read 0.4-0.6 and looked like the plain white wash - NOT a regression, the dump change only writes files).
+The tonemap's INPUT is healthy here, so the deferred "dark scene" worry does not block. Fold of the 23 captured
+re-patches + library upload is THE fix for both the tonemap (normal gameplay should color, like bullet time
+already does through the game's own path) and the costume spikes. The install-rate variance (0.4-1.0) matters
+only if the picture still misbehaves after the fold.
 
-1. **Black-vs-burnt, one observation run**: play to a gameplay window, ZL + ZR + Left (the manual dump;
-   mp3_volcado_con_dibujos is on), quit, read that frame's 0654D000 + the f0 view + the probes (they fire in the
-   dump frame). Burnt (not black) => the carry saga is DONE; the overexposure is the DEFERRED lighting finding
-   (runs 29-31: the gameplay HDR scene 5-10x too dark, exposure pinned at max - the cutscenes don't have this).
-   Black => the defect is inside the tonemap's draw, past every gate already proven clean.
-2. **The spikes - CORRECTED (2026-11-05)**: the 14 "new" shaders_unknown files were STALE (pre-step-0 runs);
-   their variants are already in the library, the rebuild came out byte-identical (md5 3e42e627), and the v7 run
-   had ZERO masked matches. The live root is the ADDRESS step silently taking re-patched loads (reaching its
-   success branch proves the code is no entry's own - step 0 would have returned it). f13d52a (NOW ON THE
-   CONSOLE, verified by stamp + marker) dumps every distinct VS load the address step takes, as a `_de_` variant
-   of the entry it runs on, plus a capped "taken by address as n<N>: patched, not its own code" log line. The
-   next run (mp3_volcar_desconocidos stays true in the toml) captures them; fold + rebuild + upload the run
-   after. The library itself needs NO upload - the console's is complete and byte-identical to the local
-   rebuild.
-3. Install counter 0.4-0.6 vs v4's 1.0 (the same-frame condition or frontales_ membership) matters only AFTER the
-   content is right.
+1. Fold + rebuild (running/done 2026-11-05): tools/shaders.sh; mp3_parecidos must report the new containers;
+   upload mp3_shaders.dslib + shadercache_dksh.bin (~131 MB, ASK FIRST) - the console library is one fold
+   behind.
+2. The run after: normal gameplay colored + spikes gone is the expectation; the probes should stop reading
+   00000000 and the install counter becomes secondary.
+3. Still open after that: the composite's own garbage (its depth-derived layer, black on the club / white on
+   the rooftop - bypassed by the carry's after-draw snapshot, not fixed) and the garage level's dark lighting
+   (runs 29-31, deferred).
 
 ## The spikes (second bug, currently VISIBLE again)
 

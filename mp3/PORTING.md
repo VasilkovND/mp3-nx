@@ -795,6 +795,37 @@ no line at all = the gate (huella/pass flag - the [exposicion] tonemap line says
 composite's own defect (its depth-derived layer renders wrong) remains open and separate: v7 restores the picture
 by installing around it, it does not fix it.
 
+## The capture run (mp3_064, 2026-11-05, f13d52aa94): the tonemap quad caught, black-vs-burnt answered
+
+The address-step dump paid for itself in one run: 23 new `_de_` files, among them
+**vs_8e66f3e2621bb0fa_de_770f9c458637b2e8** - the tonemap quad's own re-patch (logged
+"VS 8E66F3E2621BB0FA taken by address as n1931"). Word-diff against the base: 9 words, ALL inside the four
+fetch instructions (instruction 3-6, words 10-20) - `00000A88` -> `00393A88` (the real stride/format patched
+in), `05F81000` -> `2DF81000` (another fetch slot), `0000023F` -> `4025323F`: the classic D3D rebind patch.
+So the quad was NEVER running its own layout: the base 770f9c's declaration TABLE matched the binding's shape
+(which is what closed the layout question too early on 2026-11-05), but the translated code fetched with
+another declaration's words - garbage vertices, nothing rasterized.
+
+- THE USER'S REPORT decoded: "picture only in bullet time, black screen otherwise". The black screen is the
+  carry presenting the EMPTY snapshot at full rate: the install windows read 0.5 -> 1.0 -> 0.9 -> 0.8
+  (22:14:53-22:15:24, rooftop) - the tonemap wrote nothing (probes 00000000 again), the snapshot carries that
+  emptiness, and at ~1 install/frame the Swap shows it. v7's run on the club read 0.4-0.6 on the same content
+  and looked like the plain white wash - the install rate is scene/timing dependent (frontales_/same-frame),
+  which is why the black was "never seen before". NOT caused by the dump change (it only writes files; the
+  identification resolution is untouched).
+- BLACK-VS-BURNT, ANSWERED BY THE DUMP: the tonemap's INPUT is healthy on the rooftop (08408000: mean 0.28,
+  max 2.0, 1.7% white - the "scene 5-10x too dark" worry was the garage's, not a blocker here), and 0654D000
+  (the resolve, post-composite) is BLOWN WHITE: mean 1.00, 51.6% pure white, 100% non-dark. The tonemap's own
+  pre-composite output is ~nothing (the probes); the COMPOSITE fills f0 with white garbage on this level (it
+  blackened the club in v4 - scene-dependent garbage, its own known-open defect). The deferred lighting
+  finding stays deferred: with a healthy input a working tonemap will look right.
+- BULLET TIME still shows the picture (the game's own composite-free path leaves the tonemap's output last -
+  v1/v2's observation; it does not go through the broken quad variant's pass or presents before the composite).
+- NEXT: fold the 23 (tools/shaders.sh) - the tonemap quad under its own fetch words should draw the real
+  picture into f0, the v7 snapshot (proven faithful, right after the draw, before the composite) carries it,
+  and the install (proven to reach the presentation - this run's black) shows it: normal gameplay colored, the
+  same way bullet time already is. The costume re-patches among the 23 fold by the same mechanism.
+
 ## The v7 run read (mp3_063, 2026-11-02): the machinery works; the content is not the picture
 
 The outcome branch was "the content itself" - and the run settled everything around it:
