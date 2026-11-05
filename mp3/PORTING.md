@@ -1,5 +1,27 @@
 # Max Payne 3 on rexglue-sdk-nx (deko3d): porting notes
 
+## The scene into the tonemap's own resolve (0323) and the shirt
+
+The first scene-install run: THE WASH IS GONE (the user's report). Four remarks followed, all addressed:
+
+- THE HUD BURIED AND THE GRAIN: 0322 installed the scene at the FRONTAL copy, over the FXAA, the additive
+  lights AND the HUD (mp3_065's dump frame settled the real order: tonemap(f0) -> composite stencil rounds ->
+  the f0 RESOLVE -> FXAA(f3, ps 2276) -> the additive lights (f12, ps 3788, blend 0706) -> the HUD -> the copy).
+  0323 moves the install to BEFORE THAT F0 RESOLVE - into the 8-bit target the tonemap drew on, recorded at its
+  draw - so the game's own chain proceeds ON the scene: the FXAA smooths it (the grain), the lights and the HUD
+  land on top, the frontal copy presents the lot. The base is re-looked-up at the install, so gaps with no
+  tonemap draw (bullet time's entry second, streaming) keep installing from the last valid record - the white
+  frames there came from the same-frame check 0322 had.
+- THE SHIRT (level 3): mp3_omitir_vs listed "the two most re-patched jacket containers" - their loads are
+  SKIPPED BY DESIGN, which is an invisible costume piece wherever that variant family dresses the model. The
+  line is REMOVED from the toml: the 23 folds already carry the captured re-patches exactly, and anything
+  unfunded now runs captured (the address-step dump) and folds next rebuild. One load still matches nothing
+  (vs_ac27946eb1ea52b3, 78 words - no skeleton within tolerance in the whole library): its draws stay skipped;
+  if it is the shirt after all, its container has never been dumped and needs the shader_dump path looked at.
+- THE GHOST: a duplicated model beside the player is the wrong-layout draw class - the two new _de_ captures of
+  this run (vs_979154c708f4b826, vs_a5d2c23549854cf8) fold now; whatever ghost remains next run gets captured
+  the same way.
+
 ## The scene install (0322, 2026-11-05 night): present the healthy scene while the tonemap stays closed
 
 mp3_066 (afbf26c) settled two things. (1) The 0321 gates made the machinery follow the FOURTH tonemap - [exposicion]
