@@ -309,6 +309,7 @@ struct Biblioteca::Datos {
   std::mutex mutex;  // the maps below: the create hooks run on game threads, IM_LOAD on the ring thread
   std::unordered_map<uint32_t, const EntradaShader*> por_direccion;  // physical address of the microcode
   std::unordered_set<uint64_t> enmascaradas_;  // masked matches already logged
+  std::unordered_set<uint64_t> direccionadas_;  // address-step matches already dumped (re-patches: see step 1)
   const EntradaShader* entrada_cd94_ = nullptr;  // mp3_tonemapas_cd94
   // Step 0's table: the fingerprint of the microcode as each container holds it (the fetch words included) -> the
   // entries with it. The containers folded from shaders_unknown (mp3_parecidos) are the loads themselves, but the
@@ -625,6 +626,21 @@ const EntradaShader* Biblioteca::IdentificarEntrada(bool vertices, uint32_t fisi
       }
       if (!fetch_distintas && distintas <= std::max<size_t>(3, microcodigo.size() / 8)) {
         ++d.estadisticas.por_direccion;
+        // Reaching here already means the load's code is no entry's own - step 0 returns any code the library holds
+        // (and no two containers share a code with different declarations, checked offline) - so this is D3D's re-patch
+        // of the shader at that address running on the container's own declaration: the jacket-VS mechanism (the weights
+        // into the indices' register: the black spikes), silently, because nothing dumps what the address step takes.
+        // The 2026-11-02 run (v7) proved it live: every masked variant's code was already in the library by another
+        // path, the masked logger printed nothing, and the spikes were still on screen. Written as a _de_ variant of
+        // the entry it runs on, as the masked step does: tools/shaders.sh folds it, and the next session runs it under
+        // its own layout.
+        if (vertices && d.direccionadas_.insert(huella).second) {
+          if (d.direccionadas_.size() <= 64) {
+            REXLOG_WARN("[shaders] VS {:016X} taken by address as n{} ({}/{}): patched, not its own code", huella,
+                        it->second->numero, d.direccionadas_.size(), 64);
+          }
+          VolcarDesconocido(vertices, huella, microcodigo, it->second);
+        }
         if (vertices) d.aprendidas[huella] = it->second;
         d.validadas[fisica & 0x1FFFFFFF] = {it->second, {microcodigo.begin(), microcodigo.end()}};
         return it->second;
