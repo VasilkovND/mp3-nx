@@ -25,14 +25,15 @@ the SAME host pass and blacken it. Everything else is proven clean: exact shader
   state) right after the FIRST post draw of a post-begun pass; no close fallback; install = v4's verbatim,
   only-this-frame. Menus safe by construction (no 8-bit post draws there). Every failure logs its reason once/10 s.
 
-## THE NEXT STEP (0348 on the console, stamp + toml verified; the timeline-named run pending)
+## THE NEXT STEP (the HUD's library on the console, md5 verified; THE run)
 
-The colors' mechanism named by the timeline (0347b's white + its one normal bullet-time frame): every f0 plant
-since 0346 whites via its claim's bit-reinterpretation transfer; only 0345's after-FXAA plant ever gave normal
-colors. 0348 = bajo's gameplay + the menu's f0 branch + the scoped HUD skeleton + the far depth/mask. THE
-PREDICTION: colors as 0345, and the HUD's 407 draws executing for the first time (the skeleton step - check the
-log's "por esqueleto" lines). THE DEAL: a failure = the next session is the deep regression over the whole
-timeline, named divergence by named divergence, before any build.
+The HUD's layer finally has its own container (hand-built: the fetch positions derived from the library's
+opcode statistics, the export table from the tonemap quad's class, the translation clean) - the library
+(72,074,428, md5 55dcef6a) + the DKSH cache are on the console beside 0348's NRO/toml. EXPECTED: the colors of
+0345 (the user-confirmed presentation) + the HUD and the crosshair drawing for the first time (their 407 rect
+draws take their own container exactly - step 0). The menu and cutscenes per 0348. The spikes stay open (their
+369-word VS: the same container-construction method applies - three fetch instructions to derive - once the
+picture settles). The log check: "taken exact as n<N>" for hash 7555CC40..., and the test suite green.
 
 ## The spikes (second bug, currently VISIBLE again)
 
