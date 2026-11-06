@@ -25,17 +25,16 @@ the SAME host pass and blacken it. Everything else is proven clean: exact shader
   state) right after the FIRST post draw of a post-begun pass; no close fallback; install = v4's verbatim,
   only-this-frame. Menus safe by construction (no 8-bit post draws there). Every failure logs its reason once/10 s.
 
-## THE NEXT STEP (0326 on the console, stamp verified; the run pending)
+## THE NEXT STEP (0327 on the console, stamp verified; the run pending)
 
-0325's run confirmed the user's direction: the HUD's install point (the f0 resolve) brings the white and the
-ghosting - the DEFERRED LIGHT ADDS (additive, blend 0706) tuned for the tonemapped base blow out on the scene
-and accumulate. 0326 arms at the FXAA draw and skips additive draws into its image for the rest of the frame
-(a 10 s log line counts them); the HUD after them is not additive. Expected: no white, no ghosting, HUD on,
-FXAA-smoothed picture. The spikes of mp3_070: zero address takes, zero dumps - NOT the address step; the next
-suspect is the folds' elementos tables (D3D reorders fetch instructions, folds keep the base's indices) - an
-offline check of the folded containers' fetch-opcode positions against their elementos indices. c130 stayed
-(0.99, 0.01) through mp3_070's windows - ask the user to move the Settings slider during the next run to
-confirm it tracks.
+0326 read: the ghosting GONE (the light adds were the accumulation), the white MUCH WORSE - the once-a-frame
+latch fed only the FIRST of the f0 image's two resolves, and the tonemap's own (the one the FXAA reads) carried
+the composite's white. 0327 removes the latch (both installs idempotent); the lights stay skipped, the claim
+stays. Expected: the 0322-quality picture WITH the HUD and the FXAA smoothing. If white remains, the next step
+is a manual dump AT a white moment (ZL+ZR+Left) - it shows which stage (0654D000 -> FXAA -> the final copy)
+blows out, closing the question with data. The spikes: mp3_070 had zero address takes - the folds' elementos
+tables are the suspect (an offline check of the folded containers' fetch-opcode positions vs their elementos
+indices). c130 tracking: ask the user to move the Settings slider during a run.
 
 ## The spikes (second bug, currently VISIBLE again)
 
