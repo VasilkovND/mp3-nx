@@ -1,0 +1,17 @@
+diff --git a/src/x360/deko/texturas.cpp b/src/x360/deko/texturas.cpp
+index 5109ff07..531799c5 100644
+--- a/src/x360/deko/texturas.cpp
++++ b/src/x360/deko/texturas.cpp
+@@ -648,6 +648,12 @@ uint32_t RenderDk::PrepararTextura(const uint32_t* f, uint16_t tipo_shader, uint
+   if (!cubo && !volumen) {
+     const uint32_t ancho_fetch = (f[2] & 0x1FFF) + 1, alto_fetch = ((f[2] >> 13) & 0x1FFF) + 1;
+     if (const ImagenDk* resuelta = TexturaResuelta(base & 0x1FFFFFFF, ancho_fetch, alto_fetch)) {
++      // 0333: a resolved texture is relooked at on EVERY draw (the fetch cache in dibujos keys on the fetch words,
++      // which do not change frame to frame, while the texture's baked exp_previo does - whoever fetched it last
++      // baked his scale into the next resolve; a cache hit then skipped this whole exp block and the tonemap read
++      // the raw stored scene 4x hot: the washed frames of mp3_078, the arithmetic of its dumps). The scaled copies
++      // themselves stay cached (ResueltaEscalada), so this only re-runs the exp arithmetic.
++      valido_hasta = fotograma_ ? fotograma_ - 1 : 0;
+       // Read smaller than it is: its corner of the fetch's size (Dead Space 2's 320x180 blur levels live in
+       // 640-wide textures; sampled whole, the final image came out in stretched vertical strips).
+       if (!resuelta->profundidad && ancho_fetch <= resuelta->ancho && alto_fetch <= resuelta->alto &&

@@ -1,5 +1,19 @@
 # Max Payne 3 on rexglue-sdk-nx (deko3d): porting notes
 
+## 0333: the fetch cache's exp bypass - the washed frames' mechanism, closed
+
+The user's two dumps (read in the right order: the WASHED frame is the one where the tonemap DREW) pinned the
+arithmetic: the tonemap's effective input was exactly 4x the scene (0.188 -> Reinhard(0.75xE) = 0.47, the dump's
+mean to the digit). The mechanism: the per-draw fetch cache keys on the fetch WORDS alone - the tonemap's words
+never change - while the texture's baked exp_previo flips with whoever fetched last (the luminance chain reads
+-11, the tonemap -13; each resolve bakes the last reader's scale). On a cache hit the whole exp block of
+PrepararTextura is skipped and the tonemap reads the raw stored scene with someone else's baking - 4x hot, only
+in the frames whose reader order flipped. THE FIX: a resolved texture is relooked at on every draw
+(valido_hasta = fotograma-1; the scaled copies stay cached in ResueltaEscalada, so only the exp arithmetic
+re-runs). With the far-plane depth already making the tonemap DRAW (0332) and its input now correctly scaled,
+the tonemap's output should be the real picture - and then the frontal crutch can come off and the game's own
+chain (the HUD included) presents.
+
 ## 0332: the far plane for the tonemaps' depth - the depth-zero hypothesis on trial
 
 0331's probes named the single anomaly: at the tonemap's draw every input is sane (the scene 0.08-0.20, the
