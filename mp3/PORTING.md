@@ -1123,7 +1123,17 @@ The outcome branch was "the content itself" - and the run settled everything aro
   "[shaders] VS <hash> taken by address as n<N> ... patched, not its own code" line. One run captures the live
   re-patches; fold + rebuild + upload the run after. The 2 loads matching nothing at all
   (vs_82a73ba3cae509c4, vs_d2052d39bbb3b843 - skipped draws) stay: raw microcode without a base container
-  cannot be folded.## 0339: the crutch stands down when the chain is alive
+  cannot be folded.## 0340: the menu's background through the f0 plant
+
+0339 gave the menu its labels back and the wash with them (its tonemap is dead, its text draws into base 000's
+own buffer and composites over - mp3_084's dump frame mapped it: tonemap -> the f0 resolves (the 960 -> 
+0654D000 the last) -> the menu's FXAA-less post; the text into 000/f0 at draws 169+). The f0 plant (0325's
+code, dormant) now fires in every frame the under-interface install did not arm - the menu: the scene lands at
+the tonemap target's LAST resolve, after every f0 draw (the composite's damage overwritten), the menu's post
+proceeds on it, and the labels composite over their own chain. The gameplay keeps the under-interface path; the
+gaps keep the crutch (0339). The spikes the user saw in the dump are the next thread after the picture settles.
+
+## 0339: the crutch stands down when the chain is alive
 
 mp3_082's menu session held the proof: ZERO fxaa lines (the menu's chain has no FXAA draw) while the menu's
 tonemaps draw every frame - so the under-interface install never armed in menus, and 0338's demotion alone let

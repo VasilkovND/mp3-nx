@@ -1,0 +1,21 @@
+diff --git a/src/x360/deko/destinos.cpp b/src/x360/deko/destinos.cpp
+index 3eb4e450..5408f0bd 100644
+--- a/src/x360/deko/destinos.cpp
++++ b/src/x360/deko/destinos.cpp
+@@ -1626,7 +1626,15 @@ bool RenderDk::Copiar(const RegistrosCopia& reg) {
+     // claimed as its own. The game's chain then proceeds ON the scene: the FXAA smooths it, the additive light
+     // adds are skipped (dibujos.cpp, the arming that was dead code in every earlier attempt), the HUD is not
+     // additive and draws on top, the frontal copy presents the lot.
+-    if (REXCVAR_GET(x360_edram_instalar_en_resolve) && destino_render == edram_escena_destino_ && edram_escena_base_ &&
++    // 0340: this plant also carries the MENU (and every frame the under-interface install did not arm - the
++    // menu has no FXAA): its tonemap is dead, its background presents the wash, and its text draws into base
++    // 000's own buffer and composites over - so planting the scene at the tonemap target's LAST resolve (this
++    // runs after every f0 draw, the composite's included - its damage is overwritten) gives the menu its
++    // background back while its labels keep their own chain (mp3_084's dump frame: the f0 960 resolve ->
++    // 0654D000 is the last writer before the menu's post reads it).
++    if ((REXCVAR_GET(x360_edram_instalar_en_resolve) ||
++         (REXCVAR_GET(x360_edram_escena_bajo_interfaz) && edram_escena_bajo_fotograma_ != fotograma_)) &&
++        destino_render == edram_escena_destino_ && edram_escena_base_ &&
+         !destino_render->profundidad && destino_render->edram_formato == 0) {
+       if (const ImagenDk* escena = TexturaResuelta(edram_escena_base_, edram_escena_ancho_, edram_escena_alto_);
+           escena && escena->ancho == destino_render->ancho && escena->alto <= destino_render->alto) {
