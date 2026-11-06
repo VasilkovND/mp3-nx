@@ -27,9 +27,9 @@ the SAME host pass and blacken it. Everything else is proven clean: exact shader
 
 ## SESSION CLOSED (2026-11-06)
 
-The state and the plan are in `mp3/BACKLOG.md` and PORTING's "THE FINAL STATE". The revert build (NRO
-560799aff3 + dslib 55dcef6a + the cache) is ready locally, verified, and waits for the FTP to come back —
-it restores exactly the user-confirmed working picture. Everything is committed.
+The state and the plan are in `mp3/BACKLOG.md` and PORTING's "THE FINAL STATE". The revert build is ON THE
+CONSOLE (NRO 560799aff3 + dslib 55dcef6a + cache 912b01fb, all uploaded and verified) — the user-confirmed
+working picture. Everything is committed.
 
 ## The spikes (second bug, currently VISIBLE again)
 
