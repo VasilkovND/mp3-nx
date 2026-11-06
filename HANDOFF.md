@@ -25,13 +25,14 @@ the SAME host pass and blacken it. Everything else is proven clean: exact shader
   state) right after the FIRST post draw of a post-begun pass; no close fallback; install = v4's verbatim,
   only-this-frame. Menus safe by construction (no 8-bit post draws there). Every failure logs its reason once/10 s.
 
-## THE NEXT STEP (0342 on the console, stamp + toml verified; the decisive mask run pending)
+## THE NEXT STEP (0343 on the console: NRO e052353581 + the folded library md5 d59851c6 + the NO-CRUTCH toml, all verified)
 
-The convergence branches (the crutch for FXAA frames, the f0 plant for the menu, bajo retired) + [verts-mascara]
-(the effects quad's colour bytes, once per 10 s) + the regression suite gating every log. The run: menu a
-minute, gameplay a minute, then the log through tools/check_log.py and the mask bytes decide - sane bytes + a
-wrong mask = the fold's colour attribute (the spikes' class, one fix for both); wrong bytes = the game's state,
-a different door. Only after the suite passes and the picture holds is any build called stable.
+The first crutch-free configuration: the game's own chain end to end, the tonemap with every known input killer
+closed (the x4 scale, the zero depth, the flipped flash mask - the last two by the sanitation pattern), the HUD
+by the game's hand, the spikes' 19 variants folded in the library. THE RUN: if the picture is normal - the
+saga ends, PORTING gets its closing chapter. If not: the log through tools/check_log.py + the input probes name
+the next input; the crutches return by one toml line (instalar_escena = true). The mask-flip's own root (why
+the computed mask flips between the quad's draw and the fetch) stays the deep thread either way.
 
 ## The spikes (second bug, currently VISIBLE again)
 
