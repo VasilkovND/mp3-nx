@@ -1,0 +1,14 @@
+diff --git a/src/x360/deko/destinos.cpp b/src/x360/deko/destinos.cpp
+index fb885554..84c4aa4f 100644
+--- a/src/x360/deko/destinos.cpp
++++ b/src/x360/deko/destinos.cpp
+@@ -1115,6 +1115,9 @@ bool FormatoDestinoColorDk(uint32_t formato_destino, DkImageFormat& host) {
+   switch (formato_destino) {
+     case 0:   // k_8_8_8_8
+     case 1:   // k_8_8_8_8_GAMMA
++    case 8:   // k_8_8_8_8_AS_16_16_16_16 (the alias of 8-bit, as 10 is of 2_10_10_10 - the UI composite rects
++              // bind it now that their VS is identified; mp3_094: 3900+ rejections "causa 108" and a black
++              // screen - the format was simply absent from the table)
+       host = DkImageFormat_RGBA8_Unorm;
+       return true;
+     case 2:   // k_2_10_10_10
