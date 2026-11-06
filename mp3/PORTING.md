@@ -1123,4 +1123,12 @@ The outcome branch was "the content itself" - and the run settled everything aro
   "[shaders] VS <hash> taken by address as n<N> ... patched, not its own code" line. One run captures the live
   re-patches; fold + rebuild + upload the run after. The 2 loads matching nothing at all
   (vs_82a73ba3cae509c4, vs_d2052d39bbb3b843 - skipped draws) stay: raw microcode without a base container
-  cannot be folded.
+  cannot be folded.## 0336: the menu's base untouched
+
+The timeline (the user's "also no menu" arrived with 0333, before 0335) names it: base 000 is the menu and
+cutscene chains' home, and two of the gameplay fixes bled into it - 0332's far-depth substitution woke the
+menu's own tonemap with a wrong depth (its look broke), and 0335's under-interface install would bury a menu UI
+that draws before its FXAA (the menu's order differs from the gameplay's). Both are now scoped to bases other
+than 000: the menu keeps its entire own chain, exactly as in the builds where it was fine.
+
+

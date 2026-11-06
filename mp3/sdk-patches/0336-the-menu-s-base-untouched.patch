@@ -1,0 +1,22 @@
+diff --git a/src/x360/deko/dibujos.cpp b/src/x360/deko/dibujos.cpp
+index 43c27984..9948eebc 100644
+--- a/src/x360/deko/dibujos.cpp
++++ b/src/x360/deko/dibujos.cpp
+@@ -1736,7 +1736,8 @@ bool RenderDk::Dibujar(const PeticionDibujo& p) {
+       // everything in focus and the tonemap draws. The tonemaps only - the composite's own depth read is not
+       // touched.
+       bool lejos = false;
+-      if (REXCVAR_GET(x360_tonemap_profundidad_lejos) && sampler.registro < 16) {
++      if (REXCVAR_GET(x360_tonemap_profundidad_lejos) && sampler.registro < 16 && imagenes_pase_[0] &&
++          imagenes_pase_[0]->edram_base != 0) {  // 0336: base 000 is the menu/cutscene home - their chain untouched
+         static const uint64_t kTonemapasLejos[4] = {UINT64_C(0x6671591252A5BCE2), UINT64_C(0xFE226603F40E2533),
+                                                     UINT64_C(0xCD9469857A0C532A), UINT64_C(0x009B4466C815681B)};
+         const uint32_t fmt_f = fetch[1] & 0x3F;
+@@ -2983,6 +2984,7 @@ bool RenderDk::Dibujar(const PeticionDibujo& p) {
+       // The HUD and the light adds draw AFTER the FXAA, in this same pass: they land ON the scene, inside the
+       // game's own chain, and the frontal crutch stays as the fallback for frames without an FXAA draw.
+       if (REXCVAR_GET(x360_edram_escena_bajo_interfaz) && edram_escena_base_ && edram_escena_destino_ &&
++          edram_escena_destino_->edram_base != 0 &&  // 0336: never on the menu's base
+           edram_escena_f3_->edram_base == edram_escena_destino_->edram_base &&
+           edram_escena_f3_->formato == DkImageFormat_RGBA16_Float &&
+           edram_escena_bajo_fotograma_ != fotograma_) {
