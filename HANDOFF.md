@@ -25,17 +25,17 @@ the SAME host pass and blacken it. Everything else is proven clean: exact shader
   state) right after the FIRST post draw of a post-begun pass; no close fallback; install = v4's verbatim,
   only-this-frame. Menus safe by construction (no 8-bit post draws there). Every failure logs its reason once/10 s.
 
-## THE NEXT STEP (0325 on the console, stamp verified; the level-1 run pending)
+## THE NEXT STEP (0326 on the console, stamp verified; the run pending)
 
-0325 = the f0-resolve install WITH the fixes (the trace proved the HUD draws between the FXAA and the lights, so
-that resolve is the only replacement point where it survives; 0323's white+ghosting was the unclaimed tiles, not
-the lights - EdramReclamar now claims the written rows and a latch makes it once a frame) + the game's own
-brightness (BrightnessSetting c130 = colour*x + y, recorded at the tonemap draw, applied in the output ramp -
-the Settings slider works). The user runs level 1 to check: HUD, brightness, grain, white frames. The
-[exposicion] lines carry c130 - a run shows whether the slider tracks it. If the white/ghosting returns, the
-latch/claim theory was wrong and the lights pre-scale (or the frontal revert) is next. Still queued: the shirt
-(the omit stays until its variants are all folded), the ghost's verdict, and the deep question - no tonemap draw
-has ever written 198/f0.
+0325's run confirmed the user's direction: the HUD's install point (the f0 resolve) brings the white and the
+ghosting - the DEFERRED LIGHT ADDS (additive, blend 0706) tuned for the tonemapped base blow out on the scene
+and accumulate. 0326 arms at the FXAA draw and skips additive draws into its image for the rest of the frame
+(a 10 s log line counts them); the HUD after them is not additive. Expected: no white, no ghosting, HUD on,
+FXAA-smoothed picture. The spikes of mp3_070: zero address takes, zero dumps - NOT the address step; the next
+suspect is the folds' elementos tables (D3D reorders fetch instructions, folds keep the base's indices) - an
+offline check of the folded containers' fetch-opcode positions against their elementos indices. c130 stayed
+(0.99, 0.01) through mp3_070's windows - ask the user to move the Settings slider during the next run to
+confirm it tracks.
 
 ## The spikes (second bug, currently VISIBLE again)
 
