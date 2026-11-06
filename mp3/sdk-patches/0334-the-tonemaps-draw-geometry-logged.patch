@@ -1,0 +1,23 @@
+diff --git a/src/x360/deko/dibujos.cpp b/src/x360/deko/dibujos.cpp
+index bebd863f..41928765 100644
+--- a/src/x360/deko/dibujos.cpp
++++ b/src/x360/deko/dibujos.cpp
+@@ -1617,6 +1617,18 @@ bool RenderDk::Dibujar(const PeticionDibujo& p) {
+           linea += fmt::format(" {:02X}", origenes[b].datos[i]);
+         }
+       }
++      // 0334: the draw's geometry state - the scissor, the viewport and the window offset, never logged, and the
++      // dead frames have everything else clean (inputs probed sane, the quad folded, the depth far-substituted):
++      // if the scissor or the viewport degenerate in exactly the frames the tonemap dies, that is the killer.
++      const uint32_t tl_f = r[gr::XE_GPU_REG_PA_SC_WINDOW_SCISSOR_TL];
++      const uint32_t br_f = r[gr::XE_GPU_REG_PA_SC_WINDOW_SCISSOR_BR];
++      linea += fmt::format(" || tijera ({},{})-({},{}) ventana {:08X} vpt {} {} {} {}",
++                           tl_f & 0x3FFF, (tl_f >> 16) & 0x3FFF, br_f & 0x3FFF, (br_f >> 16) & 0x3FFF,
++                           r[gr::XE_GPU_REG_PA_SC_WINDOW_OFFSET],
++                           r[gr::XE_GPU_REG_PA_CL_VPORT_XSCALE] & 0xFFFFFFFFu,
++                           r[gr::XE_GPU_REG_PA_CL_VPORT_YSCALE] & 0xFFFFFFFFu,
++                           r[gr::XE_GPU_REG_PA_CL_VPORT_XOFFSET] & 0xFFFFFFFFu,
++                           r[gr::XE_GPU_REG_PA_CL_VPORT_YOFFSET] & 0xFFFFFFFFu);
+       REXLOG_INFO("{}", linea);
+     }
+   }

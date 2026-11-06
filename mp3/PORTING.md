@@ -1,5 +1,14 @@
 # Max Payne 3 on rexglue-sdk-nx (deko3d): porting notes
 
+## 0334: the tonemap's draw geometry logged
+
+The user's observation closed the loop: the white moments CARRY THE HUD (the game's own chain presenting) and
+the stable colors are the crutch's (covering it) - the HUD is alive, only the tonemap's output color is left.
+But the fresh dump of a NORMAL frame read 0654D000 = 0.000 again: the tonemap draws only in transition frames,
+dead in normal ones, with every input probed sane and the depth substituted. The never-logged geometry state
+(the scissor, the viewport, the window offset) joins the [verts-tonemap] line: if it degenerates in exactly the
+dead frames, that is the rasterization killer named.
+
 ## 0333: the fetch cache's exp bypass - the washed frames' mechanism, closed
 
 The user's two dumps (read in the right order: the WASHED frame is the one where the tonemap DREW) pinned the
