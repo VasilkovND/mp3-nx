@@ -25,14 +25,15 @@ the SAME host pass and blacken it. Everything else is proven clean: exact shader
   state) right after the FIRST post draw of a post-begun pass; no close fallback; install = v4's verbatim,
   only-this-frame. Menus safe by construction (no 8-bit post draws there). Every failure logs its reason once/10 s.
 
-## THE NEXT STEP (0347 on the console, stamp verified; the skeleton run pending)
+## THE NEXT STEP (0347b on the console, stamp verified; THE run - and the deal)
 
-The HUD's real killer was never the presentation - its draws were SKIPPED WHOLE (407 UI rect draws, the 30-word
-VS matching nothing; the costume's 369-word one beside it - the spikes' class). The close-skeleton step runs
-matched-nothing VSes on family siblings (fetch masked-equal at the same positions, length within 3
-instructions); the light skip rides the install cvar again (089 read zero after bajo left the toml). Expected:
-the HUD and the crosshair DRAW for the first time; the costume either fixes (the right skeleton) or changes its
-artifact (naming the fold for the next library rebuild). The colors/cutscenes ride 0346's f0 plant.
+The full-timeline table (PORTING's 0347b section) assembled the build from the PROVEN halves only: the f0 plant
+(colors right, 0346), the live light skip (089's re-gate bug fixed), the HUD's 407 rect draws finally executing
+(the skeleton step scoped to <= 64 words - the costume's 369 stays skipped: invisible, not poisonous). THE
+PREDICTION: colors as b168903, both HUD layers (the one from the white seconds + the never-executed one), the
+cutscenes stable, the pause overlay. THE DEAL WITH THE USER: if this run fails, the next session is a DEEP
+REGRESSION - tools/check_log.py over every log plus the timeline table, every divergence named before any
+build. The test suite gates this run's log first thing.
 
 ## The spikes (second bug, currently VISIBLE again)
 
