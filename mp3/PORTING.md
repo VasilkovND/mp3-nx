@@ -1123,7 +1123,21 @@ The outcome branch was "the content itself" - and the run settled everything aro
   "[shaders] VS <hash> taken by address as n<N> ... patched, not its own code" line. One run captures the live
   re-patches; fold + rebuild + upload the run after. The 2 loads matching nothing at all
   (vs_82a73ba3cae509c4, vs_d2052d39bbb3b843 - skipped draws) stay: raw microcode without a base container
-  cannot be folded.## 0348: the colors' mechanism named - the f0 plant's claim is the whitener
+  cannot be folded.## The HUD's own container - hand-built from the microcode up
+
+The HUD's layer was NEVER drawn in any run: its 407 rect draws skipped whole - the 30-word VS matches no
+container, no skeleton (0 candidates by position too), and no fold host exists (no same-length base). So the
+container was BUILT: the microcode's fetch instructions derived from the library's own opcode statistics
+(the stable-bits mask 0x01ee0e1f over 11,208 known fetches -> exactly instructions 3, 4, 5: POSITION, TEXCOORD,
+COLOR), the elementos written (3/0, 4/5, 5/9), the interpolator list and header[2]/[5]/[8] transplanted from the
+tonemap quad's container (the same export shape class), the shell grown 40 bytes for the wider tables. The
+signature word (0x102a1101 - the format magic the builder checks) and every step verified in place; the
+translation now runs CLEAN (the two prior rejections named the missing pieces: the third elemento, then the
+interpolator list). With the library rebuilt the HUD's load takes its OWN container exactly - the step-0
+fast path - and the layer draws for the first time in the port's history. The 0348 presentation (the timeline-
+validated colors) carries it.
+
+## 0348: the colors' mechanism named - the f0 plant's claim is the whitener
 
 0347b's run (white, no HUD, ONE normal frame in bullet time) closed the colors question by timeline alone:
 colors were NORMAL only with the AFTER-FXAA plant of 0345, and WHITE with every f0-resolve plant since 0346 -
