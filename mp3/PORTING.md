@@ -1,5 +1,17 @@
 # Max Payne 3 on rexglue-sdk-nx (deko3d): porting notes
 
+## 0329 read (mp3_075): the resolve family CLOSED with proof - the tonemap is the only front left
+
+The decisive signatures came back: the install 2.0 (both f0 resolves fed), the light skip ALIVE (7619 skips -
+the dead-code bug fixed and proven), and the picture still white with no visible HUD. With the lights excluded
+BY COUNTER, the white in that structure comes from the chain itself (the composite's rounds between the two
+resolves, the FXAA's own path, or the state the HUD's pass meets) - and after four instrumented variants the
+family is closed: no more console runs on it. The toml line is removed - the console is the best build
+(b168903196 behavior) again. THE ONE BLOCKER, unchanged since run 19 and now carrying the HUD, the grain, the
+white and the lights' tuning on its back: NO tonemap draw (6671/FE22/CD94/009B) has ever written 198/f0 in
+normal gameplay, while every gate around the draw is proven clean. The next effort starts offline: the PS
+declares TEXCOORD0-12 vs the folded VS's 0-10 exports, and the draw's interpolants have never been probed.
+
 ## 0329: the resolve install behind a cvar, with the LIVE lights skip
 
 The user wants the interface on the stable picture. The one honest shot left: every failure of the resolve-install
