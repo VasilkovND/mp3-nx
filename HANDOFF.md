@@ -25,18 +25,17 @@ the SAME host pass and blacken it. Everything else is proven clean: exact shader
   state) right after the FIRST post draw of a post-begun pass; no close fallback; install = v4's verbatim,
   only-this-frame. Menus safe by construction (no 8-bit post draws there). Every failure logs its reason once/10 s.
 
-## THE NEXT STEP (0324 on the console, verified: NRO 0b41882464 + the toml with the omit back)
+## THE NEXT STEP (0325 on the console, stamp verified; the level-1 run pending)
 
-0323's f0-resolve install was read out of mp3_068 and reverted: it fired twice a frame (the f0 image resolves
-twice), the additive lights overbrightened the raw scene they met through it (white again), and the stale tile
-bookkeeping ghosted. 0322's frontal install is back (the state the user confirmed: THE WASH IS GONE, the picture
-right). The toml carries mp3_omitir_vs again (the spikes; the shirt stays invisible until its variants are
-folded - the address dump catches them every run, fold and re-enable without the omit when they are all in).
-The library on the console is current (the ghost's two variants fold in mp3_068: no address takes). The deep
-open question, now the only thing between this state and the finished look (HUD-over-scene, grain, the shirt):
-NO tonemap draw (6671/FE22/CD94/009B) has ever written 198/f0 in normal gameplay - every gate around it is
-proven clean; the next diagnostic is the draw itself (a probe inside its rasterization, its interpolants at the
-draw, or the VS-PS linkage: the PS declares TEXCOORD0-12, the folded VS exports 0-10).
+0325 = the f0-resolve install WITH the fixes (the trace proved the HUD draws between the FXAA and the lights, so
+that resolve is the only replacement point where it survives; 0323's white+ghosting was the unclaimed tiles, not
+the lights - EdramReclamar now claims the written rows and a latch makes it once a frame) + the game's own
+brightness (BrightnessSetting c130 = colour*x + y, recorded at the tonemap draw, applied in the output ramp -
+the Settings slider works). The user runs level 1 to check: HUD, brightness, grain, white frames. The
+[exposicion] lines carry c130 - a run shows whether the slider tracks it. If the white/ghosting returns, the
+latch/claim theory was wrong and the lights pre-scale (or the frontal revert) is next. Still queued: the shirt
+(the omit stays until its variants are all folded), the ghost's verdict, and the deep question - no tonemap draw
+has ever written 198/f0.
 
 ## The spikes (second bug, currently VISIBLE again)
 
