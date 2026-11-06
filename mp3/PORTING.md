@@ -1,5 +1,22 @@
 # Max Payne 3 on rexglue-sdk-nx (deko3d): porting notes
 
+## 0325: the f0 install again, with the claim - and the game's brightness
+
+mp3_065's trace settled the last structural fact: the HUD draws BETWEEN the FXAA and the lights (after draw
+1950 the very next line is the final resolve and the frame end) - so the ONLY place the picture can be replaced
+while the HUD survives is the f0 resolve (0323's spot), and 0323's white+ghosting was NOT the lights meeting the
+raw scene (the scene is already LDR - mean 0.19, and the tonemap is nearly identity there) but the missing tile
+claim: Copiar3D wrote f0 without claiming its rows, the next frame's EdramPreparar transferred an older owner
+over them, the additive lights accumulated frame over frame - white WITH trails. 0325 restores the f0-resolve
+install with the two fixes: EdramReclamar claims the written rows as f0's own (as EdramLlevar8Bits marked its
+carried rows) and a once-a-frame latch (the f0 image resolves twice). The HUD rides on top by construction; the
+FXAA smooths the scene (the grain).
+
+THE GAME'S BRIGHTNESS (the Settings slider): the tonemap's own BrightnessSetting c130 is colour * x + y (the
+logged default (0.99, 0.01), a lerp towards white) - dead with the tonemap. The tonemap draw now records c130
+and RecalcularRampa applies it right after the game's ramp, before the menu's post-processing: the slider works
+again (its value is visible in every [exposicion] line, so a run confirms whether it tracks).
+
 ## 0324: back to the frontal install, the omit back
 
 mp3_068 (957adcccb9) read: the f0-resolve install FIRES (the counter 2.0 - the f0 image resolves twice a frame,
