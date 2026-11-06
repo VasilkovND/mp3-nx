@@ -25,14 +25,13 @@ the SAME host pass and blacken it. Everything else is proven clean: exact shader
   state) right after the FIRST post draw of a post-begun pass; no close fallback; install = v4's verbatim,
   only-this-frame. Menus safe by construction (no 8-bit post draws there). Every failure logs its reason once/10 s.
 
-## THE NEXT STEP (the composite library on the console, md5 verified; the two-layer run pending)
+## THE NEXT STEP (0349 on the console, stamp verified; the format-8 run pending)
 
-Both hand-built containers in the library (the HUD's 7555 - proven taken, its draws run; the composite's
-6d38-class - the 547 UI rects that were the visible killer). EXPECTED: the correct colors (unchanged) + the
-interface's BOTH layers drawing for the first time. The per-session patch may vary the load hash - if the exact
-step misses, the masked/skeleton steps land on the true sibling (the same declaration, the correct layout). The
-log check: no more "skipped without VS ... 6D38" lines, the 7555 take, the test suite green. The spikes remain
-the next thread (their 369-word VS - the same container method).
+The composite UI rects - identified since the last library - bind k_8_8_8_8_AS_16_16_16_16 (format 8), absent
+from the target table: 3900+ rejections (causa 108) and the black screen of mp3_094. Format 8 now maps to
+RGBA8_Unorm (as format 10's alias maps to its base). EXPECTED: the colors unchanged, the interface's both layers
+drawing - the composite rects' target now exists. The log check: causa 108 gone, the 6D38 skip lines gone, the
+test suite green. The spikes remain the last thread (the 369-word VS, the same container method).
 
 ## The spikes (second bug, currently VISIBLE again)
 
