@@ -1123,7 +1123,22 @@ The outcome branch was "the content itself" - and the run settled everything aro
   "[shaders] VS <hash> taken by address as n<N> ... patched, not its own code" line. One run captures the live
   re-patches; fold + rebuild + upload the run after. The 2 loads matching nothing at all
   (vs_82a73ba3cae509c4, vs_d2052d39bbb3b843 - skipped draws) stay: raw microcode without a base container
-  cannot be folded.## 0341: convergence - the crutch carries the gameplay, the f0 plant the menu
+  cannot be folded.## 0342 + the test suite: the effects-mask quad - the saga's root model closed to one attribute
+
+THE ROOT MODEL, assembled from the whole archive: the tonemap was never dead - it computes the FULL-FLASH colour
+(near black) in the frames the EFFECTS MASK reads G=00, and the picture in the frames G=FF (both dumped, mp3_078).
+The mask (base 330 -> 07367000) is ONE quad over a zero clear whose pixel shader is a COLOUR PASS-THROUGH
+(oC0 = the vertex colour, mp3_084's draw 951): the game encodes its effect state in VERTEX DATA, and the flash
+channel's bytes at the draw now decide everything - sane bytes with a wrong mask name the reading path (the
+fold's colour attribute - the spikes' class); wrong bytes name the game's own state. 0342 logs the quad's
+streams once per 10 s ([verts-mascara]).
+THE TESTS (mp3/tools/check_log.py): the regression suite over console logs, one check per failure that SHIPPED -
+run over the whole archive it discriminates exactly: mp3_068/072/075 (the multi-plant collapses the user
+reported) FAIL, the good eras PASS. Every future log is gated by it before any build is called stable.
+0341's convergence (unuploaded) carries the branches: the crutch for the FXAA frames (the validated gameplay
+picture), the f0 plant for the menu, bajo retired from gameplay.
+
+## 0341: convergence - the crutch carries the gameplay, the f0 plant the menu
 
 mp3_085 read 2.x installs a frame in gameplay (the f0 plants at every resolve) on top of the never-validated
 under-interface plant - their shared-tile claims broke the EDRAM cycle whole. The convergence retires bajo from

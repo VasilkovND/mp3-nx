@@ -1,0 +1,36 @@
+diff --git a/src/x360/deko/dibujos.cpp b/src/x360/deko/dibujos.cpp
+index 0efb1925..013e30f9 100644
+--- a/src/x360/deko/dibujos.cpp
++++ b/src/x360/deko/dibujos.cpp
+@@ -1633,6 +1633,31 @@ bool RenderDk::Dibujar(const PeticionDibujo& p) {
+       REXLOG_INFO("{}", linea);
+     }
+   }
++  // 0342: the EFFECTS MASK quad's vertex colour, once per 10 s. The mask (base 330 -> 07367000) is ONE quad
++  // (prim 6, a colour pass-through pixel shader: oC0 = the vertex colour) over a zero clear - the game encodes
++  // its effect state (the flash channel G among them) in VERTEX DATA, and the tonemap reads the mask first:
++  // G=00 (full flash) is the near-black "dead" output of the whole saga, G=FF the frames it drew the picture.
++  // The colour bytes at the draw decide: sane bytes + a wrong mask = the reading path (the fold's colour
++  // attribute); wrong bytes = the game's own state.
++  if (p.vs && entrada && !entrada->enlaces.empty() && ((r[gr::XE_GPU_REG_RB_COLOR_INFO] & 0xFFF) == 0x330) &&
++      ((r[gr::XE_GPU_REG_RB_COLOR_INFO] >> 16) & 0xF) == 0) {
++    static uint64_t mascara_siguiente_ = 0;
++    if (deko::AhoraNs() >= mascara_siguiente_) {
++      mascara_siguiente_ = deko::AhoraNs() + uint64_t(10) * 1000000000ull;
++      std::string linea_m = fmt::format("[verts-mascara] VS n{} PS n{}:", p.vs->numero, p.ps ? p.ps->numero : -1);
++      for (size_t b = 0; b < entrada->enlaces.size(); ++b) {
++        const EntradaVerticesDk::Enlace& enlace = entrada->enlaces[b];
++        const uint32_t* bloque = r + kRegFetch + (enlace.ranura / 3) * 6;
++        const uint32_t* d = bloque + (enlace.ranura % 3) * 2;
++        linea_m += fmt::format(" | slot {}.{} zancada {} bytes {} d {:08X} {:08X} huesped", enlace.ranura / 3,
++                               enlace.ranura % 3, enlace.zancada, origenes[b].bytes, d[0], d[1]);
++        for (uint32_t i = 0; i < 48 && i < origenes[b].bytes; ++i) {
++          linea_m += fmt::format(" {:02X}", origenes[b].datos[i]);
++        }
++      }
++      REXLOG_INFO("{}", linea_m);
++    }
++  }
+ 
+   cortar_etapa(0);
+   // --- Textures and samplers (they may move on to the next work slot: before anything this draw records)
