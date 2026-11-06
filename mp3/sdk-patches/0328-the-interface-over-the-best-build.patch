@@ -1,0 +1,229 @@
+diff --git a/include/rex/x360/deko/render.h b/include/rex/x360/deko/render.h
+index c782c18b..d3cf267e 100644
+--- a/include/rex/x360/deko/render.h
++++ b/include/rex/x360/deko/render.h
+@@ -530,28 +530,24 @@ class RenderDk final : public DestinosNativos {
+   uint64_t edram_posteado_fotograma_ = 0;  // the frame the snapshot was taken in: the install takes only this frame's
+   uint64_t edram_posteado_versiones_ = 0;  // snapshots taken (0320 v4)
+   uint64_t edram_posteado_siguiente_ = 0;  // the snapshot's own log and probes: once per 10 s (0320 v4)
+-  // 0322/0323: the scene resolve the tonemap reads (its fmt-26 sampler of screen width, recorded at the
+-  // tonemap draw together with the 8-bit target it drew into), INSTALLED INTO THAT TARGET right before its
+-  // resolve - so the game's own chain proceeds on the scene: FXAA smooths it, the additive lights and the HUD
+-  // land on top, the frontal copy presents the lot. The port's tonemap draws have never written f0 (every probe
+-  // since run 19), and the resolve's raw values are already 0..1 (0309's baked scale; the 2026-11-05 dumps: max
+-  // 1.01-2.2, mean 0.19-0.28). The base is re-looked-up at the install (a stale base fails the lookup and the
+-  // frame falls back to the game's own chain), so the record survives gaps with no tonemap draw (bullet time's
+-  // entry, streaming). No mid-pass footprint: the copy runs at the resolve, between passes.
+-  ImagenDk* edram_escena_destino_ = nullptr;  // the 8-bit image the tonemap drew into (its resolve installs)
+-  uint32_t edram_escena_base_ = 0;            // the scene resolve's guest base
++  // 0322: the scene resolve the tonemap reads (its fmt-26 sampler of screen width, remembered at the tonemap draw),
++  // presented directly at the frontal copy when x360_edram_instalar_escena is on. The port's tonemap draws have
++  // never written f0 (every probe since run 19; the folded quad and the fourth shader changed nothing), and the
++  // resolve's raw values are already 0..1 (0309's baked exp_previsto; the 2026-11-05 dumps: max 1.01-2.2, mean
++  // 0.19-0.28), so the frame presents the healthy lit scene - un-tonemapped, flat highlights, but real. Registers
++  // only at the draw; the copy runs at the frontal copy, between passes: no mid-pass footprint (0321's after-draw
++  // snapshot ended the menu's and bullet time's own post passes mid-frame and their following draws never ran -
++  // the black menu and the broken bullet time).
++  const ImagenDk* edram_escena_ = nullptr;
+   uint32_t edram_escena_ancho_ = 0, edram_escena_alto_ = 0;
+-  uint64_t edram_escena_instalada_fotograma_ = 0;  // the f0 image resolves twice a frame: install once
+-  // 0325: the game's own brightness setting (the tonemap's BrightnessSetting c130 = colour * x + y, dead with
+-  // the tonemap itself) applied in the output ramp - the Settings slider works again.
++  uint64_t edram_escena_fotograma_ = 0;
++  // 0328: what f3 holds when the scene is installed (the FXAA's output, the lights, THE HUD) is snapshotted
++  // by the copy engine first, and the presenter draws it over the installed scene by its alpha - the picture of
++  // the best build (b168903196) with the interface back on top of it. x360_edram_interfaz turns the overlay off.
++  ImagenDk edram_ui_{};
++  // 0325: the game's own brightness (the tonemap's BrightnessSetting c130 = colour * x + y, dead with the
++  // tonemap itself) applied in the output ramp - the Settings slider works.
+   float edram_brillo_juego_[2] = {1.0f, 0.0f};
+-  // 0326: the FXAA's own draw records the f3/f12 image; the ADDITIVE draws into it for the rest of the frame
+-  // (the deferred light adds - tuned for the tonemapped base the game no longer has under them) are skipped
+-  // while the scene is installed: on the scene they blow out (the white) and accumulate (the ghosting). The HUD
+-  // that follows them is not additive and draws.
+-  ImagenDk* edram_escena_f3_ = nullptr;
+-  uint64_t edram_escena_sin_luces_fotograma_ = 0;
+-  uint64_t edram_luces_saltadas_ = 0, edram_luces_aviso_siguiente_ = 0;
+   std::set<uint64_t> edram_avisos_;
+   uint32_t edram_diag_encuadres_ = 0;
+   // The last depth resolve from each EDRAM base and pitch: the texture's address (CopiarProfundidad), for
+diff --git a/src/x360/deko/destinos.cpp b/src/x360/deko/destinos.cpp
+index e6a65de7..b18a1dbe 100644
+--- a/src/x360/deko/destinos.cpp
++++ b/src/x360/deko/destinos.cpp
+@@ -38,6 +38,7 @@
+ REXCVAR_DECLARE(bool, nfsmw_dk_tiles_en_pantalla);
+ REXCVAR_DECLARE(bool, x360_edram_8bits_a_flotante);  // edram.cpp (0320 v3)
+ REXCVAR_DECLARE(bool, x360_edram_instalar_escena);  // edram.cpp (0322)
++REXCVAR_DECLARE(bool, x360_edram_interfaz);  // edram.cpp (0328)
+ REXCVAR_DEFINE_BOOL(x360_copias_sin_barrera, true, "X360",
+                     "Las copias en el motor 3D seguidas comparten una barrera si ninguna lee lo que otra escribio (los "
+                     "resolves del G-buffer); false = una barrera antes de cada una");
+@@ -1568,30 +1569,43 @@ bool RenderDk::Copiar(const RegistrosCopia& reg) {
+           ++edram_llevados_8bits_;
+         }
+       }
+-    EdramPreparar(*destino_render, uint32_t(y1), a_frontal);  // another view of these tiles may have drawn them since
+-    // 0322/0323: install the scene INTO the 8-bit target the tonemap drew on, right before its resolve. The
+-    // port's tonemap draws have never written f0 (every probe since run 19), and the scene resolve they read is
+-    // already 0..1 (0309's baked scale; the 2026-11-05 dumps: max 1.01-2.2, mean 0.19-0.28) - so the resolve
+-    // carries the scene and the game's own chain proceeds on it: FXAA smooths it, the additive lights and the
+-    // HUD land on top, the frontal copy presents the lot (0322's frontal install buried them under it). Between
+-    // passes, like the resolve itself; the base is re-looked-up so a stale record simply misses.
+-    // 0327: NO once-a-frame latch - the f0 image resolves twice and the latch fed only the FIRST (0326's much
+-    // worse white: the tonemap's own resolve, the second one, carried the composite's white into the FXAA).
+-    // Both resolve the same scene; the install is idempotent.
+-    if (REXCVAR_GET(x360_edram_instalar_escena) && destino_render == edram_escena_destino_ && edram_escena_base_ &&
+-        !destino_render->profundidad && destino_render->edram_formato == 0) {
+-      if (const ImagenDk* escena = TexturaResuelta(edram_escena_base_, edram_escena_ancho_, edram_escena_alto_);
+-          escena && escena->ancho == destino_render->ancho && escena->alto <= destino_render->alto) {
++      // 0322: present the scene itself (x360_edram_instalar_escena). The port's tonemap draws have never written f0
++      // (every probe since run 19; the folded quad and the fourth shader changed nothing), and the scene resolve the
++      // tonemap reads is already 0..1 (0309's baked scale; the 2026-11-05 dumps: max 1.01-2.2, mean 0.19-0.28) - so
++      // the frontal copy presents the healthy lit scene, un-tonemapped (flat highlights) but real. Between passes,
++      // like the resolve itself: no mid-pass footprint.
++      if (a_frontal && REXCVAR_GET(x360_edram_instalar_escena) && destino_render && !destino_render->profundidad &&
++          destino_render->edram_formato == 3 && edram_escena_fotograma_ == fotograma_ && edram_escena_ &&
++          edram_escena_->ancho == destino_render->ancho && edram_escena_->alto <= destino_render->alto) {
++        // 0328: what the target holds right now (the FXAA's output, the lights, THE HUD) is snapshotted by the
++        // copy engine before the replace - zero state touched - and the presenter draws it over the installed
++        // scene by its alpha (x360_edram_interfaz). The replace below is b168903196's, untouched.
++        if (REXCVAR_GET(x360_edram_interfaz) && destino_render->ancho && destino_render->alto) {
++          if (!edram_ui_.viva || edram_ui_.ancho != destino_render->ancho ||
++              edram_ui_.alto != destino_render->alto || edram_ui_.formato != destino_render->formato) {
++            DestruirImagen(edram_ui_);
++            CrearImagen(edram_ui_, DkImageType_2D, destino_render->formato, destino_render->ancho,
++                        destino_render->alto, 1, 1, DkImageFlags_UsageRender, "interfaz (snapshot 0328)");
++          }
++          if (edram_ui_.viva) {
++            AsegurarTrabajo();
++            MarcarGpu(kGpuCopias);
++            AntesDeTransferir();
++            DkImageView vista_fuente_ui{}, vista_destino_ui{};
++            dkImageViewDefaults(&vista_fuente_ui, &destino_render->imagen);
++            dkImageViewDefaults(&vista_destino_ui, &edram_ui_.imagen);
++            const DkImageRect rect_ui = {0, 0, 0, destino_render->ancho, destino_render->alto, 1};
++            dkCmdBufCopyImage(nucleo_.comandos(), &vista_fuente_ui, &rect_ui, &vista_destino_ui, &rect_ui, 0);
++            BarreraTransferencia();
++            transferencia_sin_barrera_ = false;
++          }
++        }
+         AntesDeCambiarDestino(nullptr);
+-        if (Copiar3D(*escena, 0, 0, escena->ancho, escena->alto, *destino_render, 0, 0)) {
+-          // The written rows are this view's own now: the claim keeps the next frame's EdramPreparar from
+-          // transferring an older owner over them (0323's ghosting - the additive lights accumulated because the
+-          // f0 bookkeeping went stale), as EdramLlevar8Bits marked its carried rows.
+-          EdramReclamar(*destino_render, escena->alto, nullptr);
++        if (Copiar3D(*edram_escena_, 0, 0, edram_escena_ancho_, edram_escena_alto_, *destino_render, 0, 0)) {
+           ++edram_llevados_8bits_;
+         }
+       }
+-    }
++    EdramPreparar(*destino_render, uint32_t(y1), a_frontal);  // another view of these tiles may have drawn them since
+   }
+   DkCmdBuf cmd = nucleo_.comandos();
+   if (copiar) {
+@@ -2901,6 +2915,20 @@ bool RenderDk::PintarSalida(DkImage& salida, uint32_t ancho_salida, uint32_t alt
+   dkCmdBufBindTexture(cmd, DkStage_Fragment, 0, dkMakeTextureHandle(ranura, 0));
+   dkCmdBufBindTexture(cmd, DkStage_Fragment, 1, dkMakeTextureHandle(ranura_tabla, 0));
+   dkCmdBufDraw(cmd, DkPrimitive_Triangles, 3, 1, 0, 0);
++  // 0328: the interface layer (what f3 held when the scene was installed) over the picture, by its alpha, through
++  // the same ramp - it was never ramped, and its alpha is the UI's own coverage.
++  if (edram_ui_.viva && REXCVAR_GET(x360_edram_interfaz)) {
++    const uint32_t ranura_ui = VistaDe(edram_ui_, 0x688 /* RGBA */, 0x688);
++    DkBlendState mezcla_ui;
++    dkBlendStateDefaults(&mezcla_ui);
++    mezcla_ui.srcColorBlendFactor = DkBlendFactor_SrcAlpha;
++    mezcla_ui.dstColorBlendFactor = DkBlendFactor_InvSrcAlpha;
++    mezcla_ui.srcAlphaBlendFactor = DkBlendFactor_One;
++    mezcla_ui.dstAlphaBlendFactor = DkBlendFactor_Zero;
++    dkCmdBufBindBlendState(cmd, 0, &mezcla_ui);
++    dkCmdBufBindTexture(cmd, DkStage_Fragment, 0, dkMakeTextureHandle(ranura_ui, 0));
++    dkCmdBufDraw(cmd, DkPrimitive_Triangles, 3, 1, 0, 0);
++  }
+   OlvidarEstado();
+   return true;
+ }
+diff --git a/src/x360/deko/dibujos.cpp b/src/x360/deko/dibujos.cpp
+index d00d94ea..e86b5521 100644
+--- a/src/x360/deko/dibujos.cpp
++++ b/src/x360/deko/dibujos.cpp
+@@ -1347,19 +1347,6 @@ bool RenderDk::Dibujar(const PeticionDibujo& p) {
+     hay_destino = true;
+   }
+   const uint32_t control_profundidad = r[gr::XE_GPU_REG_RB_DEPTHCONTROL];
+-  // 0326: while the scene is installed, the ADDITIVE draws into the FXAA's image (the deferred light adds,
+-  // blend 0706) are skipped: tuned for the tonemapped base, on the installed scene they blow out (the white)
+-  // and accumulate (the ghosting). The HUD that follows them is not additive and draws.
+-  if (REXCVAR_GET(x360_edram_instalar_escena) && edram_escena_f3_ &&
+-      edram_escena_sin_luces_fotograma_ == fotograma_ && imagenes_pase_[0] == edram_escena_f3_ &&
+-      (r[kMezcla[0]] & 0x1FFF1FFF) == 0x07060706) {
+-    ++edram_luces_saltadas_;
+-    if (deko::AhoraNs() >= edram_luces_aviso_siguiente_) {
+-      edram_luces_aviso_siguiente_ = deko::AhoraNs() + uint64_t(10) * 1000000000ull;
+-      REXLOG_INFO("[edram] luz aditiva saltada tras el FXAA ({} en total)", edram_luces_saltadas_);
+-    }
+-    { if (diag) REXLOG_INFO("[diag-ps] luz aditiva sale: la escena esta instalada"); return true; }
+-  }
+   // Draws that cannot change a pixel (nfsmw_nativo_saltar_invisibles; the Vulkan backend explains both cases).
+   const bool saltar_invisibles = REXCVAR_GET(nfsmw_nativo_saltar_invisibles);  // read each time: the game can switch it (ds2 safe mode)
+   if (saltar_invisibles && mascaras) {
+@@ -2903,34 +2890,28 @@ bool RenderDk::Dibujar(const PeticionDibujo& p) {
+     // install only takes a snapshot of THIS frame (a stale side image must not paint a menu after gameplay). The
+     // copy engine binds no targets and sets no state: g_ and the pass stay valid, no re-begin - v6 rebound and
+     // re-began the pass around its snapshots and its console run blackened even the cutscenes v4 had colored.
+-    // 0322/0323: remember the scene the tonemap reads - its fmt-26 (k_16_16_16_16) sampler of screen width
+-    // (the bloom tiles are fmt 26 too, but small) - and the 8-bit target it drew into: that target's resolve
+-    // installs the scene (x360_edram_instalar_escena, destinos.cpp), so the game's own chain - FXAA, the
+-    // additive lights, the HUD - proceeds on it. Registers are read here and nothing else.
+-    if (ps && edram_pase_post_ && REXCVAR_GET(x360_edram_instalar_escena) && EdramActiva() && imagenes_pase_[0] &&
+-             !imagenes_pase_[0]->profundidad && imagenes_pase_[0]->edram_formato == 0) {
++    // 0322: remember the scene the tonemap reads - its fmt-26 (k_16_16_16_16) sampler of screen width (the bloom
++    // tiles are fmt 26 too, but small) - to present it at the frontal copy (x360_edram_instalar_escena, destinos.cpp).
++    // Registers are read here and nothing else: no mid-pass footprint (0321's after-draw snapshot ended the menu's
++    // and bullet time's own post passes mid-frame and their following draws never ran - the black menu).
++    if (ps && edram_pase_post_ && REXCVAR_GET(x360_edram_instalar_escena) && EdramActiva()) {
+       static const uint64_t kPostEscena[5] = {UINT64_C(0x6671591252A5BCE2), UINT64_C(0xFE226603F40E2533),
+                                               UINT64_C(0xCD9469857A0C532A), UINT64_C(0x8D42760B0383C0D8),
+                                               UINT64_C(0x009B4466C815681B)};
+       for (uint64_t huella : kPostEscena) {
+         if (ps->huella_contenedor != huella) continue;
+-        if (huella == UINT64_C(0x8D42760B0383C0D8) && imagenes_pase_[0] &&
+-            !imagenes_pase_[0]->profundidad && imagenes_pase_[0]->edram_formato == 3) {
+-          edram_escena_f3_ = imagenes_pase_[0];  // the FXAA's target: the additive light adds land here after it
+-          edram_escena_sin_luces_fotograma_ = fotograma_;
+-        }
+         for (const SamplerShader& s : ps->samplers) {
+           if (s.registro >= 16) continue;
+           const uint32_t* f = r + kRegFetch + uint32_t(s.registro) * 6;
+           if ((f[1] & 0x3F) != 26) continue;  // k_16_16_16_16
+           const uint32_t ancho = (f[2] & 0x1FFF) + 1;
+           if (ancho < 512) continue;  // the half-res and bloom resolves are fmt 26 as well, but narrow
+-          edram_escena_destino_ = imagenes_pase_[0];
+-          edram_escena_base_ = (f[1] & ~0xFFFu) & 0x1FFFFFFF;
++          edram_escena_ = TexturaResuelta((f[1] & ~0xFFFu) & 0x1FFFFFFF, ancho, ((f[2] >> 13) & 0x1FFF) + 1);
+           edram_escena_ancho_ = ancho;
+           edram_escena_alto_ = ((f[2] >> 13) & 0x1FFF) + 1;
+-          // The game's brightness (BrightnessSetting c130: colour * x + y), applied in the output ramp while the
+-          // tonemap that would apply it draws nothing.
++          edram_escena_fotograma_ = fotograma_;
++          // The game's brightness (BrightnessSetting c130: colour * x + y), applied in the output ramp while
++          // the tonemap that would apply it draws nothing (0325, kept from the runs where it worked).
+           float c130[4];
+           std::memcpy(c130, r + kRegConstantesPs + 130 * 4, sizeof(c130));
+           if (c130[0] != edram_brillo_juego_[0] || c130[1] != edram_brillo_juego_[1]) {
+diff --git a/src/x360/deko/edram.cpp b/src/x360/deko/edram.cpp
+index 4cc730ca..6e87be69 100644
+--- a/src/x360/deko/edram.cpp
++++ b/src/x360/deko/edram.cpp
+@@ -58,6 +58,10 @@ REXCVAR_DEFINE_BOOL(x360_edram_instalar_escena, false, "X360",
+                     "registrada en el dibujo del tonemap) se instala en la vista f3 en la copia frontal: los "
+                     "tonemaps del puerto nunca han escrito f0 y esa resolucion ya vale 0..1, asi que el fotograma "
+                     "presenta la escena sana (sin la curva del tonemap: luces planas, pero real)");
++REXCVAR_DEFINE_BOOL(x360_edram_interfaz, true, "X360",
++                    "Lo que f3 guarda cuando se instala la escena (el FXAA, las luces, el interfaz) se copia "
++                    "primero con el motor de copias y el presentador lo dibuja sobre la escena por su alfa: la "
++                    "imagen de la mejor build con el interfaz encima");
+ REXCVAR_DEFINE_BOOL(x360_edram_reduccion_directa, true, "X360",
+                     "Un resolve desde una vista 4x cuyas tejas tiene una vista 1x del doble de pitch (GTA IV reduce su "
+                     "escena a 640x360 asi) promedia 2x2 texeles de esa vista, como el resolve de la Xenos promedia las "

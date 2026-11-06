@@ -1,5 +1,18 @@
 # Max Payne 3 on rexglue-sdk-nx (deko3d): porting notes
 
+## 0328: the interface over the best build
+
+The user's verdict settled the base: b168903196 (0322's frontal install) had the best picture, and the f0-resolve
+family (0323/0325/0326/0327) could not be made clean - every variant of it whitened and ghosted (the latch fed the
+wrong resolve; latchless, the ghosting returned - that path's EDRAM interleavings are not worth more runs). 0328
+restores the b168903196 sdk EXACTLY and adds the interface without touching its install: what f3 holds at the
+install (the FXAA's output, the lights, THE HUD) is snapshotted by the copy engine first (zero state touched, the
+v7 machinery's shape), and PintarSalida draws that layer OVER the installed scene by its alpha, through the same
+ramp (it was never ramped; its alpha is the UI's own coverage). x360_edram_interfaz turns the overlay off (= the
+pure best build). The game's brightness (c130, confirmed working by the user) is ported onto this base. Known
+artifact, accepted: the layer's base under semi-transparent UI pixels is the composite's white, so translucent UI
+areas bleed pale - the HUD's solid elements are exact.
+
 ## 0327: every f0 resolve installs - the latch fed the wrong one
 
 0326's run: the ghosting GONE (the light adds were the accumulation), the white MUCH WORSE - and that names the
