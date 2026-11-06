@@ -1123,7 +1123,20 @@ The outcome branch was "the content itself" - and the run settled everything aro
   "[shaders] VS <hash> taken by address as n<N> ... patched, not its own code" line. One run captures the live
   re-patches; fold + rebuild + upload the run after. The 2 loads matching nothing at all
   (vs_82a73ba3cae509c4, vs_d2052d39bbb3b843 - skipped draws) stay: raw microcode without a base container
-  cannot be folded.## 0346: the f0 plant everywhere - the safe pair finally together
+  cannot be folded.## 0347: the close skeleton - the HUD's draws were SKIPPED WHOLE
+
+mp3_089 named the real HUD killer - and it was never the presentation: "skipped without VS: 407 draws,
+microcode 7555CC404A1A8D (30 words, prim 8 - THE UI RECTS)" - the HUD's vertex shader matches NOTHING in the
+library, so its draws are skipped entire; beside it "508 draws, 369 words" - the costume (the spikes' class).
+Both microcodes are captured but unfoldable (no same-length skeleton in the whole library; a fold cannot host a
+longer microcode). 0347, mp3_vs_por_esqueleto (default on): a VS that matched nothing runs on a CLOSE SKELETON -
+the entry's fetch instructions masked-equal at the same positions, the length within 3 instructions. The UI rect
+family and the skinned-cloth family are uniform; CalcularEntrada binds the layout from the ring's own fetch
+words, so a family sibling's pipeline draws them. The f0-plant presentation of 0346 stays (colors right, the
+cutscene flicker's fix); the light skip rides the install cvar now (089 read zero skip lines after bajo left
+the toml - the re-gate of 0345 pointed at bajo's own cvar; 0347's gate is instalar_escena itself).
+
+## 0346: the f0 plant everywhere - the safe pair finally together
 
 The user's report settled 0345: the gameplay COLORS RIGHT (the scene under the interface, the lights skipped -
 both halves alive at last) but NO HUD - and the mechanism is now named: the under-interface plant's MID-PASS

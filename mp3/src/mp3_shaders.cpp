@@ -46,6 +46,11 @@ REXCVAR_DEFINE_BOOL(mp3_tonemapas_cd94, true, "MP3",
                     "imagen sale bien y toda la maquinaria esta verificada igual de limpia para ambos, asi que el "
                     "defecto esta en la traduccion de esos dos shaders; con el de las cutscenes el gameplay gana su "
                     "look (sin los efectos propios de gameplay: el flash de herida y el entrelazado)");
+REXCVAR_DEFINE_BOOL(mp3_vs_por_esqueleto, true, "MP3",
+                    "Un VS que no coincide con nada corre sobre un esqueleto cercano: sus instrucciones de fetch "
+                    "enmascaradas-iguales en las mismas posiciones y la longitud a menos de 3 instrucciones (la "
+                    "familia de quads de interfaz y la de malla con piel son uniformes; sin esto el HUD se salta "
+                    "entero y el traje con eso)");
 REXCVAR_DEFINE_BOOL(mp3_tonemapas_fxaa, false, "MP3",
                     "LA BISECCION: los cuatro tonemaps se sustituyen por el PS del FXAA (un shader probado, en "
                     "el mismo contexto de dibujo). Si el objetivo del tonemap recibe algo, el contexto dibuja y "
@@ -794,6 +799,50 @@ const EntradaShader* Biblioteca::IdentificarEntrada(bool vertices, uint32_t fisi
           d.aprendidas[huella] = elegido;  // later loads of it: step 2
           VolcarDesconocido(vertices, huella, microcodigo, elegido);
         }
+      }
+    }
+    // 0347, mp3_vs_por_esqueleto: a VS load that matched nothing runs on a CLOSE SKELETON - the entry's fetch
+    // instructions masked-equal at the same positions, the length within 3 instructions (the UI rect family and
+    // the skinned-cloth family are uniform; mp3_089: the HUD's 30-word quad VS and the costume's 369-word one
+    // skipped WHOLE - 407 and 508 draws - because no container matches their length, and the fold cannot host a
+    // longer microcode). CalcularEntrada reads the layout from the ring's own fetch words: a family sibling's
+    // pipeline draws them.
+    if (!elegido && vertices && REXCVAR_GET(mp3_vs_por_esqueleto)) {
+      if (auto c = d.candidatos.find({vertices, uint32_t(microcodigo.size())}); c != d.candidatos.end()) {
+        // wrong-length candidates are not in this map - scan a window of lengths around it
+      }
+      for (int32_t dl = -3; dl <= 3; ++dl) {
+        if (dl == 0) continue;
+        const size_t palabras = microcodigo.size() + size_t(dl) * 3;
+        const auto c = d.candidatos.find({vertices, uint32_t(palabras)});
+        if (c == d.candidatos.end()) continue;
+        for (uint32_t indice : c->second) {
+          const EntradaShader& e = d.entradas[indice];
+          if (e.elementos.empty()) continue;
+          bool sirve = true;
+          for (const ElementoVertice& el : e.elementos) {
+            const size_t base_w = size_t(el.instruccion) * 3;
+            for (size_t j = 0; j < 3 && sirve; ++j) {
+              if (base_w + j >= microcodigo.size() ||
+                  (microcodigo[base_w + j] & kFetchConserva[j]) != e.microcodigo[base_w + j]) {
+                sirve = false;
+              }
+            }
+          }
+          if (sirve) {
+            elegido = &e;
+            parecido = false;
+            static uint32_t avisos_esqueleto = 0;
+            if (avisos_esqueleto++ < kMaxAvisos) {
+              REXLOG_WARN("[shaders] VS {:016X} ({} palabras) tomado por esqueleto como n{} ({} palabras)",
+                          huella, microcodigo.size(), e.numero, e.microcodigo.size());
+            }
+            VolcarDesconocido(vertices, huella, microcodigo, &e);
+            d.aprendidas[huella] = elegido;
+            break;
+          }
+        }
+        if (elegido) break;
       }
     }
     d.por_microcodigo.emplace(huella, elegido);
