@@ -1,5 +1,15 @@
 # Max Payne 3 on rexglue-sdk-nx (deko3d): porting notes
 
+## 0331: the tonemap's inputs at its draw - the decisive one-run diagnostic
+
+The offline pass closed the interpolants (only 0-2 used) and the vertex math (trivially correct); the depth
+fetch (the DoF input) could not be checked (the console's FTP went off before the z-dump came down). The
+remaining split - inputs vs rasterization - is settled by one instrumented run: at each tonemap draw (once per
+10 s), three texels of EVERY resolved sampler (the scene, the DEPTH, the half-res, the bloom) are probed by the
+copy engine (zero footprint, the proven v7 pattern). Inputs sane + the output probes' zero = the rasterization;
+garbage inputs = the fetch path (the scaled fetches are the tonemap's alone among the working post quads).
+Everything else is the stable build exactly.
+
 ## 0330 read + the offline pass: stability restored, two leads closed, one door left
 
 0330's overlay covered the whole frame (f3's alpha is not the UI's coverage either - it accumulates; the log

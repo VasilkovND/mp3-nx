@@ -1,0 +1,46 @@
+diff --git a/include/rex/x360/deko/render.h b/include/rex/x360/deko/render.h
+index 937995bf..cfbc51c6 100644
+--- a/include/rex/x360/deko/render.h
++++ b/include/rex/x360/deko/render.h
+@@ -559,6 +559,7 @@ class RenderDk final : public DestinosNativos {
+   ImagenDk* edram_escena_f3_ = nullptr;
+   uint64_t edram_escena_sin_luces_fotograma_ = 0;
+   uint64_t edram_luces_saltadas_ = 0, edram_luces_aviso_siguiente_ = 0;
++  uint64_t edram_tonema_entrada_siguiente_ = 0;  // 0331: the tonemap inputs probe, once per 10 s
+   std::set<uint64_t> edram_avisos_;
+   uint32_t edram_diag_encuadres_ = 0;
+   // The last depth resolve from each EDRAM base and pitch: the texture's address (CopiarProfundidad), for
+diff --git a/src/x360/deko/dibujos.cpp b/src/x360/deko/dibujos.cpp
+index 0fb747a1..044fa191 100644
+--- a/src/x360/deko/dibujos.cpp
++++ b/src/x360/deko/dibujos.cpp
+@@ -2945,6 +2945,29 @@ bool RenderDk::Dibujar(const PeticionDibujo& p) {
+           edram_escena_ancho_ = ancho;
+           edram_escena_alto_ = ((f[2] >> 13) & 0x1FFF) + 1;
+           edram_escena_fotograma_ = fotograma_;
++          // 0331: the tonemap's own inputs at its draw - the output probes have read zero since run 19, and every
++          // gate around the draw is clean; three texels of every resolved sampler, once per 10 s. Inputs sane with
++          // a zero output names the rasterization; garbage inputs name the fetch path (the scaled fetches are the
++          // tonemap's alone among the post quads; the DoF also reads the depth).
++          if (deko::AhoraNs() >= edram_tonema_entrada_siguiente_) {
++            edram_tonema_entrada_siguiente_ = deko::AhoraNs() + uint64_t(10) * 1000000000ull;
++            static constexpr float kPuntosEntrada[3][2] = {{0.5f, 0.5f}, {0.25f, 0.75f}, {0.75f, 0.3f}};
++            for (const SamplerShader& m : ps->samplers) {
++              if (m.registro >= 16) continue;
++              const uint32_t* fm = r + kRegFetch + uint32_t(m.registro) * 6;
++              const uint32_t ancho_m = (fm[2] & 0x1FFF) + 1, alto_m = ((fm[2] >> 13) & 0x1FFF) + 1;
++              const uint32_t base_m = (fm[1] & ~0xFFFu) & 0x1FFFFFFF;
++              if (const ImagenDk* t = TexturaResuelta(base_m, ancho_m, alto_m)) {
++                for (const auto& pt : kPuntosEntrada) {
++                  SondarTexel(*t, uint32_t(float(t->ancho) * pt[0]), uint32_t(float(t->alto) * pt[1]),
++                              fmt::format("tonemap entrada slot {} base {:08X} ({},{})", m.registro, base_m,
++                                          uint32_t(float(t->ancho) * pt[0]), uint32_t(float(t->alto) * pt[1])));
++                }
++              } else {
++                REXLOG_INFO("[edram-diag] tonemap entrada slot {} base {:08X}: sin textura resuelta", m.registro, base_m);
++              }
++            }
++          }
+           // The game's brightness (BrightnessSetting c130: colour * x + y), applied in the output ramp while
+           // the tonemap that would apply it draws nothing (0325, kept from the runs where it worked).
+           float c130[4];
