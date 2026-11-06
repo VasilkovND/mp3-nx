@@ -1,5 +1,18 @@
 # Max Payne 3 on rexglue-sdk-nx (deko3d): porting notes
 
+## 0328 read (mp3_073 + the dump): the overlay is a veil - off in the toml
+
+The HUD DID come back, wrapped in a veil: the layer's base is FXAA(0654D000) + the lights, and in the dump
+frame 0654D000 is ALL BLACK (mean 0.000 - the composite wrote nothing that frame) with the scene resolve absent
+from the frame's resolves - the veil is dark junk with the lights' colors (the user's blue floor artifacts).
+f3's alpha carries the lights' lumas, not UI coverage, so the overlay's alpha blend cannot separate the HUD;
+and the layer has no per-frame validity, so it also painted the cutscenes (no picture there - the stale
+gameplay layer over base 000's own chain). One structural fact gained: THE SCENE LIVES IN F3 ITSELF (the dump
+frame's first resolve: desde c198 f3 -> 08408000) - base 198's f3 holds the scene, resolved for the tonemap to
+read. x360_edram_interfaz = false in the toml returns the exact best build (b168903196's behavior) with no
+rebuild. THE CONVERGENCE: the HUD, the grain, the white and the lights' tuning ALL hinge on the tonemap's own
+zero-output - that is the single blocker left, and the next focused effort.
+
 ## 0328: the interface over the best build
 
 The user's verdict settled the base: b168903196 (0322's frontal install) had the best picture, and the f0-resolve
