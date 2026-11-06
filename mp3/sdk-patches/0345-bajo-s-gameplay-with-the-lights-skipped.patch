@@ -1,0 +1,24 @@
+diff --git a/src/x360/deko/dibujos.cpp b/src/x360/deko/dibujos.cpp
+index 21925aea..6bfa62ba 100644
+--- a/src/x360/deko/dibujos.cpp
++++ b/src/x360/deko/dibujos.cpp
+@@ -1363,7 +1363,8 @@ bool RenderDk::Dibujar(const PeticionDibujo& p) {
+   // 0329: while the resolve-install is on, the ADDITIVE draws into the FXAA's image (the deferred light adds,
+   // blend 0706) are skipped - tuned for the tonemapped base, on the scene they blow out and accumulate. The HUD
+   // that follows them is not additive and draws.
+-  if ((REXCVAR_GET(x360_edram_instalar_en_resolve) || REXCVAR_GET(x360_edram_interfaz)) && edram_escena_f3_ &&
++  if ((REXCVAR_GET(x360_edram_escena_bajo_interfaz) || REXCVAR_GET(x360_edram_instalar_en_resolve) ||
++       REXCVAR_GET(x360_edram_interfaz)) && edram_escena_f3_ &&
+       edram_escena_sin_luces_fotograma_ == fotograma_ && imagenes_pase_[0] == edram_escena_f3_ &&
+       (r[kMezcla[0]] & 0x1FFF1FFF) == 0x07060706) {
+     ++edram_luces_saltadas_;
+@@ -3024,7 +3025,8 @@ bool RenderDk::Dibujar(const PeticionDibujo& p) {
+     // 0329: the FXAA's own draw arms its target - its OWN block, not behind the scene-record gate (the dead-code
+     // bug of every earlier attempt: the arming sat where the FXAA's f3 draw never passes, so the light skip never
+     // fired and the lights ran free on the installed scene - the white, the accumulation).
+-    if (ps && edram_pase_post_ && EdramActiva() &&
++    if (ps && edram_pase_post_ && (REXCVAR_GET(x360_edram_escena_bajo_interfaz) ||
++                                   REXCVAR_GET(x360_edram_instalar_en_resolve)) && EdramActiva() &&
+         imagenes_pase_[0] && !imagenes_pase_[0]->profundidad && imagenes_pase_[0]->edram_formato == 3 &&
+         ps->huella_contenedor == UINT64_C(0x8D42760B0383C0D8)) {
+       edram_escena_f3_ = imagenes_pase_[0];

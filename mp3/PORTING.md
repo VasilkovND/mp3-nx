@@ -1123,7 +1123,19 @@ The outcome branch was "the content itself" - and the run settled everything aro
   "[shaders] VS <hash> taken by address as n<N> ... patched, not its own code" line. One run captures the live
   re-patches; fold + rebuild + upload the run after. The 2 loads matching nothing at all
   (vs_82a73ba3cae509c4, vs_d2052d39bbb3b843 - skipped draws) stay: raw microcode without a base container
-  cannot be folded.## 0344: the bisection - the tonemaps run as the FXAA
+  cannot be folded.## 0345: bajo's gameplay with the lights skipped - the never-run combination
+
+The archive's re-read found it: the menu half the user SAW working (0340's f0 plant, "Меню появилось") and the
+gameplay half that NEVER RAN clean (bajo - its only gameplay session was 0340's, poisoned by the 2.x double
+plant; the 0335-0338 sessions never left the menu). And the light skip's gate was still tied to interfaz
+(false since 0328's relief) - bajo's gameplay never had the lights skipped either. 0345 = 0341's branch split
+(the FXAA discriminator) with BAJO as the gameplay branch (not the crutch): the scene planted under the HUD at
+the FXAA, the lights skipped (re-gated to bajo's cvar), the menu on 0341's validated pair, the crutch as the
+gap fallback, the far depth + the neutral mask + the brightness on. The bisection substitution stays in the
+code, off in the toml (its verdict run never happened; the tonemap thread pauses until the presentation
+settles).
+
+## 0344: the bisection - the tonemaps run as the FXAA
 
 The no-crutch run (mp3_087: installs 0.0 throughout - truly no crutches) kept the white with the HUD and the
 menu: the user's "we are back where we started" is exact - the tonemap still writes nothing and the lights
