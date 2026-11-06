@@ -1123,7 +1123,21 @@ The outcome branch was "the content itself" - and the run settled everything aro
   "[shaders] VS <hash> taken by address as n<N> ... patched, not its own code" line. One run captures the live
   re-patches; fold + rebuild + upload the run after. The 2 loads matching nothing at all
   (vs_82a73ba3cae509c4, vs_d2052d39bbb3b843 - skipped draws) stay: raw microcode without a base container
-  cannot be folded.## The HUD's own container - hand-built from the microcode up
+  cannot be folded.## The composite VS - the interface's REAL killer, second container built
+
+mp3_093 read the HUD's take (`7555CC... taken exact as n2517` - the first container works, its draws run) but
+the interface still missing named the second layer: **547 skipped draws, microcode 6D38CFA50AA12E5F (27 words,
+prim 8, into c198 f3, PS n-1)** - the UI COMPOSITE rects over the final frame, drawn with a PATCHED variant of
+D3D's clear VS - its load (dumped Oct 30 as vs_6d38cfa50aa12e68, never folded: a plain dump, not a `_de_`)
+matches no container: exact no (patched), address no (inline, no address), masked no (the patch crosses the
+preserved bits). The container was BUILT the same way as the HUD's: the donor shell grown, the load's own bytes
+padded into the microcode slot (108->120, trailing nops), the elementos derived from the w0-lows (instruction
+3 = POSITION 0x1000-class, instruction 4 = COLOR 0x8000-class), the tonemap quad's export table. Translation
+clean; the library rebuilt (72,087,872, md5 ae32a37c) with BOTH containers. The load hash differs per session
+(the patch varies) - the exact step may still miss; the masked/skeleton steps now have a true sibling in the
+library to land on.
+
+## The HUD's own container - hand-built from the microcode up
 
 The HUD's layer was NEVER drawn in any run: its 407 rect draws skipped whole - the 30-word VS matches no
 container, no skeleton (0 candidates by position too), and no fold host exists (no same-length base). So the
