@@ -25,15 +25,13 @@ the SAME host pass and blacken it. Everything else is proven clean: exact shader
   state) right after the FIRST post draw of a post-begun pass; no close fallback; install = v4's verbatim,
   only-this-frame. Menus safe by construction (no 8-bit post draws there). Every failure logs its reason once/10 s.
 
-## THE NEXT STEP (0335 on the console, stamp + toml verified; the HUD-delivery run pending)
+## THE NEXT STEP (0336 on the console, stamp verified; the run pending)
 
-The scene now plants INTO the game's own chain right after the FXAA's draw (the copy engine in the v7-proven
-pass dance, claimed; same-base only, 16F-to-16F), so the HUD and the lights draw ON it - the interface by the
-game's own hand at last. The lights stay skipped, the frontal crutch is the fallback, the far-plane depth and
-the exp-scale fix stay on. Expected: stable colors WITH the HUD, in gameplay and menus. If anything misbehaves:
-x360_edram_escena_bajo_interfaz = false returns today's stable state. The tonemap's dead-in-normal-frames
-question (0334's geometry line is in the build, ready for whenever a log comes) stays the deep thread - with
-the HUD delivered it stops being the blocker.
+Base 000 (the menu/cutscene home) is untouched again: the far-depth substitution and the under-interface
+install are scoped to the gameplay bases, the menu keeps its own chain as in the builds where it was fine.
+Expected: the menu back, the gameplay with the HUD on the scene and stable colors. The fallback ladder
+unchanged (bajo_interfaz/instalar_escena/profundidad_lejos toml lines). The deep thread (the tonemap
+dead-in-normal-frames, 0334's geometry line ready in the build) continues when a log is welcome.
 
 ## The spikes (second bug, currently VISIBLE again)
 
