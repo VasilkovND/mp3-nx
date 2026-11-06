@@ -25,17 +25,18 @@ the SAME host pass and blacken it. Everything else is proven clean: exact shader
   state) right after the FIRST post draw of a post-begun pass; no close fallback; install = v4's verbatim,
   only-this-frame. Menus safe by construction (no 8-bit post draws there). Every failure logs its reason once/10 s.
 
-## THE NEXT STEP (0328 on the console, stamp c679eaf7b3 verified; the run pending)
+## THE NEXT STEP (the relief toml is ON: x360_edram_interfaz = false; the console is the exact best build)
 
-The logs of 0326/0327 closed that branch: the lights-skip was DEAD CODE (the arming sat inside the formato==0
-gate that rejects the FXAA's f3 draw - zero skips in both logs), so the additive lights ran freely on the
-installed scene and accumulated: the white and the returning ghosting. The user chose the base - b168903196 -
-and 0328 is its sdk EXACTLY, plus: the UI layer (f3's content at the install, copy-engine snapshot) drawn over
-the installed scene in PintarSalida by its alpha (x360_edram_interfaz gates it off for the pure best build),
-and the confirmed-working brightness (c130) ported on. Known artifact: translucent UI bleeds the layer's pale
-base. Expected: the best build's picture + the HUD + the slider. Still open: the shirt (the omit stays), the
-spikes (mp3_070: zero address takes - the folds' elementos tables are the suspect, an offline check), and the
-deep one: no tonemap has ever written 198/f0.
+0328's overlay was read out of the dump (a veil: f3's alpha carries the lights' lumas, not UI coverage; the
+base was FXAA of an all-black 0654D000 plus the lights) and turned off by the toml - the console now behaves
+as b168903196 exactly (NRO c679eaf7b3 + interfaz false), with the working brightness kept. THE SINGLE BLOCKER
+LEFT, converging the HUD, the grain, the white and the lights' tuning: NO tonemap draw (6671/FE22/CD94/009B)
+has ever written 198/f0 in normal gameplay, while every gate around it is proven clean. The next focused
+effort, offline first: the PS declares TEXCOORD0-12 while the folded VS exports 0-10 (uninitialized inputs
+11-12?), and the draw's interpolants have never been probed - one instrumented run (a probe inside the
+tonemap's rasterization + its interpolants at the draw) names the stage that kills the output. Also queued:
+the shirt (the omit stays; its variants keep landing in shaders_unknown) and the spikes (mp3_070 had zero
+address takes - the folds' elementos tables are the suspect).
 
 ## The spikes (second bug, currently VISIBLE again)
 
