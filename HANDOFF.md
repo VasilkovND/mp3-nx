@@ -25,14 +25,13 @@ the SAME host pass and blacken it. Everything else is proven clean: exact shader
   state) right after the FIRST post draw of a post-begun pass; no close fallback; install = v4's verbatim,
   only-this-frame. Menus safe by construction (no 8-bit post draws there). Every failure logs its reason once/10 s.
 
-## THE NEXT STEP (0340 on the console, stamp + toml verified; the run pending)
+## THE NEXT STEP (0342 on the console, stamp + toml verified; the decisive mask run pending)
 
-The three-branch presentation, audited against every corner case of the saga: the MENU via the f0 plant (the
-scene at the tonemap target's last resolve - after the composite; the labels composite over their own base-000
-chain), the GAMEPLAY via bajo (the scene after the FXAA, the lights skipped, the HUD on top), the GAPS via the
-demoted crutch (fresh record <= 60). All plants claim their rows (no ghosting); the audit accepted: flash frames
-lose their flash look (cosmetic), rare FXAA-less gameplay frames may wash (the old class), the spikes are the
-next thread after the picture settles.
+The convergence branches (the crutch for FXAA frames, the f0 plant for the menu, bajo retired) + [verts-mascara]
+(the effects quad's colour bytes, once per 10 s) + the regression suite gating every log. The run: menu a
+minute, gameplay a minute, then the log through tools/check_log.py and the mask bytes decide - sane bytes + a
+wrong mask = the fold's colour attribute (the spikes' class, one fix for both); wrong bytes = the game's state,
+a different door. Only after the suite passes and the picture holds is any build called stable.
 
 ## The spikes (second bug, currently VISIBLE again)
 
