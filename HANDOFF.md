@@ -25,13 +25,14 @@ the SAME host pass and blacken it. Everything else is proven clean: exact shader
   state) right after the FIRST post draw of a post-begun pass; no close fallback; install = v4's verbatim,
   only-this-frame. Menus safe by construction (no 8-bit post draws there). Every failure logs its reason once/10 s.
 
-## THE NEXT STEP (0337 on the console, stamp verified; the run pending)
+## THE NEXT STEP (0338 on the console, stamp verified; the run pending)
 
-All three gameplay fixes (the crutch, the far-depth, the under-interface install) now carry the same base != 0
-scoping - the menu/cutscene home presents its own chain entirely (labels, post backdrop). Expected: the menu
-with text and a smooth background, the gameplay with the HUD on the scene and stable colors. The fallbacks are
-the toml lines. The deep threads (the tonemap dead in normal frames - 0334's geometry line is in the build;
-the shirt; the spikes) wait for a log-friendly moment.
+The crutch demoted to a true fallback (fires only when the under-interface install did not - mp3_082 proved it
+was burying the menu text the install had built, at 1.0/frame in the menu; the menu shares the gameplay's post
+bases, so the base scoping was worthless). The same log closed the geometry question (the tonemap's scissor and
+viewport are full and normal). Expected: the menu's labels and the gameplay HUD on the scene, stable colors.
+If the labels are still gone, the menu's text draws BEFORE its FXAA and the install point moves to the pass
+begin; the fallback ladder (toml) is unchanged.
 
 ## The spikes (second bug, currently VISIBLE again)
 
