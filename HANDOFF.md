@@ -25,14 +25,15 @@ the SAME host pass and blacken it. Everything else is proven clean: exact shader
   state) right after the FIRST post draw of a post-begun pass; no close fallback; install = v4's verbatim,
   only-this-frame. Menus safe by construction (no 8-bit post draws there). Every failure logs its reason once/10 s.
 
-## THE NEXT STEP (0333 on the console, stamp verified; the scale-fix run pending)
+## THE NEXT STEP (0335 on the console, stamp + toml verified; the HUD-delivery run pending)
 
-0332 made the tonemap DRAW (the far-plane depth; the user's dumps proved it - the washed frame was the one where
-it drew); 0333 fixes its input scale (the fetch cache skipped the exp arithmetic on unchanging words while
-exp_previo flipped with the last reader - 4x hot, the washed frames). This run expects: a stable picture, no
-flicker. If it holds, the NEXT step is the toml (x360_edram_instalar_escena = false): the game's own chain
-(tonemap -> FXAA -> lights -> THE HUD) presents, and the crutch retires. The probes stay on; a dump at a clean
-frame confirms 0654D000 = the real picture (mean ~0.2-0.3, not 0.47, not 0).
+The scene now plants INTO the game's own chain right after the FXAA's draw (the copy engine in the v7-proven
+pass dance, claimed; same-base only, 16F-to-16F), so the HUD and the lights draw ON it - the interface by the
+game's own hand at last. The lights stay skipped, the frontal crutch is the fallback, the far-plane depth and
+the exp-scale fix stay on. Expected: stable colors WITH the HUD, in gameplay and menus. If anything misbehaves:
+x360_edram_escena_bajo_interfaz = false returns today's stable state. The tonemap's dead-in-normal-frames
+question (0334's geometry line is in the build, ready for whenever a log comes) stays the deep thread - with
+the HUD delivered it stops being the blocker.
 
 ## The spikes (second bug, currently VISIBLE again)
 
