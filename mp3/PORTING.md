@@ -1,5 +1,17 @@
 # Max Payne 3 on rexglue-sdk-nx (deko3d): porting notes
 
+## 0335: the scene UNDER the interface - the HUD delivery
+
+The user's observation gave the mechanism: the white moments carry the HUD (the game's own chain), the stable
+colors are the crutch covering it. So the scene must be planted INSIDE the chain BEFORE the HUD draws: right
+after the FXAA's own draw (its pass still open - the HUD and the lights draw after it in the same pass), the
+copy engine plants the scene into the FXAA's target (the v7 snapshot's proven dance: the pass ends, the image
+copies between barriers, no targets, no state - the composite always ran after v7's snapshots), the rows are
+claimed, and the HUD then draws ON the scene inside the game's own chain; the additive lights stay skipped;
+the frontal crutch remains the fallback for frames without an FXAA draw. Gated by
+x360_edram_escena_bajo_interfaz (on in the toml), same-base only (the menu's base-000 chain untouched), RGBA16F
+to RGBA16F (both the scene resolve and the f3 image are 16F - the raw copy carries the values exactly).
+
 ## 0334: the tonemap's draw geometry logged
 
 The user's observation closed the loop: the white moments CARRY THE HUD (the game's own chain presenting) and

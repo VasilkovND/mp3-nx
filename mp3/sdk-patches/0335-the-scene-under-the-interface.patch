@@ -1,0 +1,74 @@
+diff --git a/include/rex/x360/deko/render.h b/include/rex/x360/deko/render.h
+index 7953912a..d7ee84be 100644
+--- a/include/rex/x360/deko/render.h
++++ b/include/rex/x360/deko/render.h
+@@ -561,6 +561,7 @@ class RenderDk final : public DestinosNativos {
+   uint64_t edram_luces_saltadas_ = 0, edram_luces_aviso_siguiente_ = 0;
+   uint64_t edram_tonema_entrada_siguiente_ = 0;  // 0331: the tonemap inputs probe, once per 10 s
+   ImagenDk edram_tonema_lejos_{};  // 0332: the constant far plane (1x1, 1.0) for x360_tonemap_profundidad_lejos
++  uint64_t edram_escena_bajo_fotograma_ = 0;  // 0335: the under-the-interface install, once a frame
+   std::set<uint64_t> edram_avisos_;
+   uint32_t edram_diag_encuadres_ = 0;
+   // The last depth resolve from each EDRAM base and pitch: the texture's address (CopiarProfundidad), for
+diff --git a/src/x360/deko/dibujos.cpp b/src/x360/deko/dibujos.cpp
+index 41928765..43c27984 100644
+--- a/src/x360/deko/dibujos.cpp
++++ b/src/x360/deko/dibujos.cpp
+@@ -46,6 +46,7 @@ REXCVAR_DECLARE(bool, x360_edram_8bits_a_flotante);  // edram.cpp (0320)
+ REXCVAR_DECLARE(bool, x360_edram_instalar_escena);  // edram.cpp (0322)
+ REXCVAR_DECLARE(bool, x360_edram_instalar_en_resolve);  // edram.cpp (0329)
+ REXCVAR_DECLARE(bool, x360_tonemap_profundidad_lejos);  // edram.cpp (0332)
++REXCVAR_DECLARE(bool, x360_edram_escena_bajo_interfaz);  // edram.cpp (0335)
+ REXCVAR_DECLARE(bool, x360_edram_interfaz);  // edram.cpp (0328)
+ REXCVAR_DEFINE_BOOL(x360_edram_saltar_muertas, true, "X360",
+                     "Un pase cuyo primer dibujo pinta todos sus destinos de color enteros y opacos (un cuadrado a "
+@@ -2976,6 +2977,34 @@ bool RenderDk::Dibujar(const PeticionDibujo& p) {
+         ps->huella_contenedor == UINT64_C(0x8D42760B0383C0D8)) {
+       edram_escena_f3_ = imagenes_pase_[0];
+       edram_escena_sin_luces_fotograma_ = fotograma_;
++      // 0335, x360_edram_escena_bajo_interfaz: the scene is copied INTO the FXAA's own target right after its
++      // draw, by the COPY ENGINE (the v7 snapshot's proven dance: the pass ends, the image copies, the barrier
++      // returns - no targets, no state, the draws after it run, as the composite proved after v7's snapshots).
++      // The HUD and the light adds draw AFTER the FXAA, in this same pass: they land ON the scene, inside the
++      // game's own chain, and the frontal crutch stays as the fallback for frames without an FXAA draw.
++      if (REXCVAR_GET(x360_edram_escena_bajo_interfaz) && edram_escena_base_ && edram_escena_destino_ &&
++          edram_escena_f3_->edram_base == edram_escena_destino_->edram_base &&
++          edram_escena_f3_->formato == DkImageFormat_RGBA16_Float &&
++          edram_escena_bajo_fotograma_ != fotograma_) {
++        if (const ImagenDk* escena_bajo = TexturaResuelta(edram_escena_base_, edram_escena_ancho_, edram_escena_alto_);
++            escena_bajo && escena_bajo->formato == DkImageFormat_RGBA16_Float &&
++            escena_bajo->ancho == edram_escena_f3_->ancho && escena_bajo->alto <= edram_escena_f3_->alto) {
++          const uint32_t filas_bajo = escena_bajo->alto;
++          AsegurarTrabajo();
++          MarcarGpu(kGpuCopias);
++          PerfilCopia("escena bajo el interfaz", escena_bajo, edram_escena_f3_, escena_bajo->ancho, filas_bajo);
++          AntesDeTransferir();
++          DkImageView vista_escena_bajo{}, vista_f3_bajo{};
++          dkImageViewDefaults(&vista_escena_bajo, &escena_bajo->imagen);
++          dkImageViewDefaults(&vista_f3_bajo, &edram_escena_f3_->imagen);
++          const DkImageRect rect_bajo = {0, 0, 0, escena_bajo->ancho, filas_bajo, 1};
++          dkCmdBufCopyImage(nucleo_.comandos(), &vista_escena_bajo, &rect_bajo, &vista_f3_bajo, &rect_bajo, 0);
++          BarreraTransferencia();
++          transferencia_sin_barrera_ = false;
++          EdramReclamar(*edram_escena_f3_, filas_bajo, nullptr);
++          edram_escena_bajo_fotograma_ = fotograma_;
++        }
++      }
+     }
+     if (ps && edram_pase_post_ && REXCVAR_GET(x360_edram_instalar_escena) && EdramActiva()) {
+       static const uint64_t kPostEscena[5] = {UINT64_C(0x6671591252A5BCE2), UINT64_C(0xFE226603F40E2533),
+diff --git a/src/x360/deko/edram.cpp b/src/x360/deko/edram.cpp
+index ca2d7879..9ab2c245 100644
+--- a/src/x360/deko/edram.cpp
++++ b/src/x360/deko/edram.cpp
+@@ -58,6 +58,10 @@ REXCVAR_DEFINE_BOOL(x360_edram_instalar_escena, false, "X360",
+                     "registrada en el dibujo del tonemap) se instala en la vista f3 en la copia frontal: los "
+                     "tonemaps del puerto nunca han escrito f0 y esa resolucion ya vale 0..1, asi que el fotograma "
+                     "presenta la escena sana (sin la curva del tonemap: luces planas, pero real)");
++REXCVAR_DEFINE_BOOL(x360_edram_escena_bajo_interfaz, false, "X360",
++                    "La escena se copia en el objetivo del FXAA justo tras su dibujo, con el motor de copias "
++                    "(sin tocar el pase): el interfaz y la luz dibujan despues SOBRE la escena, dentro de la "
++                    "propia cadena del juego, y la copia frontal queda de respaldo");
+ REXCVAR_DEFINE_BOOL(x360_tonemap_profundidad_lejos, false, "X360",
+                     "El fetch de profundidad de los tonemaps lee una resuelta a cero en los fotogramas en que "
+                     "dibujan (las sondas de 0331: todo lo demas sano, la profundidad 00000000): se liga un plano "
