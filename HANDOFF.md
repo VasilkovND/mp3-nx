@@ -25,14 +25,14 @@ the SAME host pass and blacken it. Everything else is proven clean: exact shader
   state) right after the FIRST post draw of a post-begun pass; no close fallback; install = v4's verbatim,
   only-this-frame. Menus safe by construction (no 8-bit post draws there). Every failure logs its reason once/10 s.
 
-## THE NEXT STEP (0343 on the console: NRO e052353581 + the folded library md5 d59851c6 + the NO-CRUTCH toml, all verified)
+## THE NEXT STEP (0345 on the console, stamp + toml verified; the never-run combination's run pending)
 
-The first crutch-free configuration: the game's own chain end to end, the tonemap with every known input killer
-closed (the x4 scale, the zero depth, the flipped flash mask - the last two by the sanitation pattern), the HUD
-by the game's hand, the spikes' 19 variants folded in the library. THE RUN: if the picture is normal - the
-saga ends, PORTING gets its closing chapter. If not: the log through tools/check_log.py + the input probes name
-the next input; the crutches return by one toml line (instalar_escena = true). The mask-flip's own root (why
-the computed mask flips between the quad's draw and the fetch) stays the deep thread either way.
+The archive's re-read assembled it: bajo's gameplay (the scene under the HUD, the lights finally skipped - the
+skip was gated to the off interfaz cvar all along) + the menu's validated pair (0340's f0 plant) + the crutch
+as the gap fallback + the depth/mask/brightness sanitations. Both halves were separately SEEN working; the
+combination never ran. THE RUN: gameplay colors + HUD together for the first time, the menu as 0340's, the
+pause overlay with them. If it holds - PORTING's closing chapter and the tonemap thread (the bisection build's
+verdict still pending) resumes offline. The test suite gates the log.
 
 ## The spikes (second bug, currently VISIBLE again)
 
