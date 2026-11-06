@@ -25,16 +25,17 @@ the SAME host pass and blacken it. Everything else is proven clean: exact shader
   state) right after the FIRST post draw of a post-begun pass; no close fallback; install = v4's verbatim,
   only-this-frame. Menus safe by construction (no 8-bit post draws there). Every failure logs its reason once/10 s.
 
-## THE NEXT STEP (0327 on the console, stamp verified; the run pending)
+## THE NEXT STEP (0328 on the console, stamp c679eaf7b3 verified; the run pending)
 
-0326 read: the ghosting GONE (the light adds were the accumulation), the white MUCH WORSE - the once-a-frame
-latch fed only the FIRST of the f0 image's two resolves, and the tonemap's own (the one the FXAA reads) carried
-the composite's white. 0327 removes the latch (both installs idempotent); the lights stay skipped, the claim
-stays. Expected: the 0322-quality picture WITH the HUD and the FXAA smoothing. If white remains, the next step
-is a manual dump AT a white moment (ZL+ZR+Left) - it shows which stage (0654D000 -> FXAA -> the final copy)
-blows out, closing the question with data. The spikes: mp3_070 had zero address takes - the folds' elementos
-tables are the suspect (an offline check of the folded containers' fetch-opcode positions vs their elementos
-indices). c130 tracking: ask the user to move the Settings slider during a run.
+The logs of 0326/0327 closed that branch: the lights-skip was DEAD CODE (the arming sat inside the formato==0
+gate that rejects the FXAA's f3 draw - zero skips in both logs), so the additive lights ran freely on the
+installed scene and accumulated: the white and the returning ghosting. The user chose the base - b168903196 -
+and 0328 is its sdk EXACTLY, plus: the UI layer (f3's content at the install, copy-engine snapshot) drawn over
+the installed scene in PintarSalida by its alpha (x360_edram_interfaz gates it off for the pure best build),
+and the confirmed-working brightness (c130) ported on. Known artifact: translucent UI bleeds the layer's pale
+base. Expected: the best build's picture + the HUD + the slider. Still open: the shirt (the omit stays), the
+spikes (mp3_070: zero address takes - the folds' elementos tables are the suspect, an offline check), and the
+deep one: no tonemap has ever written 198/f0.
 
 ## The spikes (second bug, currently VISIBLE again)
 
