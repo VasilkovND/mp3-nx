@@ -1,5 +1,17 @@
 # Max Payne 3 on rexglue-sdk-nx (deko3d): porting notes
 
+## 0329: the resolve install behind a cvar, with the LIVE lights skip
+
+The user wants the interface on the stable picture. The one honest shot left: every failure of the resolve-install
+family (0323/0325/0326/0327) traced to ONE dead-code bug - the light skip's arming sat behind the formato==0 gate
+the FXAA's f3 draw never passes (zero skips in both logs) - so the configuration "resolve install + working skip"
+has NEVER RUN. 0329 adds it behind x360_edram_instalar_en_resolve (default FALSE: the console behaves as the best
+build with no toml line): the tonemap draw records its own 8-bit target, every resolve of it installs the scene
+(claimed - no latch: the image resolves twice and the latch fed the wrong one), the FXAA draw arms its target from
+its OWN block (the fix), and the additive 0706 draws into it are skipped for the rest of the frame (a 10 s line
+counts them - mp3_071/072's counters read zero; this run must NOT). The HUD after the lights is not additive and
+draws on the scene; the FXAA smooths it. Fallback: remove the toml line - the best build, no rebuild.
+
 ## 0328 read (mp3_073 + the dump): the overlay is a veil - off in the toml
 
 The HUD DID come back, wrapped in a veil: the layer's base is FXAA(0654D000) + the lights, and in the dump
