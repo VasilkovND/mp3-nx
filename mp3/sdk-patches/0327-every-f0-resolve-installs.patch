@@ -1,0 +1,26 @@
+diff --git a/src/x360/deko/destinos.cpp b/src/x360/deko/destinos.cpp
+index 789b7cd0..e6a65de7 100644
+--- a/src/x360/deko/destinos.cpp
++++ b/src/x360/deko/destinos.cpp
+@@ -1575,9 +1575,11 @@ bool RenderDk::Copiar(const RegistrosCopia& reg) {
+     // carries the scene and the game's own chain proceeds on it: FXAA smooths it, the additive lights and the
+     // HUD land on top, the frontal copy presents the lot (0322's frontal install buried them under it). Between
+     // passes, like the resolve itself; the base is re-looked-up so a stale record simply misses.
++    // 0327: NO once-a-frame latch - the f0 image resolves twice and the latch fed only the FIRST (0326's much
++    // worse white: the tonemap's own resolve, the second one, carried the composite's white into the FXAA).
++    // Both resolve the same scene; the install is idempotent.
+     if (REXCVAR_GET(x360_edram_instalar_escena) && destino_render == edram_escena_destino_ && edram_escena_base_ &&
+-        !destino_render->profundidad && destino_render->edram_formato == 0 &&
+-        edram_escena_instalada_fotograma_ != fotograma_) {  // the f0 image resolves twice a frame: once is enough
++        !destino_render->profundidad && destino_render->edram_formato == 0) {
+       if (const ImagenDk* escena = TexturaResuelta(edram_escena_base_, edram_escena_ancho_, edram_escena_alto_);
+           escena && escena->ancho == destino_render->ancho && escena->alto <= destino_render->alto) {
+         AntesDeCambiarDestino(nullptr);
+@@ -1587,7 +1589,6 @@ bool RenderDk::Copiar(const RegistrosCopia& reg) {
+           // f0 bookkeeping went stale), as EdramLlevar8Bits marked its carried rows.
+           EdramReclamar(*destino_render, escena->alto, nullptr);
+           ++edram_llevados_8bits_;
+-          edram_escena_instalada_fotograma_ = fotograma_;
+         }
+       }
+     }

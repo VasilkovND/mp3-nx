@@ -1,5 +1,14 @@
 # Max Payne 3 on rexglue-sdk-nx (deko3d): porting notes
 
+## 0327: every f0 resolve installs - the latch fed the wrong one
+
+0326's run: the ghosting GONE (the light adds were the accumulation), the white MUCH WORSE - and that names the
+latch as the culprit: the f0 image resolves twice a frame, the once-a-frame latch fed only the FIRST, and the
+tonemap's own resolve (the one the FXAA reads through 0654D000) is the SECOND - it carried the composite's white
+into the FXAA unanswered (0325, latchless, had both fed, so its white was only the lights'). The latch is
+removed: both resolves install the same scene (idempotent), the lights are already skipped, the claim stays.
+Expected: the 0322-quality picture WITH the HUD and the FXAA's smoothing.
+
 ## 0326: skip the additive light adds on the installed scene
 
 0325's run (mp3_070) confirmed the user's direction: the f0-resolve install (the only point where the HUD
