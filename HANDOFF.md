@@ -25,13 +25,13 @@ the SAME host pass and blacken it. Everything else is proven clean: exact shader
   state) right after the FIRST post draw of a post-begun pass; no close fallback; install = v4's verbatim,
   only-this-frame. Menus safe by construction (no 8-bit post draws there). Every failure logs its reason once/10 s.
 
-## THE NEXT STEP (0336 on the console, stamp verified; the run pending)
+## THE NEXT STEP (0337 on the console, stamp verified; the run pending)
 
-Base 000 (the menu/cutscene home) is untouched again: the far-depth substitution and the under-interface
-install are scoped to the gameplay bases, the menu keeps its own chain as in the builds where it was fine.
-Expected: the menu back, the gameplay with the HUD on the scene and stable colors. The fallback ladder
-unchanged (bajo_interfaz/instalar_escena/profundidad_lejos toml lines). The deep thread (the tonemap
-dead-in-normal-frames, 0334's geometry line ready in the build) continues when a log is welcome.
+All three gameplay fixes (the crutch, the far-depth, the under-interface install) now carry the same base != 0
+scoping - the menu/cutscene home presents its own chain entirely (labels, post backdrop). Expected: the menu
+with text and a smooth background, the gameplay with the HUD on the scene and stable colors. The fallbacks are
+the toml lines. The deep threads (the tonemap dead in normal frames - 0334's geometry line is in the build;
+the shirt; the spikes) wait for a log-friendly moment.
 
 ## The spikes (second bug, currently VISIBLE again)
 
