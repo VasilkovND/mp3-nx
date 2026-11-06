@@ -1,0 +1,28 @@
+diff --git a/src/x360/deko/destinos.cpp b/src/x360/deko/destinos.cpp
+index fddbb575..fb885554 100644
+--- a/src/x360/deko/destinos.cpp
++++ b/src/x360/deko/destinos.cpp
+@@ -1638,14 +1638,15 @@ bool RenderDk::Copiar(const RegistrosCopia& reg) {
+     // runs after every f0 draw, the composite's included - its damage is overwritten) gives the menu its
+     // background back while its labels keep their own chain (mp3_084's dump frame: the f0 960 resolve ->
+     // 0654D000 is the last writer before the menu's post reads it).
+-    // 0346: the f0 plant carries EVERY frame with a record (gameplay, cutscenes, menu). The scene lands at the
+-    // tonemap target's resolve - BETWEEN PASSES, no surgery - and the game's chain proceeds on it: the FXAA
+-    // smooths it (0654D000 = the scene), THE HUD DRAWS AFTER, in-pass, by the game's own hand (0345's under-
+-    // interface plant died to its own mid-pass surgery - the draws after it, the HUD included), and the light
+-    // adds are skipped (alive since 0345's re-gate - this pair never ran together: its last attempt had the
+-    // skip as dead code).
+-    if ((REXCVAR_GET(x360_edram_instalar_en_resolve) || REXCVAR_GET(x360_edram_instalar_escena)) &&
+-        destino_render == edram_escena_destino_ && edram_escena_base_ && edram_escena_fotograma_ == fotograma_ &&
++    // 0348: the f0 plant is the MENU's branch again (a record but no FXAA - 0341's gate, the menu-proven pair).
++    // In GAMEPLAY it whites the frame: its EdramReclamar makes the tiles look fresh from the 8-bit f0 view, and
++    // the next prepare TRANSFERS them into the 7e3 views AS BITS - the x2048 clip-white of the port's first
++    // week (the timeline: colors normal only with the AFTER-FXAA plant of 0345; white with every f0 plant since
++    // 0346; the user's bullet-time frame - a path that touches no planted tile - flashes the true colors).
++    if ((REXCVAR_GET(x360_edram_instalar_en_resolve) ||
++         (REXCVAR_GET(x360_edram_escena_bajo_interfaz) == false &&
++          edram_escena_sin_luces_fotograma_ != fotograma_ && edram_escena_fotograma_ == fotograma_)) &&
++        destino_render == edram_escena_destino_ && edram_escena_base_ &&
+         !destino_render->profundidad && destino_render->edram_formato == 0) {
+       if (const ImagenDk* escena = TexturaResuelta(edram_escena_base_, edram_escena_ancho_, edram_escena_alto_);
+           escena && escena->ancho == destino_render->ancho && escena->alto <= destino_render->alto) {

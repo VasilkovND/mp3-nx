@@ -1123,7 +1123,19 @@ The outcome branch was "the content itself" - and the run settled everything aro
   "[shaders] VS <hash> taken by address as n<N> ... patched, not its own code" line. One run captures the live
   re-patches; fold + rebuild + upload the run after. The 2 loads matching nothing at all
   (vs_82a73ba3cae509c4, vs_d2052d39bbb3b843 - skipped draws) stay: raw microcode without a base container
-  cannot be folded.## 0347: the close skeleton - the HUD's draws were SKIPPED WHOLE
+  cannot be folded.## 0348: the colors' mechanism named - the f0 plant's claim is the whitener
+
+0347b's run (white, no HUD, ONE normal frame in bullet time) closed the colors question by timeline alone:
+colors were NORMAL only with the AFTER-FXAA plant of 0345, and WHITE with every f0-resolve plant since 0346 -
+the bullet-time frame (a path touching no planted tile) flashing the true colors proves the plant itself whites.
+THE MECHANISM: the plant's EdramReclamar makes the tiles look fresh from the 8-bit f0 view; the next EdramPreparar
+TRANSFERS them into the 7e3 views AS BITS - the x2048 clip-white of the port's first week, resurrected by the
+claim. 0348: the f0 plant is the MENU's branch again (0341's no-FXAA gate - the menu-proven pair), the gameplay
+rides BAJO (the after-FXAA plant + the live light skip - the only configuration the user ever confirmed with
+normal colors), the crutch demoted by the planted latch, the HUD's scoped skeleton step stays (its draws execute;
+the costume's 369 words stay skipped), the far depth and the neutral mask stay.
+
+## 0347: the close skeleton - the HUD's draws were SKIPPED WHOLE
 
 mp3_089 named the real HUD killer - and it was never the presentation: "skipped without VS: 407 draws,
 microcode 7555CC404A1A8D (30 words, prim 8 - THE UI RECTS)" - the HUD's vertex shader matches NOTHING in the
