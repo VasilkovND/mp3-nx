@@ -1,0 +1,27 @@
+diff --git a/src/x360/deko/destinos.cpp b/src/x360/deko/destinos.cpp
+index c87702fc..056d5aa7 100644
+--- a/src/x360/deko/destinos.cpp
++++ b/src/x360/deko/destinos.cpp
+@@ -39,6 +39,7 @@ REXCVAR_DECLARE(bool, nfsmw_dk_tiles_en_pantalla);
+ REXCVAR_DECLARE(bool, x360_edram_8bits_a_flotante);  // edram.cpp (0320 v3)
+ REXCVAR_DECLARE(bool, x360_edram_instalar_escena);  // edram.cpp (0322)
+ REXCVAR_DECLARE(bool, x360_edram_instalar_en_resolve);  // edram.cpp (0329)
++REXCVAR_DECLARE(bool, x360_edram_escena_bajo_interfaz);  // edram.cpp (0335)
+ REXCVAR_DECLARE(bool, x360_edram_interfaz);  // edram.cpp (0328)
+ REXCVAR_DEFINE_BOOL(x360_copias_sin_barrera, true, "X360",
+                     "Las copias en el motor 3D seguidas comparten una barrera si ninguna lee lo que otra escribio (los "
+@@ -1575,8 +1576,13 @@ bool RenderDk::Copiar(const RegistrosCopia& reg) {
+       // tonemap reads is already 0..1 (0309's baked scale; the 2026-11-05 dumps: max 1.01-2.2, mean 0.19-0.28) - so
+       // the frontal copy presents the healthy lit scene, un-tonemapped (flat highlights) but real. Between passes,
+       // like the resolve itself: no mid-pass footprint.
++      // 0338: the crutch is the FALLBACK now - it fires only when the under-interface install did not (mp3_082's
++      // menu windows counted 1.0 of these WHILE the scene sat under the menu's text already: this, the frame's
++      // last write, buried both). The menu's chain runs through the same post bases as the gameplay - the base
++      // scoping of 0336/0337 was worthless.
+       if (a_frontal && REXCVAR_GET(x360_edram_instalar_escena) && !REXCVAR_GET(x360_edram_instalar_en_resolve) &&
+-          destino_render && !destino_render->profundidad && destino_render->edram_base != 0 &&
++          !(REXCVAR_GET(x360_edram_escena_bajo_interfaz) && edram_escena_bajo_fotograma_ == fotograma_) &&
++          destino_render && !destino_render->profundidad &&
+           destino_render->edram_formato == 3 && edram_escena_fotograma_ == fotograma_ && edram_escena_ &&
+           edram_escena_->ancho == destino_render->ancho && edram_escena_->alto <= destino_render->alto) {
+         // 0328: what the target holds right now (the FXAA's output, the lights, THE HUD) is snapshotted by the

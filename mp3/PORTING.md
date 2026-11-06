@@ -1123,7 +1123,16 @@ The outcome branch was "the content itself" - and the run settled everything aro
   "[shaders] VS <hash> taken by address as n<N> ... patched, not its own code" line. One run captures the live
   re-patches; fold + rebuild + upload the run after. The 2 loads matching nothing at all
   (vs_82a73ba3cae509c4, vs_d2052d39bbb3b843 - skipped draws) stay: raw microcode without a base container
-  cannot be folded.## 0337: the crutch off the menu's base too
+  cannot be folded.## 0338: the crutch is the fallback now - the real reason the menu had no text
+
+mp3_082 (the menu-only session, 0337) closed it: the crutch counted 1.0 in the MENU windows - the menu's chain
+runs through the SAME post bases as the gameplay (198), so the base-000 scoping of 0336/0337 was worthless -
+and the crutch, as the frame's LAST write, buried everything the under-interface install had built, the menu's
+text included. It was meant as a fallback from the start and never demoted. Now it fires only when the
+under-interface install did not happen this frame. 0334's geometry line also answered its question in the same
+log: the tonemap's scissor and viewport are FULL AND NORMAL - the rasterization-geometry door is closed too.
+
+## 0337: the crutch off the menu's base too
 
 0336's scoping missed the original crutch: the frontal install also fires on base 000 - it buries the menu's
 text (drawn before its copy) and puts the RAW scene resolve in place of the menu's post-processed backdrop,
