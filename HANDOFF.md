@@ -25,13 +25,14 @@ the SAME host pass and blacken it. Everything else is proven clean: exact shader
   state) right after the FIRST post draw of a post-begun pass; no close fallback; install = v4's verbatim,
   only-this-frame. Menus safe by construction (no 8-bit post draws there). Every failure logs its reason once/10 s.
 
-## THE NEXT STEP (0339 on the console, stamp verified; the run pending)
+## THE NEXT STEP (0340 on the console, stamp + toml verified; the run pending)
 
-The crutch stands down when the chain is alive (the under-interface install ran, OR the tonemap drew this frame
-- mp3_082: the menu has NO FXAA, so the install never armed there and the crutch fired as the primary, burying
-the text; now the menu's tonemap record keeps it off). It lives only for true gaps (<= 60 frames, streaming).
-Expected: the MENU with labels, the PAUSE overlay (the same late-UI class as the HUD), the gameplay HUD, stable
-colors. The toml fallbacks unchanged.
+The three-branch presentation, audited against every corner case of the saga: the MENU via the f0 plant (the
+scene at the tonemap target's last resolve - after the composite; the labels composite over their own base-000
+chain), the GAMEPLAY via bajo (the scene after the FXAA, the lights skipped, the HUD on top), the GAPS via the
+demoted crutch (fresh record <= 60). All plants claim their rows (no ghosting); the audit accepted: flash frames
+lose their flash look (cosmetic), rare FXAA-less gameplay frames may wash (the old class), the spikes are the
+next thread after the picture settles.
 
 ## The spikes (second bug, currently VISIBLE again)
 
