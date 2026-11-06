@@ -1,0 +1,44 @@
+diff --git a/src/x360/deko/destinos.cpp b/src/x360/deko/destinos.cpp
+index 5408f0bd..b45e773f 100644
+--- a/src/x360/deko/destinos.cpp
++++ b/src/x360/deko/destinos.cpp
+@@ -1585,9 +1585,15 @@ bool RenderDk::Copiar(const RegistrosCopia& reg) {
+       // so 0338's demotion alone let the crutch fire as the primary and bury the menu's text; the menu's tonemap
+       // draws every frame, and its record stamps this frame). The crutch lives only for true gaps: frames with no
+       // post draw at all (streaming, loading), with a fresh record and an existing resolve.
++      // 0341: the CONVERGENCE - the crutch carries the GAMEPLAY (the FXAA drew this frame: the historically
++      // validated picture, the 0332-0334 era) and the GAPS (no tonemap record this frame, one fresh within 60);
++      // the menu (a record but no FXAA) is the f0 plant's. The under-interface install is retired from the
++      // gameplay path (never validated there - mp3_085: 2.x installs/frame plus its mid-pass plant broke the
++      // EDRAM cycle whole).
+       if (a_frontal && REXCVAR_GET(x360_edram_instalar_escena) && !REXCVAR_GET(x360_edram_instalar_en_resolve) &&
+           !(REXCVAR_GET(x360_edram_escena_bajo_interfaz) && edram_escena_bajo_fotograma_ == fotograma_) &&
+-          edram_escena_fotograma_ != fotograma_ && edram_escena_fotograma_ + 60 >= fotograma_ &&
++          (edram_escena_sin_luces_fotograma_ == fotograma_ || edram_escena_fotograma_ != fotograma_) &&
++          edram_escena_fotograma_ + 60 >= fotograma_ &&
+           destino_render && !destino_render->profundidad &&
+           destino_render->edram_formato == 3 && edram_escena_ &&
+           edram_escena_->ancho == destino_render->ancho && edram_escena_->alto <= destino_render->alto) {
+@@ -1633,7 +1639,7 @@ bool RenderDk::Copiar(const RegistrosCopia& reg) {
+     // background back while its labels keep their own chain (mp3_084's dump frame: the f0 960 resolve ->
+     // 0654D000 is the last writer before the menu's post reads it).
+     if ((REXCVAR_GET(x360_edram_instalar_en_resolve) ||
+-         (REXCVAR_GET(x360_edram_escena_bajo_interfaz) && edram_escena_bajo_fotograma_ != fotograma_)) &&
++         (edram_escena_sin_luces_fotograma_ != fotograma_ && edram_escena_fotograma_ == fotograma_)) &&
+         destino_render == edram_escena_destino_ && edram_escena_base_ &&
+         !destino_render->profundidad && destino_render->edram_formato == 0) {
+       if (const ImagenDk* escena = TexturaResuelta(edram_escena_base_, edram_escena_ancho_, edram_escena_alto_);
+diff --git a/src/x360/deko/dibujos.cpp b/src/x360/deko/dibujos.cpp
+index 9948eebc..0efb1925 100644
+--- a/src/x360/deko/dibujos.cpp
++++ b/src/x360/deko/dibujos.cpp
+@@ -2972,8 +2972,7 @@ bool RenderDk::Dibujar(const PeticionDibujo& p) {
+     // 0329: the FXAA's own draw arms its target - its OWN block, not behind the scene-record gate (the dead-code
+     // bug of every earlier attempt: the arming sat where the FXAA's f3 draw never passes, so the light skip never
+     // fired and the lights ran free on the installed scene - the white, the accumulation).
+-    if (ps && edram_pase_post_ &&
+-        (REXCVAR_GET(x360_edram_instalar_en_resolve) || REXCVAR_GET(x360_edram_interfaz)) && EdramActiva() &&
++    if (ps && edram_pase_post_ && EdramActiva() &&
+         imagenes_pase_[0] && !imagenes_pase_[0]->profundidad && imagenes_pase_[0]->edram_formato == 3 &&
+         ps->huella_contenedor == UINT64_C(0x8D42760B0383C0D8)) {
+       edram_escena_f3_ = imagenes_pase_[0];

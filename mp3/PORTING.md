@@ -1123,7 +1123,18 @@ The outcome branch was "the content itself" - and the run settled everything aro
   "[shaders] VS <hash> taken by address as n<N> ... patched, not its own code" line. One run captures the live
   re-patches; fold + rebuild + upload the run after. The 2 loads matching nothing at all
   (vs_82a73ba3cae509c4, vs_d2052d39bbb3b843 - skipped draws) stay: raw microcode without a base container
-  cannot be folded.## 0340: the menu's background through the f0 plant
+  cannot be folded.## 0341: convergence - the crutch carries the gameplay, the f0 plant the menu
+
+mp3_085 read 2.x installs a frame in gameplay (the f0 plants at every resolve) on top of the never-validated
+under-interface plant - their shared-tile claims broke the EDRAM cycle whole. The convergence retires bajo from
+the gameplay path entirely and splits the branches by the one proven discriminator - THE FXAA (every gameplay
+frame has it, the menu has none): the crutch fires when the FXAA drew (the historically validated picture of
+the 0332-0334 era) or in the gaps (no record this frame, one fresh within 60); the f0 plant fires when a record
+exists but the FXAA did not draw (the menu - its labels on their own chain, its background the scene); the
+armer stamps unconditionally (registers only); the far-depth, the brightness and the exp re-look stay (validated
+in gameplay); the toml drops bajo.
+
+## 0340: the menu's background through the f0 plant
 
 0339 gave the menu its labels back and the wash with them (its tonemap is dead, its text draws into base 000's
 own buffer and composites over - mp3_084's dump frame mapped it: tonemap -> the f0 resolves (the 960 -> 
