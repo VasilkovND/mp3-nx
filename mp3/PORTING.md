@@ -1,5 +1,17 @@
 # Max Payne 3 on rexglue-sdk-nx (deko3d): porting notes
 
+## 0330: the interface layer by the UI's own alpha
+
+0328's veil dissected: its weight was never the RGB base - it was ALPHA. f3's alpha after the FXAA and the
+lights holds their oC0.w LUMAS (near-opaque everywhere), so the layer blended as a veil no matter its base.
+0330, on the stable frontal install: the FXAA draws RGB ONLY (its alpha write masked off at its own bind,
+register-keyed - not the pass image, the dead-gate lesson), the additive light adds stay skipped (0329's live
+skip re-gated to the overlay), and what is left of f3's alpha when the HUD has drawn is the UI's own coverage
+over the game's own clears - the presenter blends the layer by exactly that, and only in the frame it was
+taken (the cutscenes keep their own chain). Residual artifacts, known and minor: the HUD's semi-transparent
+pixels carry a trace of the junk they blended against (their RGB was composed over it), and a moving HUD
+element can leave a one-frame alpha trail if the game does not clear f3 between frames.
+
 ## 0329 read (mp3_075): the resolve family CLOSED with proof - the tonemap is the only front left
 
 The decisive signatures came back: the install 2.0 (both f0 resolves fed), the light skip ALIVE (7619 skips -

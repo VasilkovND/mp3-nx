@@ -1,0 +1,79 @@
+diff --git a/include/rex/x360/deko/render.h b/include/rex/x360/deko/render.h
+index 08bc33dc..937995bf 100644
+--- a/include/rex/x360/deko/render.h
++++ b/include/rex/x360/deko/render.h
+@@ -545,6 +545,7 @@ class RenderDk final : public DestinosNativos {
+   // by the copy engine first, and the presenter draws it over the installed scene by its alpha - the picture of
+   // the best build (b168903196) with the interface back on top of it. x360_edram_interfaz turns the overlay off.
+   ImagenDk edram_ui_{};
++  uint64_t edram_ui_fotograma_ = 0;  // 0330: the layer is drawn only in the frame it was taken (the cutscenes)
+   // 0325: the game's own brightness (the tonemap's BrightnessSetting c130 = colour * x + y, dead with the
+   // tonemap itself) applied in the output ramp - the Settings slider works.
+   float edram_brillo_juego_[2] = {1.0f, 0.0f};
+diff --git a/src/x360/deko/destinos.cpp b/src/x360/deko/destinos.cpp
+index 8f56b6df..f2fafff9 100644
+--- a/src/x360/deko/destinos.cpp
++++ b/src/x360/deko/destinos.cpp
+@@ -1600,6 +1600,7 @@ bool RenderDk::Copiar(const RegistrosCopia& reg) {
+             dkCmdBufCopyImage(nucleo_.comandos(), &vista_fuente_ui, &rect_ui, &vista_destino_ui, &rect_ui, 0);
+             BarreraTransferencia();
+             transferencia_sin_barrera_ = false;
++            edram_ui_fotograma_ = fotograma_;  // 0330: drawn only in this frame
+           }
+         }
+         AntesDeCambiarDestino(nullptr);
+@@ -2935,7 +2936,7 @@ bool RenderDk::PintarSalida(DkImage& salida, uint32_t ancho_salida, uint32_t alt
+   dkCmdBufDraw(cmd, DkPrimitive_Triangles, 3, 1, 0, 0);
+   // 0328: the interface layer (what f3 held when the scene was installed) over the picture, by its alpha, through
+   // the same ramp - it was never ramped, and its alpha is the UI's own coverage.
+-  if (edram_ui_.viva && REXCVAR_GET(x360_edram_interfaz)) {
++  if (edram_ui_.viva && edram_ui_fotograma_ == fotograma_ && REXCVAR_GET(x360_edram_interfaz)) {
+     const uint32_t ranura_ui = VistaDe(edram_ui_, 0x688 /* RGBA */, 0x688);
+     DkBlendState mezcla_ui;
+     dkBlendStateDefaults(&mezcla_ui);
+diff --git a/src/x360/deko/dibujos.cpp b/src/x360/deko/dibujos.cpp
+index e28b1060..0fb747a1 100644
+--- a/src/x360/deko/dibujos.cpp
++++ b/src/x360/deko/dibujos.cpp
+@@ -45,6 +45,7 @@ REXCVAR_DECLARE(bool, x360_traza_fetch_escalado);  // texturas.cpp (0312)
+ REXCVAR_DECLARE(bool, x360_edram_8bits_a_flotante);  // edram.cpp (0320)
+ REXCVAR_DECLARE(bool, x360_edram_instalar_escena);  // edram.cpp (0322)
+ REXCVAR_DECLARE(bool, x360_edram_instalar_en_resolve);  // edram.cpp (0329)
++REXCVAR_DECLARE(bool, x360_edram_interfaz);  // edram.cpp (0328)
+ REXCVAR_DEFINE_BOOL(x360_edram_saltar_muertas, true, "X360",
+                     "Un pase cuyo primer dibujo pinta todos sus destinos de color enteros y opacos (un cuadrado a "
+                     "pantalla completa sin mezcla, prueba ni descarte) no recibe lo que otras vistas tienen en esas "
+@@ -1348,10 +1349,18 @@ bool RenderDk::Dibujar(const PeticionDibujo& p) {
+     hay_destino = true;
+   }
+   const uint32_t control_profundidad = r[gr::XE_GPU_REG_RB_DEPTHCONTROL];
++  // 0330: with the interface layer on, the FXAA writes RGB only (its oC0.w is a luma - as f3's alpha it made
++  // the layer a near-opaque veil): after the game's own clears, the alpha that is left when the HUD has drawn is
++  // the UI's own coverage, and the presenter blends the layer by exactly that.
++  if (REXCVAR_GET(x360_edram_interfaz) && p.ps &&
++      p.ps->huella_contenedor == UINT64_C(0x8D42760B0383C0D8) &&
++      ((r[gr::XE_GPU_REG_RB_COLOR_INFO] >> 16) & 0xF) == 3) {
++    mascaras &= 0x7777;  // the alpha bit off every target (this draw's own bind, before it is recorded)
++  }
+   // 0329: while the resolve-install is on, the ADDITIVE draws into the FXAA's image (the deferred light adds,
+   // blend 0706) are skipped - tuned for the tonemapped base, on the scene they blow out and accumulate. The HUD
+   // that follows them is not additive and draws.
+-  if (REXCVAR_GET(x360_edram_instalar_en_resolve) && edram_escena_f3_ &&
++  if ((REXCVAR_GET(x360_edram_instalar_en_resolve) || REXCVAR_GET(x360_edram_interfaz)) && edram_escena_f3_ &&
+       edram_escena_sin_luces_fotograma_ == fotograma_ && imagenes_pase_[0] == edram_escena_f3_ &&
+       (r[kMezcla[0]] & 0x1FFF1FFF) == 0x07060706) {
+     ++edram_luces_saltadas_;
+@@ -2911,9 +2920,10 @@ bool RenderDk::Dibujar(const PeticionDibujo& p) {
+     // 0329: the FXAA's own draw arms its target - its OWN block, not behind the scene-record gate (the dead-code
+     // bug of every earlier attempt: the arming sat where the FXAA's f3 draw never passes, so the light skip never
+     // fired and the lights ran free on the installed scene - the white, the accumulation).
+-    if (ps && edram_pase_post_ && REXCVAR_GET(x360_edram_instalar_en_resolve) && EdramActiva() && imagenes_pase_[0] &&
+-             !imagenes_pase_[0]->profundidad && imagenes_pase_[0]->edram_formato == 3 &&
+-             ps->huella_contenedor == UINT64_C(0x8D42760B0383C0D8)) {
++    if (ps && edram_pase_post_ &&
++        (REXCVAR_GET(x360_edram_instalar_en_resolve) || REXCVAR_GET(x360_edram_interfaz)) && EdramActiva() &&
++        imagenes_pase_[0] && !imagenes_pase_[0]->profundidad && imagenes_pase_[0]->edram_formato == 3 &&
++        ps->huella_contenedor == UINT64_C(0x8D42760B0383C0D8)) {
+       edram_escena_f3_ = imagenes_pase_[0];
+       edram_escena_sin_luces_fotograma_ = fotograma_;
+     }
