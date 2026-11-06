@@ -2479,7 +2479,14 @@ class RingGraphicsSystem final : public rex::system::IGraphicsSystem {
         case 35: lane = kWord; words = 4; break;                 // 32_32_32_32
         default: return Unexpanded("vertex format");
       }
-      if (stride && (w2 & 0xFF) != stride) return Unexpanded("strides differ");
+      if (stride && (w2 & 0xFF) != stride) {
+        // 0348: the UI composite rects bind two streams (position + colour, different strides - mp3_095's
+        // VS n262). The expansion reads one stream; the foreign-stride element's words are copied verbatim
+        // from the vertex's row of the POSITION stream (the D3D UI quad lists lay each element's words in
+        // the vertex's own row of its stream; a wrong colour beats skipping the draw whole - the prim-8
+        // rejection blackened the frame). The element is skipped for layout purposes.
+        continue;
+      }
       stride = w2 & 0xFF;
       const uint32_t offset = (w2 >> 8) & 0x7FFFFF;
       if (offset + words > stride || stride > 256) return Unexpanded("element outside the vertex");
