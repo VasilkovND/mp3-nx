@@ -25,14 +25,14 @@ the SAME host pass and blacken it. Everything else is proven clean: exact shader
   state) right after the FIRST post draw of a post-begun pass; no close fallback; install = v4's verbatim,
   only-this-frame. Menus safe by construction (no 8-bit post draws there). Every failure logs its reason once/10 s.
 
-## THE NEXT STEP (0346 on the console, stamp + toml verified; the safe-pair run pending)
+## THE NEXT STEP (0347 on the console, stamp verified; the skeleton run pending)
 
-The f0 plant carries every frame with a record - BETWEEN PASSES at the resolve (no surgery): the FXAA smooths
-the scene itself, the HUD draws after it in-pass by the game's hand, the light adds stay skipped (the pair that
-gave 0345 its right colors, now with the HUD's draws untouched). The cutscenes get the plant in every frame too
-(the flicker's white half was its half-fixed gating). Expected: colors + HUD + crosshair + stable cutscenes;
-the grain dies with the FXAA processing the scene. The spikes stay the next thread (the 9 folds did not cover
-them - the elementos indices check, offline). The fallbacks: the toml lines.
+The HUD's real killer was never the presentation - its draws were SKIPPED WHOLE (407 UI rect draws, the 30-word
+VS matching nothing; the costume's 369-word one beside it - the spikes' class). The close-skeleton step runs
+matched-nothing VSes on family siblings (fetch masked-equal at the same positions, length within 3
+instructions); the light skip rides the install cvar again (089 read zero after bajo left the toml). Expected:
+the HUD and the crosshair DRAW for the first time; the costume either fixes (the right skeleton) or changes its
+artifact (naming the fold for the next library rebuild). The colors/cutscenes ride 0346's f0 plant.
 
 ## The spikes (second bug, currently VISIBLE again)
 
