@@ -1,0 +1,13 @@
+diff --git a/src/x360/deko/destinos.cpp b/src/x360/deko/destinos.cpp
+index f2fafff9..c87702fc 100644
+--- a/src/x360/deko/destinos.cpp
++++ b/src/x360/deko/destinos.cpp
+@@ -1576,7 +1576,7 @@ bool RenderDk::Copiar(const RegistrosCopia& reg) {
+       // the frontal copy presents the healthy lit scene, un-tonemapped (flat highlights) but real. Between passes,
+       // like the resolve itself: no mid-pass footprint.
+       if (a_frontal && REXCVAR_GET(x360_edram_instalar_escena) && !REXCVAR_GET(x360_edram_instalar_en_resolve) &&
+-          destino_render && !destino_render->profundidad &&
++          destino_render && !destino_render->profundidad && destino_render->edram_base != 0 &&
+           destino_render->edram_formato == 3 && edram_escena_fotograma_ == fotograma_ && edram_escena_ &&
+           edram_escena_->ancho == destino_render->ancho && edram_escena_->alto <= destino_render->alto) {
+         // 0328: what the target holds right now (the FXAA's output, the lights, THE HUD) is snapshotted by the

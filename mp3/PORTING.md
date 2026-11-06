@@ -1123,7 +1123,15 @@ The outcome branch was "the content itself" - and the run settled everything aro
   "[shaders] VS <hash> taken by address as n<N> ... patched, not its own code" line. One run captures the live
   re-patches; fold + rebuild + upload the run after. The 2 loads matching nothing at all
   (vs_82a73ba3cae509c4, vs_d2052d39bbb3b843 - skipped draws) stay: raw microcode without a base container
-  cannot be folded.## 0336: the menu's base untouched
+  cannot be folded.## 0337: the crutch off the menu's base too
+
+0336's scoping missed the original crutch: the frontal install also fires on base 000 - it buries the menu's
+text (drawn before its copy) and puts the RAW scene resolve in place of the menu's post-processed backdrop,
+whose streaming chunks then show torn ("рвано кусками"). The menu labels were likely gone since the crutch
+first shipped (the praise was for the gameplay picture); the crutch now carries the same base != 0 scoping as
+the rest: the menu presents its own chain, text and all.
+
+## 0336: the menu's base untouched
 
 The timeline (the user's "also no menu" arrived with 0333, before 0335) names it: base 000 is the menu and
 cutscene chains' home, and two of the gameplay fixes bled into it - 0332's far-depth substitution woke the
