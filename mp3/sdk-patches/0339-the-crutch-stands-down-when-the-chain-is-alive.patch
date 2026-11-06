@@ -1,0 +1,22 @@
+diff --git a/src/x360/deko/destinos.cpp b/src/x360/deko/destinos.cpp
+index 056d5aa7..3eb4e450 100644
+--- a/src/x360/deko/destinos.cpp
++++ b/src/x360/deko/destinos.cpp
+@@ -1580,10 +1580,16 @@ bool RenderDk::Copiar(const RegistrosCopia& reg) {
+       // menu windows counted 1.0 of these WHILE the scene sat under the menu's text already: this, the frame's
+       // last write, buried both). The menu's chain runs through the same post bases as the gameplay - the base
+       // scoping of 0336/0337 was worthless.
++      // 0339: the crutch stands down when the under-interface install ran (the gameplay) AND when the tonemap
++      // itself drew this frame (mp3_082: the menu has NO FXAA - the under-interface arming never happens there -
++      // so 0338's demotion alone let the crutch fire as the primary and bury the menu's text; the menu's tonemap
++      // draws every frame, and its record stamps this frame). The crutch lives only for true gaps: frames with no
++      // post draw at all (streaming, loading), with a fresh record and an existing resolve.
+       if (a_frontal && REXCVAR_GET(x360_edram_instalar_escena) && !REXCVAR_GET(x360_edram_instalar_en_resolve) &&
+           !(REXCVAR_GET(x360_edram_escena_bajo_interfaz) && edram_escena_bajo_fotograma_ == fotograma_) &&
++          edram_escena_fotograma_ != fotograma_ && edram_escena_fotograma_ + 60 >= fotograma_ &&
+           destino_render && !destino_render->profundidad &&
+-          destino_render->edram_formato == 3 && edram_escena_fotograma_ == fotograma_ && edram_escena_ &&
++          destino_render->edram_formato == 3 && edram_escena_ &&
+           edram_escena_->ancho == destino_render->ancho && edram_escena_->alto <= destino_render->alto) {
+         // 0328: what the target holds right now (the FXAA's output, the lights, THE HUD) is snapshotted by the
+         // copy engine before the replace - zero state touched - and the presenter draws it over the installed

@@ -1123,7 +1123,17 @@ The outcome branch was "the content itself" - and the run settled everything aro
   "[shaders] VS <hash> taken by address as n<N> ... patched, not its own code" line. One run captures the live
   re-patches; fold + rebuild + upload the run after. The 2 loads matching nothing at all
   (vs_82a73ba3cae509c4, vs_d2052d39bbb3b843 - skipped draws) stay: raw microcode without a base container
-  cannot be folded.## 0338: the crutch is the fallback now - the real reason the menu had no text
+  cannot be folded.## 0339: the crutch stands down when the chain is alive
+
+mp3_082's menu session held the proof: ZERO fxaa lines (the menu's chain has no FXAA draw) while the menu's
+tonemaps draw every frame - so the under-interface install never armed in menus, and 0338's demotion alone let
+the crutch fire as the PRIMARY there, burying the text. The crutch now stands down when the under-interface
+install ran (the gameplay) AND when the tonemap itself drew this frame (the menus - their record stamps the
+frame); it lives only for true gaps (no post draw at all - streaming, loading) with a fresh record (<= 60
+frames) and an existing resolve. The menu presents its own chain end to end; the gameplay presents the scene
+under its HUD; the gaps keep the last scene instead of the wash.
+
+## 0338: the crutch is the fallback now - the real reason the menu had no text
 
 mp3_082 (the menu-only session, 0337) closed it: the crutch counted 1.0 in the MENU windows - the menu's chain
 runs through the SAME post bases as the gameplay (198), so the base-000 scoping of 0336/0337 was worthless -
