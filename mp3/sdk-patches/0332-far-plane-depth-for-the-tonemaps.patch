@@ -1,0 +1,85 @@
+diff --git a/include/rex/x360/deko/render.h b/include/rex/x360/deko/render.h
+index cfbc51c6..7953912a 100644
+--- a/include/rex/x360/deko/render.h
++++ b/include/rex/x360/deko/render.h
+@@ -560,6 +560,7 @@ class RenderDk final : public DestinosNativos {
+   uint64_t edram_escena_sin_luces_fotograma_ = 0;
+   uint64_t edram_luces_saltadas_ = 0, edram_luces_aviso_siguiente_ = 0;
+   uint64_t edram_tonema_entrada_siguiente_ = 0;  // 0331: the tonemap inputs probe, once per 10 s
++  ImagenDk edram_tonema_lejos_{};  // 0332: the constant far plane (1x1, 1.0) for x360_tonemap_profundidad_lejos
+   std::set<uint64_t> edram_avisos_;
+   uint32_t edram_diag_encuadres_ = 0;
+   // The last depth resolve from each EDRAM base and pitch: the texture's address (CopiarProfundidad), for
+diff --git a/src/x360/deko/dibujos.cpp b/src/x360/deko/dibujos.cpp
+index 044fa191..bebd863f 100644
+--- a/src/x360/deko/dibujos.cpp
++++ b/src/x360/deko/dibujos.cpp
+@@ -45,6 +45,7 @@ REXCVAR_DECLARE(bool, x360_traza_fetch_escalado);  // texturas.cpp (0312)
+ REXCVAR_DECLARE(bool, x360_edram_8bits_a_flotante);  // edram.cpp (0320)
+ REXCVAR_DECLARE(bool, x360_edram_instalar_escena);  // edram.cpp (0322)
+ REXCVAR_DECLARE(bool, x360_edram_instalar_en_resolve);  // edram.cpp (0329)
++REXCVAR_DECLARE(bool, x360_tonemap_profundidad_lejos);  // edram.cpp (0332)
+ REXCVAR_DECLARE(bool, x360_edram_interfaz);  // edram.cpp (0328)
+ REXCVAR_DEFINE_BOOL(x360_edram_saltar_muertas, true, "X360",
+                     "Un pase cuyo primer dibujo pinta todos sus destinos de color enteros y opacos (un cuadrado a "
+@@ -1716,7 +1717,44 @@ bool RenderDk::Dibujar(const PeticionDibujo& p) {
+         std::memcpy(cache.fetch.data(), fetch, sizeof(cache.fetch));
+       }
+       valido_minimo = std::min(valido_minimo, cache.valido_hasta);
+-      const DkResHandle h = dkMakeTextureHandle(cache.ranura, cache.sampler);
++      // 0332, x360_tonemap_profundidad_lejos: the tonemaps' depth fetch reads an all-zero resolve in the frames
++      // they draw (0331's probes: every other input sane, the depth 00000000 - the DoF math on it is the one
++      // live suspect for the output's zero). A constant far plane (1x1, 1.0) is bound in its place: the DoF sees
++      // everything in focus and the tonemap draws. The tonemaps only - the composite's own depth read is not
++      // touched.
++      bool lejos = false;
++      if (REXCVAR_GET(x360_tonemap_profundidad_lejos) && sampler.registro < 16) {
++        static const uint64_t kTonemapasLejos[4] = {UINT64_C(0x6671591252A5BCE2), UINT64_C(0xFE226603F40E2533),
++                                                    UINT64_C(0xCD9469857A0C532A), UINT64_C(0x009B4466C815681B)};
++        const uint32_t fmt_f = fetch[1] & 0x3F;
++        if ((fmt_f == 22 || fmt_f == 23) &&
++            (ps->huella_contenedor == kTonemapasLejos[0] || ps->huella_contenedor == kTonemapasLejos[1] ||
++             ps->huella_contenedor == kTonemapasLejos[2] || ps->huella_contenedor == kTonemapasLejos[3])) {
++          lejos = true;
++        }
++      }
++      if (lejos && !edram_tonema_lejos_.viva) {
++        if (CrearImagen(edram_tonema_lejos_, DkImageType_2D, DkImageFormat_RGBA16_Float, 1, 1, 1, 1, 0,
++                        "tonemap lejos (0332)")) {
++          const deko::Subida datos = Reservar(8, 8);
++          if (datos) {
++            const uint16_t uno = 0x3C00;  // half(1.0)
++            uint16_t pix[4] = {uno, uno, uno, uno};
++            std::memcpy(datos.cpu, pix, sizeof(pix));
++            DkImageView vista_lejos;
++            dkImageViewDefaults(&vista_lejos, &edram_tonema_lejos_.imagen);
++            const DkCopyBuf desde = {datos.gpu, 8, 8};
++            const DkImageRect rect_lejos = {0, 0, 0, 1, 1, 1};
++            dkCmdBufCopyBufferToImage(nucleo_.ComandosPrevios(), &desde, &vista_lejos, &rect_lejos, 0);
++          }
++        }
++      }
++      const uint32_t ranura_final = lejos && edram_tonema_lejos_.viva
++                                        ? VistaDe(edram_tonema_lejos_, 0x688 /* RGBA */, 0x688)
++                                        : cache.ranura;
++      const uint32_t ancho_final = lejos ? 1u : cache.ancho;
++      const uint32_t alto_final = lejos ? 1u : cache.alto;
++      const DkResHandle h = dkMakeTextureHandle(ranura_final, cache.sampler);
+       if (!tex0_ancho) {
+         tex0_ancho = cache.ancho;
+         tex0_alto = cache.alto;
+diff --git a/src/x360/deko/edram.cpp b/src/x360/deko/edram.cpp
+index e8aa00f4..ca2d7879 100644
+--- a/src/x360/deko/edram.cpp
++++ b/src/x360/deko/edram.cpp
+@@ -58,6 +58,10 @@ REXCVAR_DEFINE_BOOL(x360_edram_instalar_escena, false, "X360",
+                     "registrada en el dibujo del tonemap) se instala en la vista f3 en la copia frontal: los "
+                     "tonemaps del puerto nunca han escrito f0 y esa resolucion ya vale 0..1, asi que el fotograma "
+                     "presenta la escena sana (sin la curva del tonemap: luces planas, pero real)");
++REXCVAR_DEFINE_BOOL(x360_tonemap_profundidad_lejos, false, "X360",
++                    "El fetch de profundidad de los tonemaps lee una resuelta a cero en los fotogramas en que "
++                    "dibujan (las sondas de 0331: todo lo demas sano, la profundidad 00000000): se liga un plano "
++                    "lejano constante (1x1, 1.0) en su lugar - el DoF ve todo enfocado y el tonemap dibuja");
+ REXCVAR_DEFINE_BOOL(x360_edram_interfaz, true, "X360",
+                     "Lo que f3 guarda cuando se instala la escena (el FXAA, las luces, el interfaz) se copia "
+                     "primero con el motor de copias y el presentador lo dibuja sobre la escena por su alfa: la "

@@ -1,5 +1,19 @@
 # Max Payne 3 on rexglue-sdk-nx (deko3d): porting notes
 
+## 0332: the far plane for the tonemaps' depth - the depth-zero hypothesis on trial
+
+0331's probes named the single anomaly: at the tonemap's draw every input is sane (the scene 0.08-0.20, the
+bloom, the half-res, the mask, the env) except THE DEPTH (slot 3, fmt 23) - 00000000 at all three points, while
+the same texture's dump at the frame's end holds a healthy 0..2^24 range: the depth is zero in exactly the
+frames the tonemap draws. The DoF math consumes it first (depth x dofProj -> rcp -> the CoC -> dofInten). 0332,
+x360_tonemap_profundidad_lejos (default false; on in the toml for the run): at the four tonemaps' draws, their
+depth fetch (fmt 22/23) binds a constant far plane (1x1, 1.0) instead - the DoF sees everything in focus and
+the tonemap should DRAW. The composite's own depth read is untouched. The probes stay on: the run shows the
+substitution live, and the output probes (still reading f0 after the draw) tell whether the tonemap finally
+writes. If it does: the game's own chain lights up (the FXAA smooths, the lights land on a real base, THE HUD
+draws on top - the interface by the game's own path at last), and the depth-zero's root (why the resolve holds
+zeros at that moment) becomes a follow-up with a working picture already in hand.
+
 ## 0331: the tonemap's inputs at its draw - the decisive one-run diagnostic
 
 The offline pass closed the interpolants (only 0-2 used) and the vertex math (trivially correct); the depth
