@@ -25,14 +25,13 @@ the SAME host pass and blacken it. Everything else is proven clean: exact shader
   state) right after the FIRST post draw of a post-begun pass; no close fallback; install = v4's verbatim,
   only-this-frame. Menus safe by construction (no 8-bit post draws there). Every failure logs its reason once/10 s.
 
-## THE NEXT STEP (0331 on the console, stamp verified; the diagnostic run pending)
+## THE NEXT STEP (0332 on the console, stamp + toml verified; the depth-hypothesis run pending)
 
-The stable build + the tonemap input probes (every resolved sampler, three texels, once per 10 s, zero
-footprint). The user plays 2-3 minutes normally; the log's "tonemap entrada slot N base XXXXXXXX" lines split
-the world: sane inputs + the output's zero = the rasterization; garbage = the fetch path (the scaled fetches,
-the DoF's depth). Also grab when FTP is on: the z-dump of 191E2000/0820A000 (the DoF input never checked), a
-fresh frame dump, and the run's log. Everything else (the shirt's folds accumulating in shaders_unknown, the
-spikes' elementos check) waits behind the tonemap - it carries the HUD, the grain, the white and the lights.
+0331 named the single anomaly (the depth all-zero at the tonemap's draw, everything else sane); 0332 binds a
+constant far plane at the tonemaps' depth fetches (x360_tonemap_profundidad_lejos, on in the toml). The run's
+signatures: the output probes ("texel post fuente") NON-ZERO for the first time since run 19 = the tonemap
+draws = the game's own chain (FXAA, lights, THE HUD) lights up; still zero = the hypothesis closed with proof
+and the next door (the rasterization) gets its own instrumented run. Fallback: remove the toml line.
 
 ## The spikes (second bug, currently VISIBLE again)
 
