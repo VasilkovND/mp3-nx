@@ -1,5 +1,19 @@
 # Max Payne 3 on rexglue-sdk-nx (deko3d): porting notes
 
+## 0326: skip the additive light adds on the installed scene
+
+0325's run (mp3_070) confirmed the user's direction: the f0-resolve install (the only point where the HUD
+survives) brings the white and the ghosting WITH it - the install fired cleanly (1.0 with the latch, the claim
+in place), and c130 stayed (0.99, 0.01) through the windows (the slider untested). The white and the trails are
+the DEFERRED LIGHT ADDS (the additive f12 draws, blend 0706, ps 3788): their amounts are tuned for the
+TONEMAPPED base the game no longer has under them - on the installed scene they blow out, and their additive
+output accumulates (whatever the bookkeeping does with it, frame over frame - the ghosting). 0326: the FXAA's
+own draw (the last kPostEscena shader, into the f3/f12 image) arms a per-frame state, and the ADDITIVE draws
+into that image are skipped for the rest of the frame (a 10 s log line counts them). The HUD that follows is
+not additive and draws. The spikes of mp3_070 had ZERO address takes and no new dumps - not the address step;
+the next suspect is the folds' elementos tables (D3D can reorder fetch instructions; the fold keeps the base's
+indices) - deferred to its own check.
+
 ## 0325: the f0 install again, with the claim - and the game's brightness
 
 mp3_065's trace settled the last structural fact: the HUD draws BETWEEN the FXAA and the lights (after draw

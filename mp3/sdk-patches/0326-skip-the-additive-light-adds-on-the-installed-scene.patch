@@ -1,0 +1,54 @@
+diff --git a/include/rex/x360/deko/render.h b/include/rex/x360/deko/render.h
+index ff3a6e0e..c782c18b 100644
+--- a/include/rex/x360/deko/render.h
++++ b/include/rex/x360/deko/render.h
+@@ -545,6 +545,13 @@ class RenderDk final : public DestinosNativos {
+   // 0325: the game's own brightness setting (the tonemap's BrightnessSetting c130 = colour * x + y, dead with
+   // the tonemap itself) applied in the output ramp - the Settings slider works again.
+   float edram_brillo_juego_[2] = {1.0f, 0.0f};
++  // 0326: the FXAA's own draw records the f3/f12 image; the ADDITIVE draws into it for the rest of the frame
++  // (the deferred light adds - tuned for the tonemapped base the game no longer has under them) are skipped
++  // while the scene is installed: on the scene they blow out (the white) and accumulate (the ghosting). The HUD
++  // that follows them is not additive and draws.
++  ImagenDk* edram_escena_f3_ = nullptr;
++  uint64_t edram_escena_sin_luces_fotograma_ = 0;
++  uint64_t edram_luces_saltadas_ = 0, edram_luces_aviso_siguiente_ = 0;
+   std::set<uint64_t> edram_avisos_;
+   uint32_t edram_diag_encuadres_ = 0;
+   // The last depth resolve from each EDRAM base and pitch: the texture's address (CopiarProfundidad), for
+diff --git a/src/x360/deko/dibujos.cpp b/src/x360/deko/dibujos.cpp
+index 04582026..d00d94ea 100644
+--- a/src/x360/deko/dibujos.cpp
++++ b/src/x360/deko/dibujos.cpp
+@@ -1347,6 +1347,19 @@ bool RenderDk::Dibujar(const PeticionDibujo& p) {
+     hay_destino = true;
+   }
+   const uint32_t control_profundidad = r[gr::XE_GPU_REG_RB_DEPTHCONTROL];
++  // 0326: while the scene is installed, the ADDITIVE draws into the FXAA's image (the deferred light adds,
++  // blend 0706) are skipped: tuned for the tonemapped base, on the installed scene they blow out (the white)
++  // and accumulate (the ghosting). The HUD that follows them is not additive and draws.
++  if (REXCVAR_GET(x360_edram_instalar_escena) && edram_escena_f3_ &&
++      edram_escena_sin_luces_fotograma_ == fotograma_ && imagenes_pase_[0] == edram_escena_f3_ &&
++      (r[kMezcla[0]] & 0x1FFF1FFF) == 0x07060706) {
++    ++edram_luces_saltadas_;
++    if (deko::AhoraNs() >= edram_luces_aviso_siguiente_) {
++      edram_luces_aviso_siguiente_ = deko::AhoraNs() + uint64_t(10) * 1000000000ull;
++      REXLOG_INFO("[edram] luz aditiva saltada tras el FXAA ({} en total)", edram_luces_saltadas_);
++    }
++    { if (diag) REXLOG_INFO("[diag-ps] luz aditiva sale: la escena esta instalada"); return true; }
++  }
+   // Draws that cannot change a pixel (nfsmw_nativo_saltar_invisibles; the Vulkan backend explains both cases).
+   const bool saltar_invisibles = REXCVAR_GET(nfsmw_nativo_saltar_invisibles);  // read each time: the game can switch it (ds2 safe mode)
+   if (saltar_invisibles && mascaras) {
+@@ -2901,6 +2914,11 @@ bool RenderDk::Dibujar(const PeticionDibujo& p) {
+                                               UINT64_C(0x009B4466C815681B)};
+       for (uint64_t huella : kPostEscena) {
+         if (ps->huella_contenedor != huella) continue;
++        if (huella == UINT64_C(0x8D42760B0383C0D8) && imagenes_pase_[0] &&
++            !imagenes_pase_[0]->profundidad && imagenes_pase_[0]->edram_formato == 3) {
++          edram_escena_f3_ = imagenes_pase_[0];  // the FXAA's target: the additive light adds land here after it
++          edram_escena_sin_luces_fotograma_ = fotograma_;
++        }
+         for (const SamplerShader& s : ps->samplers) {
+           if (s.registro >= 16) continue;
+           const uint32_t* f = r + kRegFetch + uint32_t(s.registro) * 6;
