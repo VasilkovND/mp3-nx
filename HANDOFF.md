@@ -25,13 +25,14 @@ the SAME host pass and blacken it. Everything else is proven clean: exact shader
   state) right after the FIRST post draw of a post-begun pass; no close fallback; install = v4's verbatim,
   only-this-frame. Menus safe by construction (no 8-bit post draws there). Every failure logs its reason once/10 s.
 
-## THE NEXT STEP (0332 on the console, stamp + toml verified; the depth-hypothesis run pending)
+## THE NEXT STEP (0333 on the console, stamp verified; the scale-fix run pending)
 
-0331 named the single anomaly (the depth all-zero at the tonemap's draw, everything else sane); 0332 binds a
-constant far plane at the tonemaps' depth fetches (x360_tonemap_profundidad_lejos, on in the toml). The run's
-signatures: the output probes ("texel post fuente") NON-ZERO for the first time since run 19 = the tonemap
-draws = the game's own chain (FXAA, lights, THE HUD) lights up; still zero = the hypothesis closed with proof
-and the next door (the rasterization) gets its own instrumented run. Fallback: remove the toml line.
+0332 made the tonemap DRAW (the far-plane depth; the user's dumps proved it - the washed frame was the one where
+it drew); 0333 fixes its input scale (the fetch cache skipped the exp arithmetic on unchanging words while
+exp_previo flipped with the last reader - 4x hot, the washed frames). This run expects: a stable picture, no
+flicker. If it holds, the NEXT step is the toml (x360_edram_instalar_escena = false): the game's own chain
+(tonemap -> FXAA -> lights -> THE HUD) presents, and the crutch retires. The probes stay on; a dump at a clean
+frame confirms 0654D000 = the real picture (mean ~0.2-0.3, not 0.47, not 0).
 
 ## The spikes (second bug, currently VISIBLE again)
 
