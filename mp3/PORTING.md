@@ -1,5 +1,18 @@
 # Max Payne 3 on rexglue-sdk-nx (deko3d): porting notes
 
+## 0330 read + the offline pass: stability restored, two leads closed, one door left
+
+0330's overlay covered the whole frame (f3's alpha is not the UI's coverage either - it accumulates; the log
+confirmed the skip live). The toml is back to interfaz = false - the console is the stable best build. The
+offline pass on the tonemap closed two leads: the interpolants (the PS aliases only TEXCOORD0-2 as its
+registers; the 3-15 declarations are dead) and the vertex math (the folded VS is trivial and correct - the
+position attribute straight to NDC, the quad intact). The remaining door, unique to the tonemap among the
+post quads: its inputs go through the SCALED FETCH path (exp_adjust -13, runtime "copia escalada" copies -
+the FXAA reads 8-bit directly and works; the trace lines are in every log via the toml's cvar). THE NEXT
+SESSION, offline first: the scaled-fetch state at the tonemap's draw across a whole dump frame, then ONE
+instrumented run (a probe inside the tonemap's rasterization) - after six structural attempts converged on
+this one wall, the HUD, the grain and the white all ride on it.
+
 ## 0330: the interface layer by the UI's own alpha
 
 0328's veil dissected: its weight was never the RGB base - it was ALPHA. f3's alpha after the FXAA and the
