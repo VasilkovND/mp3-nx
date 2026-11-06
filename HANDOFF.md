@@ -25,13 +25,13 @@ the SAME host pass and blacken it. Everything else is proven clean: exact shader
   state) right after the FIRST post draw of a post-begun pass; no close fallback; install = v4's verbatim,
   only-this-frame. Menus safe by construction (no 8-bit post draws there). Every failure logs its reason once/10 s.
 
-## THE NEXT STEP (0349 on the console, stamp verified; the format-8 run pending)
+## THE NEXT STEP (10271a9ed3 on the console, stamp verified; the two-stream rect run pending)
 
-The composite UI rects - identified since the last library - bind k_8_8_8_8_AS_16_16_16_16 (format 8), absent
-from the target table: 3900+ rejections (causa 108) and the black screen of mp3_094. Format 8 now maps to
-RGBA8_Unorm (as format 10's alias maps to its base). EXPECTED: the colors unchanged, the interface's both layers
-drawing - the composite rects' target now exists. The log check: causa 108 gone, the 6D38 skip lines gone, the
-test suite green. The spikes remain the last thread (the 369-word VS, the same container method).
+The chain so far: the composite VS unidentified (container built) -> its target format absent (mapped) -> the
+REAL causa 108 = the prim-8 rect list rejected (the expansion refused two streams - now accepted, the colour
+element's words copied from the position stream's row). EXPECTED: colors unchanged, the interface's composite
+layer drawing - whole (right) or with wrong colours (the layout fix follows from a dump). The log check: causa
+108 gone, "rect list not expanded" gone, the 6D38 skips gone, the suite green.
 
 ## The spikes (second bug, currently VISIBLE again)
 
