@@ -46,6 +46,10 @@ REXCVAR_DEFINE_BOOL(mp3_tonemapas_cd94, true, "MP3",
                     "imagen sale bien y toda la maquinaria esta verificada igual de limpia para ambos, asi que el "
                     "defecto esta en la traduccion de esos dos shaders; con el de las cutscenes el gameplay gana su "
                     "look (sin los efectos propios de gameplay: el flash de herida y el entrelazado)");
+REXCVAR_DEFINE_BOOL(mp3_tonemapas_fxaa, false, "MP3",
+                    "LA BISECCION: los cuatro tonemaps se sustituyen por el PS del FXAA (un shader probado, en "
+                    "el mismo contexto de dibujo). Si el objetivo del tonemap recibe algo, el contexto dibuja y "
+                    "los culpables son las traducciones de los propios tonemaps; si sigue vacio, el dibujo en si");
 REXCVAR_DEFINE_BOOL(mp3_vs_por_mascara, true, "MP3",
                     "Un VS que solo coincide con las palabras de fetch enmascaradas se toma igual (el layout del "
                     "contenedor puede ser otro: D3D reparchea el VS del traje de Max para otra declaracion de "
@@ -311,6 +315,7 @@ struct Biblioteca::Datos {
   std::unordered_set<uint64_t> enmascaradas_;  // masked matches already logged
   std::unordered_set<uint64_t> direccionadas_;  // address-step matches already dumped (re-patches: see step 1)
   const EntradaShader* entrada_cd94_ = nullptr;  // mp3_tonemapas_cd94
+  const EntradaShader* entrada_fxaa_ = nullptr;  // mp3_tonemapas_fxaa (la biseccion)
   // Step 0's table: the fingerprint of the microcode as each container holds it (the fetch words included) -> the
   // entries with it. The containers folded from shaders_unknown (mp3_parecidos) are the loads themselves, but the
   // steps below never reach them: the address step and the masked step's address preference hand the same skeleton's
@@ -529,6 +534,31 @@ const EntradaShader* Biblioteca::Identificar(bool vertices, uint32_t fisica,
   Completar(e);
   // mp3_tonemapas_cd94: applied here, at the single entry every load goes through - the validadas fast path returns
   // from IdentificarEntrada before its tail, which is where the first version of this sat and never fired.
+  // 0344, mp3_tonemapas_fxaa: THE BISECTION - the four tonemaps run as the FXAA's pixel shader (proven, in the
+  // same draw context). Any output at all = the context draws and the tonemaps' own translations are the zero-
+  // producers; still empty = the draw itself (the target/the state).
+  if (e && !vertices && REXCVAR_GET(mp3_tonemapas_fxaa) &&
+      (e->huella_contenedor == UINT64_C(0x6671591252A5BCE2) ||
+       e->huella_contenedor == UINT64_C(0xFE226603F40E2533) ||
+       e->huella_contenedor == UINT64_C(0xCD9469857A0C532A) ||
+       e->huella_contenedor == UINT64_C(0x009B4466C815681B))) {
+    if (!datos_->entrada_fxaa_) {
+      for (const EntradaShader& entrada : datos_->entradas) {
+        if (entrada.huella_contenedor == UINT64_C(0x8D42760B0383C0D8)) {
+          datos_->entrada_fxaa_ = &entrada;
+          break;
+        }
+      }
+    }
+    if (datos_->entrada_fxaa_) {
+      static uint32_t avisado_fxaa = 0;
+      if (avisado_fxaa++ < 3) {
+        REXLOG_WARN("[shaders] tonemap n{} drawn as the FXAA n{} (la biseccion)", e->numero,
+                    datos_->entrada_fxaa_->numero);
+      }
+      return datos_->entrada_fxaa_;
+    }
+  }
   if (e && !vertices && REXCVAR_GET(mp3_tonemapas_cd94) &&
       (e->huella_contenedor == UINT64_C(0x6671591252A5BCE2) ||
        e->huella_contenedor == UINT64_C(0xFE226603F40E2533))) {

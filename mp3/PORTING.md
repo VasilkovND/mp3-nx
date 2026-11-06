@@ -1123,7 +1123,19 @@ The outcome branch was "the content itself" - and the run settled everything aro
   "[shaders] VS <hash> taken by address as n<N> ... patched, not its own code" line. One run captures the live
   re-patches; fold + rebuild + upload the run after. The 2 loads matching nothing at all
   (vs_82a73ba3cae509c4, vs_d2052d39bbb3b843 - skipped draws) stay: raw microcode without a base container
-  cannot be folded.## 0343: the neutral mask - the no-crutch attempt
+  cannot be folded.## 0344: the bisection - the tonemaps run as the FXAA
+
+The no-crutch run (mp3_087: installs 0.0 throughout - truly no crutches) kept the white with the HUD and the
+menu: the user's "we are back where we started" is exact - the tonemap still writes nothing and the lights
+paint the white over it (the run 32 presentation). The mask substitution alone did not revive the draw; every
+gate around the draw has been clean for days. THE BISECTION closes the last unknown with the user's own eyes:
+the four tonemaps' pixel shaders are substituted by the FXAA's (a proven shader in the identical draw context) -
+mp3_tonemapas_fxaa, on in the toml. ANY new content on screen (even garbled - the FXAA reading the target's own
+resolve) = the context draws and the tonemaps' OWN TRANSLATIONS are the zero-producers (an offline retranslation
+follows); the same white = the draw context itself (the EDRAM/pass machinery for f0 - the next dig). The input
+probes are un-gated from the presentation cvars (mp3_087 read none: they shared instalar_escena's gate).
+
+## 0343: the neutral mask - the no-crutch attempt
 
 mp3_086 closed the mask chain: the quad's vertex bytes are SANE (white, "no flash"), its VS runs EXACT (its own
 container), the pixel shader is a colour pass-through - and the mask's computed content still flips G=FF to G=00
