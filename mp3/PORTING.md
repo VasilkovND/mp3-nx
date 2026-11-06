@@ -1123,7 +1123,21 @@ The outcome branch was "the content itself" - and the run settled everything aro
   "[shaders] VS <hash> taken by address as n<N> ... patched, not its own code" line. One run captures the live
   re-patches; fold + rebuild + upload the run after. The 2 loads matching nothing at all
   (vs_82a73ba3cae509c4, vs_d2052d39bbb3b843 - skipped draws) stay: raw microcode without a base container
-  cannot be folded.## 0342 + the test suite: the effects-mask quad - the saga's root model closed to one attribute
+  cannot be folded.## 0343: the neutral mask - the no-crutch attempt
+
+mp3_086 closed the mask chain: the quad's vertex bytes are SANE (white, "no flash"), its VS runs EXACT (its own
+container), the pixel shader is a colour pass-through - and the mask's computed content still flips G=FF to G=00
+between the draw and the tonemap's fetch. With the scene scaled right (0333) and the depth substituted (0332),
+the one remaining input that kills the tonemap's picture is that flip: G=00 is the full-flash branch, the
+near-black "dead" output of the whole saga. 0343 binds a NEUTRAL mask (no flash, no exposure effect - the good
+frames' own values) at the tonemaps' 128x128 fmt-6 fetch (x360_tonemap_mascara_neutra, on in the toml) - the
+input-sanitation pattern the depth already uses - and THE TOML TURNS EVERY PRESENTATION CRUTCH OFF
+(instalar_escena = false): the game's own chain presents end to end, the tonemap computing its picture with
+clean inputs, the HUD by the game's own hand. If the tonemap still fails, the log's probes (still on) and the
+test suite name the next input; the crutches stay one toml line away. The spikes: 19 new captures harvested and
+folded (9 new containers), the library rebuilt (72,059,680 bytes) for the same run.
+
+## 0342 + the test suite: the effects-mask quad - the saga's root model closed to one attribute
 
 THE ROOT MODEL, assembled from the whole archive: the tonemap was never dead - it computes the FULL-FLASH colour
 (near black) in the frames the EFFECTS MASK reads G=00, and the picture in the frames G=FF (both dumped, mp3_078).

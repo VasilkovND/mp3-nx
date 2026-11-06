@@ -1,0 +1,88 @@
+diff --git a/include/rex/x360/deko/render.h b/include/rex/x360/deko/render.h
+index d7ee84be..9d85ae05 100644
+--- a/include/rex/x360/deko/render.h
++++ b/include/rex/x360/deko/render.h
+@@ -561,6 +561,7 @@ class RenderDk final : public DestinosNativos {
+   uint64_t edram_luces_saltadas_ = 0, edram_luces_aviso_siguiente_ = 0;
+   uint64_t edram_tonema_entrada_siguiente_ = 0;  // 0331: the tonemap inputs probe, once per 10 s
+   ImagenDk edram_tonema_lejos_{};  // 0332: the constant far plane (1x1, 1.0) for x360_tonemap_profundidad_lejos
++  ImagenDk edram_tonema_mascara_{};  // 0343: the neutral effects mask (no flash, no exposure effect)
+   uint64_t edram_escena_bajo_fotograma_ = 0;  // 0335: the under-the-interface install, once a frame
+   std::set<uint64_t> edram_avisos_;
+   uint32_t edram_diag_encuadres_ = 0;
+diff --git a/src/x360/deko/dibujos.cpp b/src/x360/deko/dibujos.cpp
+index 013e30f9..db876df7 100644
+--- a/src/x360/deko/dibujos.cpp
++++ b/src/x360/deko/dibujos.cpp
+@@ -46,6 +46,7 @@ REXCVAR_DECLARE(bool, x360_edram_8bits_a_flotante);  // edram.cpp (0320)
+ REXCVAR_DECLARE(bool, x360_edram_instalar_escena);  // edram.cpp (0322)
+ REXCVAR_DECLARE(bool, x360_edram_instalar_en_resolve);  // edram.cpp (0329)
+ REXCVAR_DECLARE(bool, x360_tonemap_profundidad_lejos);  // edram.cpp (0332)
++REXCVAR_DECLARE(bool, x360_tonemap_mascara_neutra);  // edram.cpp (0343)
+ REXCVAR_DECLARE(bool, x360_edram_escena_bajo_interfaz);  // edram.cpp (0335)
+ REXCVAR_DECLARE(bool, x360_edram_interfaz);  // edram.cpp (0328)
+ REXCVAR_DEFINE_BOOL(x360_edram_saltar_muertas, true, "X360",
+@@ -1761,6 +1762,30 @@ bool RenderDk::Dibujar(const PeticionDibujo& p) {
+       // everything in focus and the tonemap draws. The tonemaps only - the composite's own depth read is not
+       // touched.
+       bool lejos = false;
++      bool mascara_neutra = false;
++      if (REXCVAR_GET(x360_tonemap_mascara_neutra) && sampler.registro < 16 &&
++          (fetch[1] & 0x3F) == 6 && ((fetch[2] & 0x1FFF) + 1) == 128 && (((fetch[2] >> 13) & 0x1FFF) + 1) == 128) {
++        static const uint64_t kTonemapasMascara[4] = {UINT64_C(0x6671591252A5BCE2), UINT64_C(0xFE226603F40E2533),
++                                                      UINT64_C(0xCD9469857A0C532A), UINT64_C(0x009B4466C815681B)};
++        for (uint64_t huella_m : kTonemapasMascara) {
++          if (ps && ps->huella_contenedor == huella_m) mascara_neutra = true;
++        }
++      }
++      if (mascara_neutra && !edram_tonema_mascara_.viva) {
++        if (CrearImagen(edram_tonema_mascara_, DkImageType_2D, DkImageFormat_RGBA8_Unorm, 1, 1, 1, 1, 0,
++                        "mascara neutra (0343)")) {
++          const deko::Subida datos_m = Reservar(4, 4);
++          if (datos_m) {
++            const uint8_t pix_m[4] = {0x00, 0xFF, 0x83, 0xFF};  // no exposure effect, NO FLASH, the good frames' B
++            std::memcpy(datos_m.cpu, pix_m, sizeof(pix_m));
++            DkImageView vista_mascara;
++            dkImageViewDefaults(&vista_mascara, &edram_tonema_mascara_.imagen);
++            const DkCopyBuf desde_m = {datos_m.gpu, 4, 4};
++            const DkImageRect rect_m = {0, 0, 0, 1, 1, 1};
++            dkCmdBufCopyBufferToImage(nucleo_.ComandosPrevios(), &desde_m, &vista_mascara, &rect_m, 0);
++          }
++        }
++      }
+       if (REXCVAR_GET(x360_tonemap_profundidad_lejos) && sampler.registro < 16 && imagenes_pase_[0] &&
+           imagenes_pase_[0]->edram_base != 0) {  // 0336: base 000 is the menu/cutscene home - their chain untouched
+         static const uint64_t kTonemapasLejos[4] = {UINT64_C(0x6671591252A5BCE2), UINT64_C(0xFE226603F40E2533),
+@@ -1788,11 +1813,13 @@ bool RenderDk::Dibujar(const PeticionDibujo& p) {
+           }
+         }
+       }
+-      const uint32_t ranura_final = lejos && edram_tonema_lejos_.viva
++      const bool sustituida_m = mascara_neutra && edram_tonema_mascara_.viva;
++      const uint32_t ranura_final = sustituida_m ? VistaDe(edram_tonema_mascara_, 0x688, 0x688)
++                                    : lejos && edram_tonema_lejos_.viva
+                                         ? VistaDe(edram_tonema_lejos_, 0x688 /* RGBA */, 0x688)
+                                         : cache.ranura;
+-      const uint32_t ancho_final = lejos ? 1u : cache.ancho;
+-      const uint32_t alto_final = lejos ? 1u : cache.alto;
++      const uint32_t ancho_final = (sustituida_m || lejos) ? 1u : cache.ancho;
++      const uint32_t alto_final = (sustituida_m || lejos) ? 1u : cache.alto;
+       const DkResHandle h = dkMakeTextureHandle(ranura_final, cache.sampler);
+       if (!tex0_ancho) {
+         tex0_ancho = cache.ancho;
+diff --git a/src/x360/deko/edram.cpp b/src/x360/deko/edram.cpp
+index 9ab2c245..5e5f7e50 100644
+--- a/src/x360/deko/edram.cpp
++++ b/src/x360/deko/edram.cpp
+@@ -58,6 +58,11 @@ REXCVAR_DEFINE_BOOL(x360_edram_instalar_escena, false, "X360",
+                     "registrada en el dibujo del tonemap) se instala en la vista f3 en la copia frontal: los "
+                     "tonemaps del puerto nunca han escrito f0 y esa resolucion ya vale 0..1, asi que el fotograma "
+                     "presenta la escena sana (sin la curva del tonemap: luces planas, pero real)");
++REXCVAR_DEFINE_BOOL(x360_tonemap_mascara_neutra, false, "X360",
++                    "El fetch de la mascara de efectos de los tonemaps lee un 128x128 cuyo canal G (la "
++                    "antorcha) se invierte de FF a 00 entre el dibujo del cuadro (vertices blancas, VS exacto) y "
++                    "la lectura: se liga una mascara neutra (sin antorcha, sin efecto de exposicion) y el tonemap "
++                    "computa su foto con entradas limpias");
+ REXCVAR_DEFINE_BOOL(x360_edram_escena_bajo_interfaz, false, "X360",
+                     "La escena se copia en el objetivo del FXAA justo tras su dibujo, con el motor de copias "
+                     "(sin tocar el pase): el interfaz y la luz dibujan despues SOBRE la escena, dentro de la "
