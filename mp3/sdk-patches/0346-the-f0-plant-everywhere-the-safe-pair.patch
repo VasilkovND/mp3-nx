@@ -1,0 +1,39 @@
+diff --git a/src/x360/deko/destinos.cpp b/src/x360/deko/destinos.cpp
+index b45e773f..fddbb575 100644
+--- a/src/x360/deko/destinos.cpp
++++ b/src/x360/deko/destinos.cpp
+@@ -1591,7 +1591,7 @@ bool RenderDk::Copiar(const RegistrosCopia& reg) {
+       // gameplay path (never validated there - mp3_085: 2.x installs/frame plus its mid-pass plant broke the
+       // EDRAM cycle whole).
+       if (a_frontal && REXCVAR_GET(x360_edram_instalar_escena) && !REXCVAR_GET(x360_edram_instalar_en_resolve) &&
+-          !(REXCVAR_GET(x360_edram_escena_bajo_interfaz) && edram_escena_bajo_fotograma_ == fotograma_) &&
++          edram_escena_bajo_fotograma_ != fotograma_ &&
+           (edram_escena_sin_luces_fotograma_ == fotograma_ || edram_escena_fotograma_ != fotograma_) &&
+           edram_escena_fotograma_ + 60 >= fotograma_ &&
+           destino_render && !destino_render->profundidad &&
+@@ -1638,9 +1638,14 @@ bool RenderDk::Copiar(const RegistrosCopia& reg) {
+     // runs after every f0 draw, the composite's included - its damage is overwritten) gives the menu its
+     // background back while its labels keep their own chain (mp3_084's dump frame: the f0 960 resolve ->
+     // 0654D000 is the last writer before the menu's post reads it).
+-    if ((REXCVAR_GET(x360_edram_instalar_en_resolve) ||
+-         (edram_escena_sin_luces_fotograma_ != fotograma_ && edram_escena_fotograma_ == fotograma_)) &&
+-        destino_render == edram_escena_destino_ && edram_escena_base_ &&
++    // 0346: the f0 plant carries EVERY frame with a record (gameplay, cutscenes, menu). The scene lands at the
++    // tonemap target's resolve - BETWEEN PASSES, no surgery - and the game's chain proceeds on it: the FXAA
++    // smooths it (0654D000 = the scene), THE HUD DRAWS AFTER, in-pass, by the game's own hand (0345's under-
++    // interface plant died to its own mid-pass surgery - the draws after it, the HUD included), and the light
++    // adds are skipped (alive since 0345's re-gate - this pair never ran together: its last attempt had the
++    // skip as dead code).
++    if ((REXCVAR_GET(x360_edram_instalar_en_resolve) || REXCVAR_GET(x360_edram_instalar_escena)) &&
++        destino_render == edram_escena_destino_ && edram_escena_base_ && edram_escena_fotograma_ == fotograma_ &&
+         !destino_render->profundidad && destino_render->edram_formato == 0) {
+       if (const ImagenDk* escena = TexturaResuelta(edram_escena_base_, edram_escena_ancho_, edram_escena_alto_);
+           escena && escena->ancho == destino_render->ancho && escena->alto <= destino_render->alto) {
+@@ -1648,6 +1653,7 @@ bool RenderDk::Copiar(const RegistrosCopia& reg) {
+         if (Copiar3D(*escena, 0, 0, escena->ancho, escena->alto, *destino_render, 0, 0)) {
+           EdramReclamar(*destino_render, escena->alto, nullptr);
+           ++edram_llevados_8bits_;
++          edram_escena_bajo_fotograma_ = fotograma_;  // 0346: the "planted this frame" latch (the crutch demotes on it)
+         }
+       }
+     }

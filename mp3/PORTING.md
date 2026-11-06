@@ -1123,7 +1123,20 @@ The outcome branch was "the content itself" - and the run settled everything aro
   "[shaders] VS <hash> taken by address as n<N> ... patched, not its own code" line. One run captures the live
   re-patches; fold + rebuild + upload the run after. The 2 loads matching nothing at all
   (vs_82a73ba3cae509c4, vs_d2052d39bbb3b843 - skipped draws) stay: raw microcode without a base container
-  cannot be folded.## 0345: bajo's gameplay with the lights skipped - the never-run combination
+  cannot be folded.## 0346: the f0 plant everywhere - the safe pair finally together
+
+The user's report settled 0345: the gameplay COLORS RIGHT (the scene under the interface, the lights skipped -
+both halves alive at last) but NO HUD - and the mechanism is now named: the under-interface plant's MID-PASS
+SURGERY (the pass ends for the copy, the barrier returns) kills the draws after it, THE HUD'S INCLUDED - the
+same surgery that killed the menu's text in 0321. The cutscene flicker = the same half-fixed chain (the plant
+fired only in its no-FXAA branch, alternating with the dead-tonemap frames). 0346: the f0 plant carries EVERY
+frame with a record (gameplay, cutscenes, menu) - it lands BETWEEN PASSES at the resolve (no surgery, the
+0340-proven spot), the FXAA then smooths the scene itself, the HUD draws after it IN-PASS by the game's hand,
+the light adds stay skipped (alive since 0345 - THIS PAIR NEVER RAN TOGETHER: its 0327 attempt had the skip as
+dead code), and the planted latch demotes the crutch. Bajo is retired (its surgery was the HUD killer). The
+spikes stay open (the 9 new folds did not cover them - the elementos check remains the thread).
+
+## 0345: bajo's gameplay with the lights skipped - the never-run combination
 
 The archive's re-read found it: the menu half the user SAW working (0340's f0 plant, "Меню появилось") and the
 gameplay half that NEVER RAN clean (bajo - its only gameplay session was 0340's, poisoned by the 2.x double
