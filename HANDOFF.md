@@ -25,21 +25,11 @@ the SAME host pass and blacken it. Everything else is proven clean: exact shader
   state) right after the FIRST post draw of a post-begun pass; no close fallback; install = v4's verbatim,
   only-this-frame. Menus safe by construction (no 8-bit post draws there). Every failure logs its reason once/10 s.
 
-## THE NEXT STEP (the REVERT build READY, FTP went down mid-upload)
+## SESSION CLOSED (2026-11-06)
 
-NRO 560799aff3 (the exact 0348 code - the user's confirmed "colors right" state) + the library WITHOUT the
-composite container (md5 55dcef6a - the same as the run that read "colors correct, spikes present") + the DKSH
-cache. Everything that followed the last good run is reverted: the rect expansion, the format-8 table entry,
-the composite container. Only the HUD's own container (7555) stays in the library (proven harmless: its draws
-were taken and compiled in the background). WHEN THE FTP IS BACK: upload all three files (the NRO, the dslib,
-the cache - all three rebuilt and verified locally). This gives back exactly what the user confirmed working.
-
-The composite's honest post-mortem for the next session: its container made the draws reach the renderer, which
-rejected their prim-8 rect-list primitive (causa 108), and every attempt to let them through (the format map,
-the two-stream expansion) blackened the frame through the rejection cascade. The correct next step for the HUD
-is NOT through the composite rect list - it is through the 7555 layer (already taken, its draws run) with the
-time to let its DKSH compile land (mp3_093: "se compila en segundo plano" - the user's sessions have been too
-short for it) or its variant pre-baked into the cache.
+The state and the plan are in `mp3/BACKLOG.md` and PORTING's "THE FINAL STATE". The revert build (NRO
+560799aff3 + dslib 55dcef6a + the cache) is ready locally, verified, and waits for the FTP to come back —
+it restores exactly the user-confirmed working picture. Everything is committed.
 
 ## The spikes (second bug, currently VISIBLE again)
 
