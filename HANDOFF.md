@@ -25,15 +25,14 @@ the SAME host pass and blacken it. Everything else is proven clean: exact shader
   state) right after the FIRST post draw of a post-begun pass; no close fallback; install = v4's verbatim,
   only-this-frame. Menus safe by construction (no 8-bit post draws there). Every failure logs its reason once/10 s.
 
-## THE NEXT STEP (the HUD's library on the console, md5 verified; THE run)
+## THE NEXT STEP (the composite library on the console, md5 verified; the two-layer run pending)
 
-The HUD's layer finally has its own container (hand-built: the fetch positions derived from the library's
-opcode statistics, the export table from the tonemap quad's class, the translation clean) - the library
-(72,074,428, md5 55dcef6a) + the DKSH cache are on the console beside 0348's NRO/toml. EXPECTED: the colors of
-0345 (the user-confirmed presentation) + the HUD and the crosshair drawing for the first time (their 407 rect
-draws take their own container exactly - step 0). The menu and cutscenes per 0348. The spikes stay open (their
-369-word VS: the same container-construction method applies - three fetch instructions to derive - once the
-picture settles). The log check: "taken exact as n<N>" for hash 7555CC40..., and the test suite green.
+Both hand-built containers in the library (the HUD's 7555 - proven taken, its draws run; the composite's
+6d38-class - the 547 UI rects that were the visible killer). EXPECTED: the correct colors (unchanged) + the
+interface's BOTH layers drawing for the first time. The per-session patch may vary the load hash - if the exact
+step misses, the masked/skeleton steps land on the true sibling (the same declaration, the correct layout). The
+log check: no more "skipped without VS ... 6D38" lines, the 7555 take, the test suite green. The spikes remain
+the next thread (their 369-word VS - the same container method).
 
 ## The spikes (second bug, currently VISIBLE again)
 
