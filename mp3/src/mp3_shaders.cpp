@@ -807,7 +807,10 @@ const EntradaShader* Biblioteca::IdentificarEntrada(bool vertices, uint32_t fisi
     // skipped WHOLE - 407 and 508 draws - because no container matches their length, and the fold cannot host a
     // longer microcode). CalcularEntrada reads the layout from the ring's own fetch words: a family sibling's
     // pipeline draws them.
-    if (!elegido && vertices && REXCVAR_GET(mp3_vs_por_esqueleto)) {
+    // 0347b: SMALL loads only (the UI rect family - the HUD's 30 words). A big mesh on a wrong skeleton draws
+    // garbage through the scene (0347's run: the costume's 369 words x 508 draws whited the frame); a small UI
+    // quad's layout is uniform across its family and its draws hurt nothing when wrong.
+    if (!elegido && vertices && microcodigo.size() <= 64 && REXCVAR_GET(mp3_vs_por_esqueleto)) {
       if (auto c = d.candidatos.find({vertices, uint32_t(microcodigo.size())}); c != d.candidatos.end()) {
         // wrong-length candidates are not in this map - scan a window of lengths around it
       }
