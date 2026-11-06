@@ -1123,7 +1123,46 @@ The outcome branch was "the content itself" - and the run settled everything aro
   "[shaders] VS <hash> taken by address as n<N> ... patched, not its own code" line. One run captures the live
   re-patches; fold + rebuild + upload the run after. The 2 loads matching nothing at all
   (vs_82a73ba3cae509c4, vs_d2052d39bbb3b843 - skipped draws) stay: raw microcode without a base container
-  cannot be folded.## The composite VS - the interface's REAL killer, second container built
+  cannot be folded.## THE FINAL STATE (2026-11-06, the session's close)
+
+### What works, proven by the user's own reports
+- COLORS: normal in gameplay. The mechanism - the scene planted by the COPY ENGINE right after the FXAA's own
+  draw (bajo, mid-pass), the additive light adds skipped (both alive since 0345), the tonemap's inputs sanitized
+  (the far-plane depth, the neutral mask, the x4 fetch-scale fix). The crutch (the frontal install) fires only
+  in frames no other plant ran. The menu on the f0 plant's no-FXAA branch. All cvar-gated, all in the toml.
+- THE MENU: labels and background, stable. The cutscenes: the same plant, no flicker.
+- BRIGHTNESS: the game's Settings slider works (c130 recorded at the tonemap's draw, applied in the output ramp).
+- THE TEST SUITE: mp3/tools/check_log.py - one check per shipped failure, discriminates the archive exactly
+  (068/072/075/085 fail, the good eras pass). Every future log gates through it.
+
+### The bugs that remain, ranked, with their proven mechanism
+1. THE HUD: two layers, two killers, neither presentation-related.
+   a) The 7555 layer (the UI elements): its 30-word VS never had a container - hand-built (the fetch positions
+      derived from the library's opcode statistics, the export table from the tonemap quad's class), taken
+      exact, its draws run - but its DKSH variant compiles IN THE BACKGROUND and every user session ended before
+      it landed. THE FIX: pre-bake the variant into the cache offline (the variant hash BC7C2984A75A0CD6 is in
+      the log) or let one longer session run.
+   b) The composite layer (the 547 UI rects): the patched clear-VS (a plain dump, never foldable), its container
+      also hand-built - but its draws are PRIM-8 RECT LISTS, which the renderer rejects (causa 108), and every
+      attempt to let them through (the format-8 map, the two-stream expansion) blackened the frame through the
+      rejection cascade. THE CORRECT PATH: not through the rect list - either expand at the mp3_gpu level with
+      the multi-stream layout done right (the strides' semantics from a dump), or find the game's own
+      non-rect-list path for the composite.
+2. THE SPIKES: the costume's 369-word VS (538 draws) - same class: no container, no same-length fold host. The
+   container-construction method applies (three fetch instructions to derive from the opcode statistics); the
+   skeleton step (0347b, scoped to <=64 words) is in the code as a fallback.
+3. THE TONEMAP: never wrote its picture in normal frames (the whole saga's root). The mask's computed content
+   flips G=FF to G=00 (the flash branch) - the quad's colour is white, the VS exact, the shader a pass-through;
+   the flip's own cause is inside the EDRAM resolve chain for base 330 and is the deep thread. With the
+   presentation carried by the plants, it stops being the blocker for playability.
+
+### The archive's one-line lesson
+Every "the renderer is broken" this week was a missing door for a shader or a draw that had never been drawn
+before: the identification, the format, the primitive - each new layer reaching deeper and breaking at the next
+absent table entry. The fixes that held were the ones that gave the game's own machinery a door; the fixes that
+failed were the ones that fought it (every mid-pass surgery, every alpha overlay).
+
+## The composite VS - the interface's REAL killer, second container built
 
 mp3_093 read the HUD's take (`7555CC... taken exact as n2517` - the first container works, its draws run) but
 the interface still missing named the second layer: **547 skipped draws, microcode 6D38CFA50AA12E5F (27 words,
