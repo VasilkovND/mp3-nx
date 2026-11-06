@@ -25,14 +25,14 @@ the SAME host pass and blacken it. Everything else is proven clean: exact shader
   state) right after the FIRST post draw of a post-begun pass; no close fallback; install = v4's verbatim,
   only-this-frame. Menus safe by construction (no 8-bit post draws there). Every failure logs its reason once/10 s.
 
-## THE NEXT STEP (0345 on the console, stamp + toml verified; the never-run combination's run pending)
+## THE NEXT STEP (0346 on the console, stamp + toml verified; the safe-pair run pending)
 
-The archive's re-read assembled it: bajo's gameplay (the scene under the HUD, the lights finally skipped - the
-skip was gated to the off interfaz cvar all along) + the menu's validated pair (0340's f0 plant) + the crutch
-as the gap fallback + the depth/mask/brightness sanitations. Both halves were separately SEEN working; the
-combination never ran. THE RUN: gameplay colors + HUD together for the first time, the menu as 0340's, the
-pause overlay with them. If it holds - PORTING's closing chapter and the tonemap thread (the bisection build's
-verdict still pending) resumes offline. The test suite gates the log.
+The f0 plant carries every frame with a record - BETWEEN PASSES at the resolve (no surgery): the FXAA smooths
+the scene itself, the HUD draws after it in-pass by the game's hand, the light adds stay skipped (the pair that
+gave 0345 its right colors, now with the HUD's draws untouched). The cutscenes get the plant in every frame too
+(the flicker's white half was its half-fixed gating). Expected: colors + HUD + crosshair + stable cutscenes;
+the grain dies with the FXAA processing the scene. The spikes stay the next thread (the 9 folds did not cover
+them - the elementos indices check, offline). The fallbacks: the toml lines.
 
 ## The spikes (second bug, currently VISIBLE again)
 
